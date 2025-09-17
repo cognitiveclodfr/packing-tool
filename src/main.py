@@ -111,10 +111,16 @@ class MainWindow(QMainWindow):
             # Групуємо дані по номеру замовлення
             grouped = self.packing_list_df.groupby('Order_Number')
 
+            unnamed_counter = 1
             for order_number, group in grouped:
                 # Генерація баркоду
                 # Замінюємо символи, що не підходять для назв файлів
                 safe_order_number = "".join(c for c in order_number if c.isalnum() or c in ('-', '_')).rstrip()
+
+                if not safe_order_number:
+                    safe_order_number = f"unnamed_order_{unnamed_counter}"
+                    unnamed_counter += 1
+
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_order_number}.png")
                 bc = code128(order_number, writer=ImageWriter())
                 bc.write(barcode_path)
