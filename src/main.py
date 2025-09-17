@@ -62,15 +62,36 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.packer_mode_widget)
         self.setCentralWidget(self.stacked_widget)
 
+        if self.sounds_missing:
+            current_text = self.status_label.text()
+            self.status_label.setText(current_text + "\nПопередження: Звукові файли не знайдено, програма працюватиме без звуку.")
+
     def _init_sounds(self):
-        """Ініціалізує звукові ефекти."""
-        # Примітка: Файли .wav повинні знаходитись у папці 'sounds'
+        """Ініціалізує звукові ефекти, перевіряючи наявність файлів."""
+        self.sounds_missing = False
+        sound_files = {
+            "success": "sounds/success.wav",
+            "error": "sounds/error.wav",
+            "victory": "sounds/victory.wav"
+        }
+
         self.success_sound = QSoundEffect()
-        self.success_sound.setSource(QUrl.fromLocalFile("sounds/success.wav"))
+        if os.path.exists(sound_files["success"]):
+            self.success_sound.setSource(QUrl.fromLocalFile(sound_files["success"]))
+        else:
+            self.sounds_missing = True
+
         self.error_sound = QSoundEffect()
-        self.error_sound.setSource(QUrl.fromLocalFile("sounds/error.wav"))
+        if os.path.exists(sound_files["error"]):
+            self.error_sound.setSource(QUrl.fromLocalFile(sound_files["error"]))
+        else:
+            self.sounds_missing = True
+
         self.victory_sound = QSoundEffect()
-        self.victory_sound.setSource(QUrl.fromLocalFile("sounds/victory.wav"))
+        if os.path.exists(sound_files["victory"]):
+            self.victory_sound.setSource(QUrl.fromLocalFile(sound_files["victory"]))
+        else:
+            self.sounds_missing = True
 
     def open_file_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Виберіть пакувальний лист", "", "Excel Files (*.xlsx)")
@@ -99,6 +120,10 @@ class MainWindow(QMainWindow):
 
             inverted_mapping = {v: k for k, v in mapping.items()}
             df.rename(columns=inverted_mapping, inplace=True)
+
+        if df.empty:
+            self.status_label.setText("Помилка: завантажений файл порожній або не містить даних.")
+            return
 
         self.packing_list_df = df
         self.status_label.setText("Файл завантажено, обробка...")
@@ -175,9 +200,19 @@ class MainWindow(QMainWindow):
             # Ініціалізуємо стан замовлення
             self.current_order_state = {}
             for i, item in enumerate(items):
-                sku = item['SKU']
+                sku = item.get('SKU')
+                if not sku: # Пропускаємо рядки без артикула
+                    continue
+
+                try:
+                    # Спробуємо перетворити кількість на число, обробляючи дробові частини
+                    quantity = int(float(item.get('Quantity', 0)))
+                except (ValueError, TypeError):
+                    # Якщо не вдається, вважаємо кількість рівною 1, щоб уникнути помилок
+                    quantity = 1
+
                 self.current_order_state[sku] = {
-                    'required': int(item['Quantity']),
+                    'required': quantity,
                     'packed': 0,
                     'row': i
                 }
