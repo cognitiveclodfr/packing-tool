@@ -1,7 +1,5 @@
 import sys
 import os
-import shutil
-import tempfile
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget
 )
@@ -19,7 +17,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Packer's Assistant")
         self.resize(1024, 768)
 
-        self.barcode_dir = tempfile.mkdtemp(prefix="packers-assistant-")
+        # Створюємо локальну папку для баркодів
+        self.barcode_dir = "barcodes"
+        os.makedirs(self.barcode_dir, exist_ok=True)
+
         self.logic = PackerLogic(self.barcode_dir)
 
         self._init_sounds()
@@ -138,11 +139,6 @@ class MainWindow(QMainWindow):
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
             # SKU_EXTRA is ignored
-
-    def closeEvent(self, event):
-        print(f"Cleaning up temporary directory: {self.barcode_dir}")
-        shutil.rmtree(self.barcode_dir)
-        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
