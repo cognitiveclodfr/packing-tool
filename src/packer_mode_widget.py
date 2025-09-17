@@ -1,12 +1,13 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QLineEdit, QHeaderView
+    QLabel, QLineEdit, QHeaderView, QPushButton
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
 
 class PackerModeWidget(QWidget):
     barcode_scanned = Signal(str)
+    exit_packing_mode = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,6 +52,14 @@ class PackerModeWidget(QWidget):
         self.scanner_input.setFixedSize(1, 1)
         self.scanner_input.returnPressed.connect(self._on_scan)
         right_layout.addWidget(self.scanner_input)
+
+        right_layout.addStretch()
+        self.exit_button = QPushButton("<< Назад до меню")
+        font = self.exit_button.font()
+        font.setPointSize(14)
+        self.exit_button.setFont(font)
+        self.exit_button.clicked.connect(self.exit_packing_mode.emit)
+        right_layout.addWidget(self.exit_button)
 
         main_layout.addWidget(left_widget, stretch=2)
         main_layout.addWidget(right_widget, stretch=1)

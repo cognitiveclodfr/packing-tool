@@ -14,6 +14,10 @@ class PackerLogic:
         self.current_order_number = None
         self.current_order_state = {}
 
+    def _normalize_sku(self, sku):
+        """Normalizes an SKU by removing non-alphanumeric characters and converting to lowercase."""
+        return ''.join(filter(str.isalnum, sku)).lower()
+
     def load_packing_list_from_file(self, file_path):
         """Loads and processes the packing list from an Excel file."""
         try:
@@ -105,12 +109,19 @@ class PackerLogic:
         return items, "ORDER_LOADED"
 
     def process_sku_scan(self, sku):
-        """Processes a scanned SKU for the current order."""
+        """Processes a scanned SKU for the current order, normalizing for comparison."""
         if not self.current_order_number:
             return None, "NO_ACTIVE_ORDER"
 
-        if sku in self.current_order_state:
-            state = self.current_order_state[sku]
+        normalized_scanned_sku = self._normalize_sku(sku)
+        found_sku = None
+        for original_sku in self.current_order_state.keys():
+            if self._normalize_sku(original_sku) == normalized_scanned_sku:
+                found_sku = original_sku
+                break
+
+        if found_sku:
+            state = self.current_order_state[found_sku]
             if state['packed'] < state['required']:
                 state['packed'] += 1
                 is_complete = state['packed'] == state['required']
