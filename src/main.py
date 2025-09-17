@@ -30,6 +30,7 @@ class MainWindow(QMainWindow):
         # Стан пакувальника
         self.current_order_number = None
         self.current_order_state = {} # {sku: {'required': X, 'packed': Y, 'row': Z}}
+        self.barcode_to_order_number = {} # {barcode_content: original_order_number}
 
         self._init_sounds()
 
@@ -106,6 +107,7 @@ class MainWindow(QMainWindow):
     def generate_barcodes_and_process_orders(self):
         try:
             self.orders_data = {}
+            self.barcode_to_order_number = {}
             code128 = barcode.get_barcode_class('code128')
 
             # Групуємо дані по номеру замовлення
@@ -113,19 +115,22 @@ class MainWindow(QMainWindow):
 
             unnamed_counter = 1
             for order_number, group in grouped:
-                # Генерація баркоду
-                # Замінюємо символи, що не підходять для назв файлів
-                safe_order_number = "".join(c for c in order_number if c.isalnum() or c in ('-', '_')).rstrip()
+                # Створюємо безпечний рядок для контенту баркоду та імені файлу
+                safe_barcode_content = "".join(c for c in order_number if c.isalnum() or c in ('-', '_')).rstrip()
 
-                if not safe_order_number:
-                    safe_order_number = f"unnamed_order_{unnamed_counter}"
+                if not safe_barcode_content:
+                    safe_barcode_content = f"unnamed_order_{unnamed_counter}"
                     unnamed_counter += 1
 
-                barcode_path = os.path.join(self.barcode_dir, f"{safe_order_number}.png")
-                bc = code128(order_number, writer=ImageWriter())
+                # Створюємо мапінг від безпечного контенту до оригінального номеру
+                self.barcode_to_order_number[safe_barcode_content] = order_number
+
+                # Генерація баркоду
+                barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
+                bc = code128(safe_barcode_content, writer=ImageWriter())
                 bc.write(barcode_path)
 
-                # Зберігаємо інформацію про замовлення
+                # Зберігаємо інформацію про замовлення, використовуючи оригінальний номер як ключ
                 self.orders_data[order_number] = {
                     'barcode_path': barcode_path,
                     'items': group.to_dict('records')
@@ -161,10 +166,11 @@ class MainWindow(QMainWindow):
             # Очікуємо на сканування товару (SKU)
             self.process_sku_scan(text)
 
-    def process_order_scan(self, order_number: str):
-        if order_number in self.orders_data:
-            self.current_order_number = order_number
-            items = self.orders_data[order_number]['items']
+    def process_order_scan(self, scanned_text: str):
+        if scanned_text in self.barcode_to_order_number:
+            original_order_number = self.barcode_to_order_number[scanned_text]
+            self.current_order_number = original_order_number
+            items = self.orders_data[original_order_number]['items']
 
             # Ініціалізуємо стан замовлення
             self.current_order_state = {}
