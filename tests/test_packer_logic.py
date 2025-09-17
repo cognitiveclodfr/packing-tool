@@ -138,5 +138,24 @@ class TestPackerLogic(unittest.TestCase):
         self.assertEqual(status, "ORDER_NOT_FOUND")
         self.assertIsNone(items)
 
+    def test_sku_normalization(self):
+        """Test that SKUs are normalized correctly for matching."""
+        dummy_data = {
+            'Order_Number': ['1001'],
+            'SKU': ['A-1'],
+            'Product_Name': ['Product A'],
+            'Quantity': [1]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        self.logic.start_order_packing('1001')
+
+        # Scan with a normalized SKU (no hyphen, different case)
+        result, status = self.logic.process_sku_scan('a1')
+        self.assertEqual(status, "ORDER_COMPLETE")
+        self.assertIsNotNone(result)
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

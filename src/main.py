@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         self.setup_widget = QWidget()
         self.packer_mode_widget = PackerModeWidget()
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
+        self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_setup_mode)
 
         setup_layout = QVBoxLayout(self.setup_widget)
         self.load_button = QPushButton("Завантажити пакувальний лист (.xlsx)")
@@ -106,6 +107,12 @@ class MainWindow(QMainWindow):
     def switch_to_packer_mode(self):
         self.stacked_widget.setCurrentWidget(self.packer_mode_widget)
         self.packer_mode_widget.set_focus_to_scanner()
+
+    def switch_to_setup_mode(self):
+        """Switches the view back to the main setup screen."""
+        self.logic.clear_current_order()
+        self.packer_mode_widget.clear_screen()
+        self.stacked_widget.setCurrentWidget(self.setup_widget)
 
     def open_print_dialog(self):
         if not self.logic.orders_data:
