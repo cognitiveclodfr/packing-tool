@@ -67,7 +67,7 @@ class PackerLogic:
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
                 bc = code128(safe_barcode_content, writer=ImageWriter())
                 with open(barcode_path, 'wb') as f:
-                    bc.write(f)
+                    bc.write(f, options={'write_text': False})
 
                 self.orders_data[order_number] = {
                     'barcode_path': barcode_path,
