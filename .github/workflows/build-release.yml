@@ -27,7 +27,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: List files for debugging
-        run: dir /s
+        run: Get-ChildItem -Recurse
 
       - name: Build executable with PyInstaller
         run: pyinstaller main.spec
