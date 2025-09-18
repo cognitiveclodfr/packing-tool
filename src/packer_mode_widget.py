@@ -1,7 +1,7 @@
 from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QLineEdit, QHeaderView, QPushButton
+    QLabel, QLineEdit, QHeaderView, QPushButton, QAbstractItemView
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
@@ -23,6 +23,8 @@ class PackerModeWidget(QWidget):
         self.table.setHorizontalHeaderLabels(["Product Name", "SKU", "Packed / Required", "Status", "Action"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.table.setFocusPolicy(Qt.NoFocus)
         left_layout.addWidget(self.table)
 
         right_widget = QWidget()
