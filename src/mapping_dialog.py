@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QDialogButtonBox
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QDialogButtonBox, QMessageBox
 )
 
 class ColumnMappingDialog(QDialog):
@@ -32,14 +32,28 @@ class ColumnMappingDialog(QDialog):
 
         # OK and Cancel buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
+        button_box.accepted.connect(self.validate_and_accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
-    def get_mapping(self):
-        """Returns the mapping dictionary selected by the user."""
+    def validate_and_accept(self):
+        """Validates that all required columns are mapped before accepting."""
+        self.mapping = {}
+        unmapped_columns = []
         for req_col, combo in self.combo_boxes.items():
             selected_col = combo.currentText()
             if selected_col:
                 self.mapping[req_col] = selected_col
+            else:
+                unmapped_columns.append(req_col)
+
+        if unmapped_columns:
+            msg = "All required fields must be mapped.\nPlease map the following columns:\n\n"
+            msg += "\n".join(unmapped_columns)
+            QMessageBox.warning(self, "Incomplete Mapping", msg)
+        else:
+            self.accept()
+
+    def get_mapping(self):
+        """Returns the mapping dictionary selected by the user."""
         return self.mapping
