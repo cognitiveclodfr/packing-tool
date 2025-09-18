@@ -21,7 +21,8 @@ class PackerModeWidget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Product Name", "SKU", "Packed / Required", "Status", "Action"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
@@ -78,10 +79,15 @@ class PackerModeWidget(QWidget):
             self.barcode_scanned.emit(sku)
         self.set_focus_to_scanner()
 
-    def display_order(self, items):
+    def display_order(self, items, order_state):
         self.table.setRowCount(len(items))
+
+        # A mapping from original SKU to its table row
+        sku_to_row_map = {}
+
         for row, item in enumerate(items):
             sku = item.get('SKU', '')
+            sku_to_row_map[sku] = row
             quantity = str(item.get('Quantity', ''))
 
             self.table.setItem(row, 0, QTableWidgetItem(item.get('Product_Name', '')))
@@ -96,6 +102,15 @@ class PackerModeWidget(QWidget):
             confirm_button.clicked.connect(partial(self._on_manual_confirm, sku))
             self.table.setCellWidget(row, 4, confirm_button)
 
+        # Now, update with the restored state
+        for state in order_state.values():
+            original_sku = state.get('original_sku')
+            if original_sku in sku_to_row_map:
+                row_index = sku_to_row_map[original_sku]
+                packed_count = state.get('packed', 0)
+                is_complete = packed_count >= state.get('required', 1)
+                if packed_count > 0:
+                    self.update_item_row(row_index, packed_count, is_complete)
 
         self.status_label.setText(f"Order #{items[0]['Order_Number']}\nIn Progress...")
         self.set_focus_to_scanner()
