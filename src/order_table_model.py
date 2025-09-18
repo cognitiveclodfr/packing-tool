@@ -26,9 +26,15 @@ class OrderTableModel(QAbstractTableModel):
 
         # For background color
         if role == Qt.BackgroundRole:
-            status_col_index = self._data.columns.get_loc('Status')
-            if self._data.iloc[row, status_col_index] == 'Completed':
-                return QColor('lightgreen')
+            try:
+                status_col_index = self._data.columns.get_loc('Status')
+                status = self._data.iloc[row, status_col_index]
+                if status == 'Packed':
+                    return QColor('lightgreen')
+                elif status == 'In Progress':
+                    return QColor('yellow')
+            except (KeyError, IndexError):
+                pass # In case status column doesn't exist or row is invalid
 
         return None
 

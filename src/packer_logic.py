@@ -199,7 +199,7 @@ class PackerLogic:
                 else:
                     status = "SKU_OK"
 
-                return {"row": state['row'], "packed": state['packed'], "is_complete": is_complete}, status
+                return {"row": state['row'], "packed": state['packed'], "is_complete": is_complete, "sku": found_sku}, status
             else:
                 return None, "SKU_EXTRA"
         else:

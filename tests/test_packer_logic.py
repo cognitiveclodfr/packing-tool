@@ -33,7 +33,7 @@ class TestPackerLogic(unittest.TestCase):
 
     def test_load_file_not_found(self):
         """Test loading a non-existent file."""
-        with self.assertRaisesRegex(ValueError, "Не вдалося прочитати Excel файл"):
+        with self.assertRaisesRegex(ValueError, "Failed to read the Excel file"):
             self.logic.load_packing_list_from_file('non_existent_file.xlsx')
 
     def test_process_with_missing_column_mapping(self):
@@ -49,7 +49,7 @@ class TestPackerLogic(unittest.TestCase):
             # 'Product_Name' is missing
         }
 
-        with self.assertRaisesRegex(ValueError, "Не всі необхідні колонки були зіставлені"):
+        with self.assertRaisesRegex(ValueError, "Not all required columns were mapped"):
             self.logic.process_data_and_generate_barcodes(mapping)
 
     def test_successful_processing_and_barcode_generation(self):
@@ -156,6 +156,42 @@ class TestPackerLogic(unittest.TestCase):
         result, status = self.logic.process_sku_scan('a1')
         self.assertEqual(status, "ORDER_COMPLETE")
         self.assertIsNotNone(result)
+
+    def test_processed_df_creation_with_mapping(self):
+        """Test that the processed_df is correctly created after mapping."""
+        dummy_data = {'Номер': ['1001'], 'Артикул': ['A-1'], 'Назва': ['A'], 'К-сть': [1]}
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+
+        mapping = {
+            'Order_Number': 'Номер',
+            'SKU': 'Артикул',
+            'Product_Name': 'Назва',
+            'Quantity': 'К-сть'
+        }
+        self.logic.process_data_and_generate_barcodes(mapping)
+
+        self.assertIsNotNone(self.logic.processed_df)
+        self.assertListEqual(list(self.logic.processed_df.columns), ['Order_Number', 'SKU', 'Product_Name', 'Quantity'])
+
+    def test_empty_order_number_handling(self):
+        """Test that an empty order number is handled and a barcode is generated."""
+        dummy_data = {
+            'Order_Number': [None, '1002'],
+            'SKU': ['A-1', 'B-2'],
+            'Product_Name': ['A', 'B'],
+            'Quantity': [1, 1]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+
+        num_orders = self.logic.process_data_and_generate_barcodes()
+        self.assertEqual(num_orders, 2)
+
+        # Check that a barcode for the unnamed order was created
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, 'unnamed_order_1.png')))
+        self.assertIn('unnamed_order_1', self.logic.barcode_to_order_number)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
