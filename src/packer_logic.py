@@ -22,7 +22,7 @@ class PackerLogic(QObject):
         self.barcode_to_order_number = {}
         self.current_order_number = None
         self.current_order_state = {}
-        self.session_packing_state = {}
+        self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
         self._load_session_state()
 
     def _get_state_file_path(self):
@@ -35,11 +35,14 @@ class PackerLogic(QObject):
         if os.path.exists(state_file):
             try:
                 with open(state_file, 'r') as f:
-                    self.session_packing_state = json.load(f)
+                    data = json.load(f)
+                    # Ensure both keys exist for compatibility with older state files
+                    self.session_packing_state['in_progress'] = data.get('in_progress', {})
+                    self.session_packing_state['completed_orders'] = data.get('completed_orders', [])
             except (json.JSONDecodeError, IOError):
-                self.session_packing_state = {} # Start fresh if file is corrupt or unreadable
+                 self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
         else:
-            self.session_packing_state = {}
+            self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
     def _save_session_state(self):
         """Saves the current session's packing state to a JSON file."""
@@ -187,12 +190,17 @@ class PackerLogic(QObject):
             return None, "ORDER_NOT_FOUND"
 
         original_order_number = self.barcode_to_order_number[scanned_text]
+
+        # Check if order is already completed
+        if original_order_number in self.session_packing_state['completed_orders']:
+            return None, "ORDER_ALREADY_COMPLETED"
+
         self.current_order_number = original_order_number
         items = self.orders_data[original_order_number]['items']
 
         # Check if state already exists for this order
-        if original_order_number in self.session_packing_state:
-            self.current_order_state = self.session_packing_state[original_order_number]
+        if original_order_number in self.session_packing_state['in_progress']:
+            self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
         else:
             # If not, create a new state for it
             self.current_order_state = {}
@@ -215,7 +223,7 @@ class PackerLogic(QObject):
                     'row': i
                 }
             # Immediately save the newly initialized state
-            self.session_packing_state[original_order_number] = self.current_order_state
+            self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state()
 
         return items, "ORDER_LOADED"
@@ -234,15 +242,16 @@ class PackerLogic(QObject):
                 is_complete = state['packed'] == state['required']
 
                 # Update the session state
-                self.session_packing_state[self.current_order_number] = self.current_order_state
+                self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
 
                 all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state.values())
 
                 if all_items_complete:
                     status = "ORDER_COMPLETE"
-                    # Remove completed order from session state
-                    if self.current_order_number in self.session_packing_state:
-                        del self.session_packing_state[self.current_order_number]
+                    # Remove completed order from in_progress and add to completed_orders
+                    del self.session_packing_state['in_progress'][self.current_order_number]
+                    if self.current_order_number not in self.session_packing_state['completed_orders']:
+                        self.session_packing_state['completed_orders'].append(self.current_order_number)
                 else:
                     status = "SKU_OK"
                     # Emit signal for real-time table update

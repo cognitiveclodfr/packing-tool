@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.packer_mode_button)
 
         self.orders_table = QTableView()
+        self.orders_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         main_layout.addWidget(self.orders_table)
 
         self.status_label = QLabel("Start a new session to load a packing list.")
@@ -238,7 +239,6 @@ class MainWindow(QMainWindow):
         order_summary = df.groupby('Order_Number').agg(agg_dict).reset_index()
         order_summary.rename(columns={'SKU': 'Total_SKUs', 'Quantity': 'Total_Quantity'}, inplace=True)
 
-        # Reorder columns to have Order_Number first, then extras, then our generated ones
         final_cols = ['Order_Number'] + extra_cols + ['Total_SKUs', 'Total_Quantity']
         order_summary = order_summary[final_cols]
 
@@ -247,21 +247,23 @@ class MainWindow(QMainWindow):
         order_summary['Completed At'] = ''
 
         # Update progress and status from loaded session state
+        completed_orders = self.logic.session_packing_state.get('completed_orders', [])
+        in_progress_orders = self.logic.session_packing_state.get('in_progress', {})
+
         for index, row in order_summary.iterrows():
             order_number = row['Order_Number']
-            if order_number in self.logic.session_packing_state:
-                order_state = self.logic.session_packing_state[order_number]
-                total_packed = sum(s['packed'] for s in order_state.values())
-                total_required = sum(s['required'] for s in order_state.values())
+            total_required = order_summary.at[index, 'Total_Quantity']
 
-                order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {total_required}"
+            if order_number in completed_orders:
+                order_summary.at[index, 'Status'] = 'Completed'
+                order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
+            elif order_number in in_progress_orders:
+                order_state = in_progress_orders[order_number]
+                total_packed = sum(s['packed'] for s in order_state.values())
+
+                order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {int(total_required)}"
                 if total_packed > 0:
                     order_summary.at[index, 'Status'] = 'In Progress'
-            # Check if order was already completed from a previous run (not in packing_state)
-            elif row['Status'] == 'Completed':
-                 total_required = order_summary.at[index, 'Total_Quantity']
-                 order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
-
 
         self.order_summary_df = order_summary
         self.table_model = OrderTableModel(self.order_summary_df)
@@ -296,21 +298,19 @@ class MainWindow(QMainWindow):
                 return
 
             # Check if order is already completed
-            try:
-                order_status = self.order_summary_df.loc[self.order_summary_df['Order_Number'] == order_number_from_scan, 'Status'].iloc[0]
-                if order_status == 'Completed':
-                    self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
-                    self.error_sound.play()
-                    return
-            except (IndexError, KeyError):
-                # This can happen if the order number is somehow not in the summary df, though it should be.
-                # In this case, we can proceed as if it's a new order.
-                pass
+            if order_number_from_scan in self.logic.session_packing_state.get('completed_orders', []):
+                self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
+                self.error_sound.play()
+                return
 
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
-                self.packer_mode_widget.display_order(items)
+                self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
+            elif status == "ORDER_ALREADY_COMPLETED":
+                # This is a redundant check, but good for safety
+                self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
+                self.error_sound.play()
             else: # Should not happen due to above checks, but as a fallback
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
                 self.error_sound.play()
