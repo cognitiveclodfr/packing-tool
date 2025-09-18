@@ -71,9 +71,10 @@ class PackerModeWidget(QWidget):
         self.barcode_scanned.emit(text)
 
     def _on_manual_confirm(self, sku):
-        """Emits the barcode_scanned signal as if the SKU was scanned."""
+        """Emits the barcode_scanned signal and resets focus."""
         if sku:
             self.barcode_scanned.emit(sku)
+        self.set_focus_to_scanner()
 
     def display_order(self, items):
         self.table.setRowCount(len(items))
@@ -118,6 +119,7 @@ class PackerModeWidget(QWidget):
         self.status_label.setText("Scan the next order's barcode")
         self.notification_label.setText("")
         self.scanner_input.clear()
+        self.scanner_input.setEnabled(True) # Re-enable input
         self.set_focus_to_scanner()
 
     def set_focus_to_scanner(self):

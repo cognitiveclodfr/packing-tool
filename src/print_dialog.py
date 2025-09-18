@@ -65,7 +65,10 @@ class PrintDialog(QDialog):
             painter = QPainter()
             painter.begin(printer)
 
-            # Render the scroll area's content to the printer
-            self.scroll_content.render(painter)
+            # Grab the widget's content as a pixmap
+            pixmap = self.scroll_content.grab()
+
+            # Draw the pixmap onto the printer's page
+            painter.drawPixmap(printer.pageRect(QPrinter.DevicePixels), pixmap)
 
             painter.end()

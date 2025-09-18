@@ -231,12 +231,30 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.show_notification("", "black")
 
         if self.logic.current_order_number is None:
+            # This is an order barcode scan
+            order_number_from_scan = self.logic.barcode_to_order_number.get(text)
+            if not order_number_from_scan:
+                self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
+                self.error_sound.play()
+                return
+
+            # Check if order is already completed
+            try:
+                order_status = self.order_summary_df.loc[self.order_summary_df['Order_Number'] == order_number_from_scan, 'Status'].iloc[0]
+                if order_status == 'Completed':
+                    self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
+                    self.error_sound.play()
+                    return
+            except (IndexError, KeyError):
+                # This can happen if the order number is somehow not in the summary df, though it should be.
+                # In this case, we can proceed as if it's a new order.
+                pass
+
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
                 self.packer_mode_widget.display_order(items)
-                order_number = self.logic.current_order_number
-                self.update_order_status(order_number, "In Progress")
-            else:
+                self.update_order_status(order_number_from_scan, "In Progress")
+            else: # Should not happen due to above checks, but as a fallback
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
                 self.error_sound.play()
         else:
@@ -253,6 +271,7 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "green")
                 self.update_order_status(current_order_num, "Completed")
                 self.victory_sound.play()
+                self.packer_mode_widget.scanner_input.setEnabled(False) # Disable input
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
 
