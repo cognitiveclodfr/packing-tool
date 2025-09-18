@@ -185,9 +185,13 @@ class MainWindow(QMainWindow):
             self.packer_mode_button.setEnabled(True)
 
         except (ValueError, RuntimeError) as e:
+            print("--- A known error occurred ---")
+            traceback.print_exc()
             self.status_label.setText(f"Error: {e}")
             self.end_session()
         except Exception as e:
+            print("--- An unexpected error occurred ---")
+            traceback.print_exc()
             self.status_label.setText(f"An unexpected error occurred: {e}")
             self.end_session()
 
