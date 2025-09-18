@@ -71,12 +71,13 @@ class PackerLogic:
         TEXT_AREA_HEIGHT = 50 # Approximate height for text
         BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT
 
-        font_path = self._get_font_path()
-        try:
-            font = ImageFont.truetype(font_path, 32)
-        except IOError:
-            font = ImageFont.load_default()
-            print(f"Warning: Could not load custom font at {font_path}. Using default font.")
+        # --- DEBUG: Temporarily disabled font loading and text drawing ---
+        # font_path = self._get_font_path()
+        # try:
+        #     font = ImageFont.truetype(font_path, 32)
+        # except IOError:
+        #     font = ImageFont.load_default()
+        #     print(f"Warning: Could not load custom font at {font_path}. Using default font.")
 
 
         try:
@@ -97,8 +98,7 @@ class PackerLogic:
                 # A common module height is ~15.0
                 options = {
                     'module_height': 15.0,
-                    'font_size': 1, # Hide text by making it tiny
-                    'text_distance': 1,
+                    'write_text': False, # Explicitly disable default text
                     'quiet_zone': 2,
                 }
 
@@ -128,13 +128,13 @@ class PackerLogic:
                 barcode_y = 0
                 label_img.paste(barcode_img, (barcode_x, barcode_y))
 
-                # Add text
-                draw = ImageDraw.Draw(label_img)
-                text_bbox = draw.textbbox((0, 0), order_number, font=font)
-                text_width = text_bbox[2] - text_bbox[0]
-                text_x = (LABEL_WIDTH_PX - text_width) / 2
-                text_y = new_barcode_height + 5 # Place text below barcode with padding
-                draw.text((text_x, text_y), order_number, font=font, fill='black')
+                # --- DEBUG: Temporarily disabled text drawing ---
+                # draw = ImageDraw.Draw(label_img)
+                # text_bbox = draw.textbbox((0, 0), order_number, font=font)
+                # text_width = text_bbox[2] - text_bbox[0]
+                # text_x = (LABEL_WIDTH_PX - text_width) / 2
+                # text_y = new_barcode_height + 5 # Place text below barcode with padding
+                # draw.text((text_x, text_y), order_number, font=font, fill='black')
 
                 # Save the final image
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
