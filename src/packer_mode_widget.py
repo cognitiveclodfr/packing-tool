@@ -1,3 +1,4 @@
+from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QLineEdit, QHeaderView, QPushButton
@@ -19,7 +20,7 @@ class PackerModeWidget(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Назва товару", "SKU", "Потрібно", "Зібрано", "Статус"])
+        self.table.setHorizontalHeaderLabels(["Product Name", "SKU", "Packed / Required", "Status", "Action"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         left_layout.addWidget(self.table)
@@ -28,7 +29,7 @@ class PackerModeWidget(QWidget):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setAlignment(Qt.AlignCenter)
 
-        self.status_label = QLabel("Відскануйте баркод замовлення")
+        self.status_label = QLabel("Scan an order barcode")
         font = QFont()
         font.setPointSize(20)
         self.status_label.setFont(font)
@@ -54,7 +55,7 @@ class PackerModeWidget(QWidget):
         right_layout.addWidget(self.scanner_input)
 
         right_layout.addStretch()
-        self.exit_button = QPushButton("<< Назад до меню")
+        self.exit_button = QPushButton("<< Back to Menu")
         font = self.exit_button.font()
         font.setPointSize(14)
         self.exit_button.setFont(font)
@@ -69,27 +70,43 @@ class PackerModeWidget(QWidget):
         self.scanner_input.clear()
         self.barcode_scanned.emit(text)
 
+    def _on_manual_confirm(self, sku):
+        """Emits the barcode_scanned signal as if the SKU was scanned."""
+        if sku:
+            self.barcode_scanned.emit(sku)
+
     def display_order(self, items):
         self.table.setRowCount(len(items))
         for row, item in enumerate(items):
+            sku = item.get('SKU', '')
+            quantity = str(item.get('Quantity', ''))
+
             self.table.setItem(row, 0, QTableWidgetItem(item.get('Product_Name', '')))
-            self.table.setItem(row, 1, QTableWidgetItem(item.get('SKU', '')))
-            self.table.setItem(row, 2, QTableWidgetItem(str(item.get('Quantity', ''))))
-            self.table.setItem(row, 3, QTableWidgetItem("0"))
+            self.table.setItem(row, 1, QTableWidgetItem(sku))
+            self.table.setItem(row, 2, QTableWidgetItem(f"0 / {quantity}"))
 
-            status_item = QTableWidgetItem("Очікує")
+            status_item = QTableWidgetItem("Pending")
             status_item.setBackground(QColor("yellow"))
-            self.table.setItem(row, 4, status_item)
+            self.table.setItem(row, 3, status_item)
 
-        self.status_label.setText(f"Замовлення #{items[0]['Order_Number']}\nВ роботі...")
+            confirm_button = QPushButton("Confirm Manually")
+            confirm_button.clicked.connect(partial(self._on_manual_confirm, sku))
+            self.table.setCellWidget(row, 4, confirm_button)
+
+
+        self.status_label.setText(f"Order #{items[0]['Order_Number']}\nIn Progress...")
         self.set_focus_to_scanner()
 
     def update_item_row(self, row, packed_count, is_complete):
-        self.table.item(row, 3).setText(str(packed_count))
+        required_quantity = self.table.item(row, 2).text().split(' / ')[1]
+        self.table.item(row, 2).setText(f"{packed_count} / {required_quantity}")
+
         if is_complete:
-            status_item = QTableWidgetItem("Зібрано")
+            status_item = QTableWidgetItem("Packed")
             status_item.setBackground(QColor("lightgreen"))
-            self.table.setItem(row, 4, status_item)
+            self.table.setItem(row, 3, status_item)
+            # Disable the button once the item is fully packed
+            self.table.cellWidget(row, 4).setEnabled(False)
 
     def show_notification(self, text, color_name):
         self.notification_label.setText(text)
@@ -98,7 +115,7 @@ class PackerModeWidget(QWidget):
     def clear_screen(self):
         self.table.clearContents()
         self.table.setRowCount(0)
-        self.status_label.setText("Відскануйте баркод наступного замовлення")
+        self.status_label.setText("Scan the next order's barcode")
         self.notification_label.setText("")
         self.scanner_input.clear()
         self.set_focus_to_scanner()
