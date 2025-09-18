@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QWidget
 )
 from PySide6.QtGui import QPixmap, QPainter
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 
 class PrintDialog(QDialog):
@@ -62,13 +63,43 @@ class PrintDialog(QDialog):
         dialog = QPrintDialog(printer, self)
 
         if dialog.exec() == QDialog.Accepted:
+            printer.setDocName("Barcodes")
             painter = QPainter()
             painter.begin(printer)
 
-            # Grab the widget's content as a pixmap
-            pixmap = self.scroll_content.grab()
+            # --- Manually construct the print page ---
+            page_rect = printer.pageRect(QPrinter.Point)
+            margin = 50 # 5mm margin in printer points (approx)
 
-            # Draw the pixmap onto the printer's page
-            painter.drawPixmap(printer.pageRect(QPrinter.DevicePixels), pixmap)
+            x_pos, y_pos = margin, margin
+
+            # Define label size in printer points (1 point = 1/72 inch)
+            # This is an approximation for layout, the generated barcode image has the correct DPI
+            label_width = 300
+            label_height = 150
+
+            # Spacing between labels
+            x_spacing = 20
+            y_spacing = 20
+
+            for order_number, data in self.orders_data.items():
+                if x_pos + label_width > page_rect.width() - margin:
+                    # Move to next row
+                    x_pos = margin
+                    y_pos += label_height + y_spacing
+
+                if y_pos + label_height > page_rect.height() - margin:
+                    # New page
+                    printer.newPage()
+                    x_pos = margin
+                    y_pos = margin
+
+                barcode_path = data['barcode_path']
+                pixmap = QPixmap(barcode_path)
+
+                target_rect = QRectF(x_pos, y_pos, label_width, label_height)
+                painter.drawPixmap(target_rect, pixmap, pixmap.rect())
+
+                x_pos += label_width + x_spacing
 
             painter.end()

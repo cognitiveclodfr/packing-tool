@@ -73,11 +73,14 @@ class PackerLogic:
 
         font = None
         try:
-            font_path = self._get_font_path()
-            font = ImageFont.truetype(font_path, 32)
+            # Use a common system font like Arial, which is likely to be on Windows
+            font = ImageFont.truetype("arial.ttf", 32)
+        except IOError:
+            print(f"Warning: Arial font not found. Falling back to default font.")
+            font = ImageFont.load_default() # Load Pillow's default font as a fallback
         except Exception as e:
-            print(f"CRITICAL: Font loading failed: {e}. Text will not be rendered on barcodes.")
-            # Font remains None, we'll handle this gracefully later
+            print(f"CRITICAL: An unexpected error occurred during font loading: {e}.")
+            # Font remains None, text will not be rendered
 
         try:
             grouped = df.groupby('Order_Number')
@@ -143,12 +146,6 @@ class PackerLogic:
             return len(self.orders_data)
         except Exception as e:
             raise RuntimeError(f"Error during barcode generation: {e}")
-
-    def _get_font_path(self):
-        """Gets the path to the DejaVuSans.ttf font file."""
-        # This makes the path relative to this file, which is more robust
-        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(base_path, 'assets', 'DejaVuSans.ttf')
 
     def start_order_packing(self, scanned_text):
         """Starts packing an order based on a scanned barcode."""
