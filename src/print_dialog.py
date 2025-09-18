@@ -8,52 +8,52 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 class PrintDialog(QDialog):
     def __init__(self, orders_data, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Друк баркодів")
+        self.setWindowTitle("Print Barcodes")
         self.setMinimumSize(800, 600)
 
         self.orders_data = orders_data
 
         main_layout = QVBoxLayout(self)
 
-        # Створюємо область для прокрутки, якщо баркодів багато
+        # Create a scroll area for when there are many barcodes
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         main_layout.addWidget(scroll_area)
 
-        # Віджет, що буде містити сітку з баркодами
+        # Widget to hold the grid of barcodes
         self.scroll_content = QWidget()
         scroll_area.setWidget(self.scroll_content)
 
         grid_layout = QGridLayout(self.scroll_content)
 
-        # Заповнюємо сітку баркодами та номерами
+        # Populate the grid with barcodes and numbers
         row, col = 0, 0
         for order_number, data in self.orders_data.items():
             barcode_path = data['barcode_path']
 
-            # Контейнер для одного баркоду
+            # Container for a single barcode item
             item_widget = QWidget()
             item_layout = QVBoxLayout(item_widget)
 
-            # Зображення баркоду
+            # Barcode image
             pixmap = QPixmap(barcode_path)
             barcode_label = QLabel()
-            barcode_label.setPixmap(pixmap.scaledToWidth(200)) # Масштабуємо для відображення
+            barcode_label.setPixmap(pixmap.scaledToWidth(200)) # Scale for display
             item_layout.addWidget(barcode_label)
 
-            # Номер замовлення
+            # Order number text
             number_label = QLabel(order_number)
             item_layout.addWidget(number_label)
 
             grid_layout.addWidget(item_widget, row, col)
 
             col += 1
-            if col >= 3: # 3 баркоди в ряд
+            if col >= 3: # 3 barcodes per row
                 col = 0
                 row += 1
 
-        # Кнопка друку
-        print_button = QPushButton("Надрукувати")
+        # Print button
+        print_button = QPushButton("Print")
         print_button.clicked.connect(self.print_widget)
         main_layout.addWidget(print_button)
 
@@ -65,7 +65,7 @@ class PrintDialog(QDialog):
             painter = QPainter()
             painter.begin(printer)
 
-            # Рендеримо вміст scroll area на принтер
+            # Render the scroll area's content to the printer
             self.scroll_content.render(painter)
 
             painter.end()

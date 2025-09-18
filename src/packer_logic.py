@@ -1,7 +1,10 @@
 import os
+import sys
 import pandas as pd
 import barcode
 from barcode.writer import ImageWriter
+from PIL import Image, ImageDraw, ImageFont
+import io
 
 REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity']
 
@@ -23,10 +26,10 @@ class PackerLogic:
         try:
             df = pd.read_excel(file_path, dtype=str).fillna('')
         except Exception as e:
-            raise ValueError(f"Не вдалося прочитати Excel файл: {e}")
+            raise ValueError(f"Failed to read the Excel file: {e}")
 
         if df.empty:
-            raise ValueError("Файл порожній або не містить даних.")
+            raise ValueError("The file is empty or contains no data.")
 
         self.packing_list_df = df
         return self.packing_list_df
@@ -34,28 +37,47 @@ class PackerLogic:
     def process_data_and_generate_barcodes(self, column_mapping=None):
         """Processes the loaded dataframe and generates barcodes."""
         if self.packing_list_df is None:
-            raise ValueError("Пакувальний лист не завантажено.")
+            raise ValueError("Packing list not loaded.")
 
         df = self.packing_list_df.copy()
         if column_mapping:
-            # Перевіряємо, чи всі необхідні колонки зіставлені
+            # Check if all required columns are mapped
             mapped_cols = set(column_mapping.keys())
             required_cols = set(REQUIRED_COLUMNS)
             if not required_cols.issubset(mapped_cols):
                 missing = required_cols - mapped_cols
-                raise ValueError(f"Не всі необхідні колонки були зіставлені. Відсутні: {', '.join(missing)}")
+                raise ValueError(f"Not all required columns were mapped. Missing: {', '.join(missing)}")
 
             inverted_mapping = {v: k for k, v in column_mapping.items()}
             df.rename(columns=inverted_mapping, inplace=True)
 
-        # Перевірка після потенційного перейменування
+        # Verify columns after potential renaming
         missing_final = [col for col in REQUIRED_COLUMNS if col not in df.columns]
         if missing_final:
-            raise ValueError(f"У файлі відсутні необхідні колонки: {', '.join(missing_final)}")
+            raise ValueError(f"The file is missing required columns: {', '.join(missing_final)}")
 
+        self.processed_df = df
         self.orders_data = {}
         self.barcode_to_order_number = {}
         code128 = barcode.get_barcode_class('code128')
+
+        # Barcode dimensions
+        DPI = 203
+        LABEL_WIDTH_MM = 65
+        LABEL_HEIGHT_MM = 35
+        LABEL_WIDTH_PX = int((LABEL_WIDTH_MM / 25.4) * DPI)
+        LABEL_HEIGHT_PX = int((LABEL_HEIGHT_MM / 25.4) * DPI)
+
+        TEXT_AREA_HEIGHT = 50 # Approximate height for text
+        BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT
+
+        font_path = self._get_font_path()
+        try:
+            font = ImageFont.truetype(font_path, 32)
+        except IOError:
+            font = ImageFont.load_default()
+            print(f"Warning: Could not load custom font at {font_path}. Using default font.")
+
 
         try:
             grouped = df.groupby('Order_Number')
@@ -68,10 +90,55 @@ class PackerLogic:
 
                 self.barcode_to_order_number[safe_barcode_content] = order_number
 
+                # Generate barcode in memory
+                barcode_obj = code128(safe_barcode_content, writer=ImageWriter())
+
+                # Setting module_height dynamically is tricky. Let's try to set the image height instead.
+                # A common module height is ~15.0
+                options = {
+                    'module_height': 15.0,
+                    'font_size': 1, # Hide text by making it tiny
+                    'text_distance': 1,
+                    'quiet_zone': 2,
+                }
+
+                buffer = io.BytesIO()
+                barcode_obj.write(buffer, options)
+                buffer.seek(0)
+
+                # Create final label image with Pillow
+                barcode_img = Image.open(buffer)
+
+                # Resize barcode to fit allocated space, preserving aspect ratio
+                barcode_aspect_ratio = barcode_img.width / barcode_img.height
+                new_barcode_height = BARCODE_HEIGHT_PX
+                new_barcode_width = int(new_barcode_height * barcode_aspect_ratio)
+
+                if new_barcode_width > LABEL_WIDTH_PX:
+                    new_barcode_width = LABEL_WIDTH_PX
+                    new_barcode_height = int(new_barcode_width / barcode_aspect_ratio)
+
+                barcode_img = barcode_img.resize((new_barcode_width, new_barcode_height), Image.LANCZOS)
+
+                # Create a new image for the label
+                label_img = Image.new('RGB', (LABEL_WIDTH_PX, LABEL_HEIGHT_PX), 'white')
+
+                # Paste barcode onto the label
+                barcode_x = (LABEL_WIDTH_PX - new_barcode_width) // 2
+                barcode_y = 0
+                label_img.paste(barcode_img, (barcode_x, barcode_y))
+
+                # Add text
+                draw = ImageDraw.Draw(label_img)
+                text_bbox = draw.textbbox((0, 0), order_number, font=font)
+                text_width = text_bbox[2] - text_bbox[0]
+                text_x = (LABEL_WIDTH_PX - text_width) / 2
+                text_y = new_barcode_height + 5 # Place text below barcode with padding
+                draw.text((text_x, text_y), order_number, font=font, fill='black')
+
+                # Save the final image
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
-                bc = code128(safe_barcode_content, writer=ImageWriter())
-                with open(barcode_path, 'wb') as f:
-                    bc.write(f, options={'write_text': False})
+                label_img.save(barcode_path)
 
                 self.orders_data[order_number] = {
                     'barcode_path': barcode_path,
@@ -79,7 +146,13 @@ class PackerLogic:
                 }
             return len(self.orders_data)
         except Exception as e:
-            raise RuntimeError(f"Помилка під час генерації баркодів: {e}")
+            raise RuntimeError(f"Error during barcode generation: {e}")
+
+    def _get_font_path(self):
+        """Gets the path to the DejaVuSans.ttf font file."""
+        # This makes the path relative to this file, which is more robust
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_path, 'assets', 'DejaVuSans.ttf')
 
     def start_order_packing(self, scanned_text):
         """Starts packing an order based on a scanned barcode."""

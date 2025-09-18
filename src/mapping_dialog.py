@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 class ColumnMappingDialog(QDialog):
     def __init__(self, required_columns, file_columns, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Зіставлення колонок")
+        self.setWindowTitle("Column Mapping")
 
         self.mapping = {}
         self.required_columns = required_columns
@@ -13,31 +13,31 @@ class ColumnMappingDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        description = QLabel("Будь ласка, вкажіть, які колонки у вашому файлі відповідають необхідним полям.")
+        description = QLabel("Please specify which columns in your file correspond to the required fields.")
         layout.addWidget(description)
 
         self.combo_boxes = {}
         for req_col in self.required_columns:
             row_layout = QHBoxLayout()
 
-            label = QLabel(f"Потрібна колонка: <b>{req_col}</b>")
+            label = QLabel(f"Required column: <b>{req_col}</b>")
             row_layout.addWidget(label)
 
             combo = QComboBox()
-            combo.addItems([""] + self.file_columns) # Додаємо порожній варіант
+            combo.addItems([""] + self.file_columns) # Add a blank option
             row_layout.addWidget(combo)
 
             self.combo_boxes[req_col] = combo
             layout.addLayout(row_layout)
 
-        # Кнопки OK та Cancel
+        # OK and Cancel buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
     def get_mapping(self):
-        """Повертає словник зіставлення, вибраний користувачем."""
+        """Returns the mapping dictionary selected by the user."""
         for req_col, combo in self.combo_boxes.items():
             selected_col = combo.currentText()
             if selected_col:
