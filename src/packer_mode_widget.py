@@ -1,12 +1,14 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QLineEdit, QHeaderView
+    QLabel, QLineEdit, QHeaderView, QPushButton
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
 
 class PackerModeWidget(QWidget):
     barcode_scanned = Signal(str)
+    exit_packing_mode = Signal()
+    manual_confirm_requested = Signal(int) # Signal with the row index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -17,8 +19,8 @@ class PackerModeWidget(QWidget):
         left_layout = QVBoxLayout(left_widget)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Назва товару", "SKU", "Потрібно", "Зібрано", "Статус"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Product Name", "SKU", "Required", "Packed", "Status", "Action"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         left_layout.addWidget(self.table)
@@ -27,7 +29,7 @@ class PackerModeWidget(QWidget):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setAlignment(Qt.AlignCenter)
 
-        self.status_label = QLabel("Відскануйте баркод замовлення")
+        self.status_label = QLabel("Scan order barcode")
         font = QFont()
         font.setPointSize(20)
         self.status_label.setFont(font)
@@ -52,6 +54,14 @@ class PackerModeWidget(QWidget):
         self.scanner_input.returnPressed.connect(self._on_scan)
         right_layout.addWidget(self.scanner_input)
 
+        right_layout.addStretch()
+        self.exit_button = QPushButton("<< Back to Menu")
+        font = self.exit_button.font()
+        font.setPointSize(14)
+        self.exit_button.setFont(font)
+        self.exit_button.clicked.connect(self.exit_packing_mode.emit)
+        right_layout.addWidget(self.exit_button)
+
         main_layout.addWidget(left_widget, stretch=2)
         main_layout.addWidget(right_widget, stretch=1)
 
@@ -68,17 +78,21 @@ class PackerModeWidget(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(str(item.get('Quantity', ''))))
             self.table.setItem(row, 3, QTableWidgetItem("0"))
 
-            status_item = QTableWidgetItem("Очікує")
+            status_item = QTableWidgetItem("Pending")
             status_item.setBackground(QColor("yellow"))
             self.table.setItem(row, 4, status_item)
 
-        self.status_label.setText(f"Замовлення #{items[0]['Order_Number']}\nВ роботі...")
+            confirm_button = QPushButton("Confirm")
+            confirm_button.clicked.connect(lambda checked=False, r=row: self.manual_confirm_requested.emit(r))
+            self.table.setCellWidget(row, 5, confirm_button)
+
+        self.status_label.setText(f"Order #{items[0]['Order_Number']}\nIn progress...")
         self.set_focus_to_scanner()
 
     def update_item_row(self, row, packed_count, is_complete):
         self.table.item(row, 3).setText(str(packed_count))
         if is_complete:
-            status_item = QTableWidgetItem("Зібрано")
+            status_item = QTableWidgetItem("Packed")
             status_item.setBackground(QColor("lightgreen"))
             self.table.setItem(row, 4, status_item)
 
@@ -89,7 +103,7 @@ class PackerModeWidget(QWidget):
     def clear_screen(self):
         self.table.clearContents()
         self.table.setRowCount(0)
-        self.status_label.setText("Відскануйте баркод наступного замовлення")
+        self.status_label.setText("Scan the next order's barcode")
         self.notification_label.setText("")
         self.scanner_input.clear()
         self.set_focus_to_scanner()

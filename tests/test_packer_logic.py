@@ -3,8 +3,9 @@ import sys
 import os
 import tempfile
 import shutil
+import pandas as pd
 
-# Додаємо шлях до src, щоб можна було імпортувати packer_logic
+# Add the path to src to be able to import packer_logic
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from packer_logic import PackerLogic
@@ -12,46 +13,195 @@ from packer_logic import PackerLogic
 class TestPackerLogic(unittest.TestCase):
 
     def setUp(self):
-        """Налаштовує тимчасову папку для тестів."""
+        """Set up a temporary directory for tests."""
         self.test_dir = tempfile.mkdtemp()
         self.logic = PackerLogic(barcode_dir=self.test_dir)
+        # Helper to create a dummy excel file
+        self.dummy_file_path = os.path.join(self.test_dir, 'test_list.xlsx')
 
     def tearDown(self):
-        """Прибирає тимчасову папку після тестів."""
+        """Remove the temporary directory after tests."""
         shutil.rmtree(self.test_dir)
 
-    def test_load_and_process_user_file(self):
-        """
-        Тест, що відтворює помилку користувача, використовуючи його файл.
-        Ми очікуємо, що цей тест впаде з тією ж помилкою.
-        """
-        user_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../packing_list_ALL.xlsx'))
+    def _create_dummy_excel(self, data, file_path=None):
+        """Helper to create an Excel file for testing."""
+        if file_path is None:
+            file_path = self.dummy_file_path
+        df = pd.DataFrame(data)
+        df.to_excel(file_path, index=False)
+        return file_path
 
-        # Перевіряємо, чи файл існує, перш ніж запускати тест
-        if not os.path.exists(user_file_path):
-            self.skipTest(f"Тестовий файл не знайдено: {user_file_path}")
+    def test_load_file_not_found(self):
+        """Test loading a non-existent file."""
+        with self.assertRaisesRegex(ValueError, "Failed to read Excel file"):
+            self.logic.load_packing_list_from_file('non_existent_file.xlsx')
 
-        print(f"Тестування з файлом: {user_file_path}")
+    def test_process_with_missing_column_mapping(self):
+        """Test processing data when a required column is not mapped."""
+        dummy_data = {'Order': ['1'], 'Identifier': ['A-1'], 'Name': ['Prod A'], 'Amount': [1]}
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
 
-        # Етап 1: Завантаження
-        df = self.logic.load_packing_list_from_file(user_file_path)
-        file_columns = df.columns.tolist()
-        print(f"Знайдено колонки: {file_columns}")
-
-        # Етап 2: Симуляція мапінгу від користувача.
-        # Product_Name відсутній у файлі, тому ми не можемо його зіставити.
         mapping = {
-            'Order_Number': 'Order_Number',
-            'SKU': 'SKU',
-            'Quantity': 'Quantity',
-            # 'Product_Name': ???
+            'Order_Number': 'Order',
+            'SKU': 'Identifier',
+            'Quantity': 'Amount'
+            # 'Product_Name' is missing
         }
 
-        # Етап 3: Обробка. Ми очікуємо, що цей крок викличе помилку,
-        # оскільки Product_Name не може бути зіставлений.
-        # В ідеалі, логіка має кидати ValueError.
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Not all required columns were mapped"):
             self.logic.process_data_and_generate_barcodes(mapping)
 
+    def test_successful_processing_and_barcode_generation(self):
+        """Test successful data processing and barcode generation."""
+        dummy_data = {
+            'Order_Number': ['1001', '1001', '1002'],
+            'SKU': ['A-1', 'B-2', 'A-1'],
+            'Product_Name': ['Product A', 'Product B', 'Product A'],
+            'Quantity': [1, 2, 3]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+
+        num_orders = self.logic.process_data_and_generate_barcodes()
+        self.assertEqual(num_orders, 2)
+
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, '1001.png')))
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, '1002.png')))
+
+        self.assertIn('1001', self.logic.orders_data)
+        self.assertEqual(len(self.logic.orders_data['1001']['items']), 2)
+        self.assertIn('1002', self.logic.orders_data)
+        self.assertEqual(len(self.logic.orders_data['1002']['items']), 1)
+
+    def test_packing_logic_flow(self):
+        """Test the entire packing flow for a single order."""
+        dummy_data = {
+            'Order_Number': ['1001', '1001'],
+            'SKU': ['A-1', 'B-2'],
+            'Product_Name': ['Product A', 'Product B'],
+            'Quantity': [1, 2]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        # Start packing with a valid barcode
+        items, status = self.logic.start_order_packing('1001')
+        self.assertEqual(status, "ORDER_LOADED")
+        self.assertIsNotNone(items)
+        self.assertEqual(len(items), 2)
+
+        # Scan correct SKU
+        result, status = self.logic.process_sku_scan('A-1')
+        self.assertEqual(status, "SKU_OK")
+        self.assertEqual(result['packed'], 1)
+        self.assertTrue(result['is_complete'])
+
+        # Scan another correct SKU
+        result, status = self.logic.process_sku_scan('B-2')
+        self.assertEqual(status, "SKU_OK")
+        self.assertEqual(result['packed'], 1)
+        self.assertFalse(result['is_complete'])
+
+        # Scan the second item of the same SKU
+        result, status = self.logic.process_sku_scan('B-2')
+        self.assertEqual(status, "ORDER_COMPLETE")
+        self.assertEqual(result['packed'], 2)
+        self.assertTrue(result['is_complete'])
+
+    def test_packing_with_extra_and_unknown_skus(self):
+        """Test scanning extra and unknown SKUs."""
+        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1]}
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        self.logic.start_order_packing('1001')
+
+        # Complete the item
+        self.logic.process_sku_scan('A-1')
+
+        # Scan extra SKU
+        result, status = self.logic.process_sku_scan('A-1')
+        self.assertEqual(status, "SKU_EXTRA")
+        self.assertIsNone(result)
+
+        # Scan unknown SKU
+        result, status = self.logic.process_sku_scan('C-3')
+        self.assertEqual(status, "SKU_NOT_FOUND")
+        self.assertIsNone(result)
+
+    def test_start_packing_unknown_order(self):
+        """Test starting to pack an order that does not exist."""
+        items, status = self.logic.start_order_packing('UNKNOWN_ORDER')
+        self.assertEqual(status, "ORDER_NOT_FOUND")
+        self.assertIsNone(items)
+
+    def test_sku_normalization(self):
+        """Test that SKUs are normalized correctly for matching."""
+        dummy_data = {
+            'Order_Number': ['1001'],
+            'SKU': ['A-1'],
+            'Product_Name': ['Product A'],
+            'Quantity': [1]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        self.logic.start_order_packing('1001')
+
+        # Scan with a normalized SKU (no hyphen, different case)
+        result, status = self.logic.process_sku_scan('a1')
+        self.assertEqual(status, "ORDER_COMPLETE")
+        self.assertIsNotNone(result)
+
+    def test_session_data_clears_correctly(self):
+        """Test that session data is properly cleared."""
+        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1]}
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+        self.logic.start_order_packing('1001')
+        self.logic.process_sku_scan('A-1')
+
+        # Verify state exists before clearing
+        self.assertIsNotNone(self.logic.packing_list_df)
+        self.assertNotEqual(self.logic.orders_data, {})
+        self.assertNotEqual(self.logic.order_completion_status, {})
+
+        self.logic.clear_session_data()
+
+        # Verify state is cleared
+        self.assertIsNone(self.logic.packing_list_df)
+        self.assertEqual(self.logic.orders_data, {})
+        self.assertEqual(self.logic.order_completion_status, {})
+        self.assertIsNone(self.logic.current_order_number)
+
+    def test_manual_confirmation_flow(self):
+        """Tests the manual item confirmation logic."""
+        dummy_data = {
+            'Order_Number': ['ORDER-1'], 'SKU': ['SKU-1'], 'Product_Name': ['A'], 'Quantity': [2]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+        self.logic.start_order_packing('ORDER-1')
+
+        # Manually confirm the first item
+        result, status = self.logic.manual_confirm_item('SKU-1')
+        self.assertEqual(status, "SKU_OK")
+        self.assertEqual(self.logic.current_order_state['SKU-1']['packed'], 1)
+
+        # Manually confirm the second item
+        result, status = self.logic.manual_confirm_item('SKU-1')
+        self.assertEqual(status, "ORDER_COMPLETE")
+        self.assertIn('ORDER-1', self.logic.order_completion_status)
+
+        # Try to confirm an extra item
+        result, status = self.logic.manual_confirm_item('SKU-1')
+        self.assertEqual(status, "SKU_EXTRA")
+
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)
