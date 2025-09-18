@@ -3,7 +3,7 @@ import os
 import json
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
-    QTableView, QHBoxLayout, QMessageBox
+    QTableView, QHBoxLayout, QMessageBox, QHeaderView
 )
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtMultimedia import QSoundEffect
