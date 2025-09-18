@@ -71,14 +71,13 @@ class PackerLogic:
         TEXT_AREA_HEIGHT = 50 # Approximate height for text
         BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT
 
-        # --- DEBUG: Temporarily disabled font loading and text drawing ---
-        # font_path = self._get_font_path()
-        # try:
-        #     font = ImageFont.truetype(font_path, 32)
-        # except IOError:
-        #     font = ImageFont.load_default()
-        #     print(f"Warning: Could not load custom font at {font_path}. Using default font.")
-
+        font = None
+        try:
+            font_path = self._get_font_path()
+            font = ImageFont.truetype(font_path, 32)
+        except Exception as e:
+            print(f"CRITICAL: Font loading failed: {e}. Text will not be rendered on barcodes.")
+            # Font remains None, we'll handle this gracefully later
 
         try:
             grouped = df.groupby('Order_Number')
@@ -94,11 +93,9 @@ class PackerLogic:
                 # Generate barcode in memory
                 barcode_obj = code128(safe_barcode_content, writer=ImageWriter())
 
-                # Setting module_height dynamically is tricky. Let's try to set the image height instead.
-                # A common module height is ~15.0
                 options = {
                     'module_height': 15.0,
-                    'write_text': False, # Explicitly disable default text
+                    'write_text': False,
                     'quiet_zone': 2,
                 }
 
@@ -106,10 +103,8 @@ class PackerLogic:
                 barcode_obj.write(buffer, options)
                 buffer.seek(0)
 
-                # Create final label image with Pillow
                 barcode_img = Image.open(buffer)
 
-                # Resize barcode to fit allocated space, preserving aspect ratio
                 barcode_aspect_ratio = barcode_img.width / barcode_img.height
                 new_barcode_height = BARCODE_HEIGHT_PX
                 new_barcode_width = int(new_barcode_height * barcode_aspect_ratio)
@@ -120,23 +115,24 @@ class PackerLogic:
 
                 barcode_img = barcode_img.resize((new_barcode_width, new_barcode_height), Image.LANCZOS)
 
-                # Create a new image for the label
                 label_img = Image.new('RGB', (LABEL_WIDTH_PX, LABEL_HEIGHT_PX), 'white')
 
-                # Paste barcode onto the label
                 barcode_x = (LABEL_WIDTH_PX - new_barcode_width) // 2
                 barcode_y = 0
                 label_img.paste(barcode_img, (barcode_x, barcode_y))
 
-                # --- DEBUG: Temporarily disabled text drawing ---
-                # draw = ImageDraw.Draw(label_img)
-                # text_bbox = draw.textbbox((0, 0), order_number, font=font)
-                # text_width = text_bbox[2] - text_bbox[0]
-                # text_x = (LABEL_WIDTH_PX - text_width) / 2
-                # text_y = new_barcode_height + 5 # Place text below barcode with padding
-                # draw.text((text_x, text_y), order_number, font=font, fill='black')
+                # Add text, but only if the font was loaded successfully
+                if font:
+                    try:
+                        draw = ImageDraw.Draw(label_img)
+                        text_bbox = draw.textbbox((0, 0), order_number, font=font)
+                        text_width = text_bbox[2] - text_bbox[0]
+                        text_x = (LABEL_WIDTH_PX - text_width) / 2
+                        text_y = new_barcode_height + 5
+                        draw.text((text_x, text_y), order_number, font=font, fill='black')
+                    except Exception as e:
+                        print(f"Warning: Failed to draw text for order '{order_number}'. Error: {e}")
 
-                # Save the final image
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
                 label_img.save(barcode_path)
 
