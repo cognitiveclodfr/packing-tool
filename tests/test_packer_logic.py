@@ -157,5 +157,78 @@ class TestPackerLogic(unittest.TestCase):
         self.assertEqual(status, "ORDER_COMPLETE")
         self.assertIsNotNone(result)
 
+    def test_invalid_quantity_in_excel(self):
+        """Test that invalid quantities are handled gracefully."""
+        dummy_data = {
+            'Order_Number': ['1001'],
+            'SKU': ['A-1'],
+            'Product_Name': ['Product A'],
+            'Quantity': ['invalid_string'] # Invalid quantity
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        self.logic.start_order_packing('1001')
+        # The logic should treat 'invalid_string' as a quantity of 1
+        self.assertEqual(self.logic.current_order_state['a1']['required'], 1)
+
+        # Scan the item, should complete the order
+        result, status = self.logic.process_sku_scan('A-1')
+        self.assertEqual(status, "ORDER_COMPLETE")
+
+    def test_scan_sku_for_wrong_order(self):
+        """Test scanning an SKU that belongs to a different order."""
+        dummy_data = {
+            'Order_Number': ['1001', '1002'],
+            'SKU': ['A-1', 'B-2'],
+            'Product_Name': ['Product A', 'Product B'],
+            'Quantity': [1, 1]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        # Start packing order 1001
+        self.logic.start_order_packing('1001')
+
+        # Scan an SKU from order 1002
+        result, status = self.logic.process_sku_scan('B-2')
+        self.assertEqual(status, "SKU_NOT_FOUND")
+        self.assertIsNone(result)
+
+    def test_clear_current_order(self):
+        """Test that the current order state is cleared properly."""
+        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1]}
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        self.logic.start_order_packing('1001')
+        self.assertIsNotNone(self.logic.current_order_number)
+        self.assertNotEqual(self.logic.current_order_state, {})
+
+        self.logic.clear_current_order()
+        self.assertIsNone(self.logic.current_order_number)
+        self.assertEqual(self.logic.current_order_state, {})
+
+    def test_empty_sku_in_data(self):
+        """Test that rows with empty SKUs are handled gracefully."""
+        dummy_data = {
+            'Order_Number': ['1001', '1001'],
+            'SKU': ['A-1', ''], # One SKU is empty
+            'Product_Name': ['Product A', 'Product B'],
+            'Quantity': [1, 1]
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        self.logic.start_order_packing('1001')
+        # The state should only contain the valid SKU, keyed by its normalized form
+        self.assertIn('a1', self.logic.current_order_state)
+        self.assertNotIn('', self.logic.current_order_state)
+        self.assertEqual(len(self.logic.current_order_state), 1)
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
