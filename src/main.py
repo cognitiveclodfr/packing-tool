@@ -1,8 +1,9 @@
 import sys
 import os
+import json
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
-    QTableView, QHBoxLayout
+    QTableView, QHBoxLayout, QMessageBox
 )
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtMultimedia import QSoundEffect
@@ -16,6 +17,30 @@ from packer_mode_widget import PackerModeWidget
 from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
 from order_table_model import OrderTableModel
+
+def find_latest_session_dir(base_dir="."):
+    """Finds the most recent, valid, incomplete session directory."""
+    session_pattern = "OrdersFulfillment_"
+    session_dirs = []
+    try:
+        session_dirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and d.startswith(session_pattern)]
+    except FileNotFoundError:
+        return None # No base directory yet
+
+    valid_sessions = []
+    for dirname in session_dirs:
+        dirpath = os.path.join(base_dir, dirname)
+        # A valid, incomplete session must have a session_info file.
+        if os.path.exists(os.path.join(dirpath, "session_info.json")):
+            valid_sessions.append(dirpath)
+
+    if not valid_sessions:
+        return None
+
+    # Return the one that was most recently modified
+    latest_session_dir = max(valid_sessions, key=os.path.getmtime)
+    return latest_session_dir
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -92,7 +117,7 @@ class MainWindow(QMainWindow):
         if os.path.exists(sound_files["victory"]): self.victory_sound.setSource(QUrl.fromLocalFile(sound_files["victory"]))
         else: self.sounds_missing = True
 
-    def start_session(self, file_path=None):
+    def start_session(self, file_path=None, restore_dir=None):
         if self.session_manager.is_active():
             self.status_label.setText("A session is already active. Please end it first.")
             return
@@ -103,8 +128,9 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("Session start cancelled.")
                 return
 
-        self.session_manager.start_session(file_path)
+        self.session_manager.start_session(file_path, restore_dir=restore_dir)
         self.logic = PackerLogic(self.session_manager.get_output_dir())
+        self.logic.item_packed.connect(self._on_item_packed)
 
         self.load_and_process_file(file_path)
 
@@ -146,6 +172,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")
             print(f"Error during end_session: {e}")
+
+        if self.logic:
+            self.logic.end_session_cleanup()
 
         self.session_manager.end_session()
         self.logic = None
@@ -197,14 +226,42 @@ class MainWindow(QMainWindow):
 
     def setup_order_table(self):
         df = self.logic.processed_df
+        extra_cols = [col for col in df.columns if col not in REQUIRED_COLUMNS]
 
-        order_summary = df.groupby('Order_Number').agg(
-            Total_SKUs=('SKU', 'nunique'),
-            Total_Quantity=('Quantity', lambda x: pd.to_numeric(x, errors='coerce').sum())
-        ).reset_index()
+        agg_dict = {
+            'SKU': 'nunique',
+            'Quantity': lambda x: pd.to_numeric(x, errors='coerce').sum()
+        }
+        for col in extra_cols:
+            agg_dict[col] = 'first'
 
+        order_summary = df.groupby('Order_Number').agg(agg_dict).reset_index()
+        order_summary.rename(columns={'SKU': 'Total_SKUs', 'Quantity': 'Total_Quantity'}, inplace=True)
+
+        # Reorder columns to have Order_Number first, then extras, then our generated ones
+        final_cols = ['Order_Number'] + extra_cols + ['Total_SKUs', 'Total_Quantity']
+        order_summary = order_summary[final_cols]
+
+        order_summary['Packing Progress'] = "0 / " + order_summary['Total_Quantity'].astype(int).astype(str)
         order_summary['Status'] = 'New'
         order_summary['Completed At'] = ''
+
+        # Update progress and status from loaded session state
+        for index, row in order_summary.iterrows():
+            order_number = row['Order_Number']
+            if order_number in self.logic.session_packing_state:
+                order_state = self.logic.session_packing_state[order_number]
+                total_packed = sum(s['packed'] for s in order_state.values())
+                total_required = sum(s['required'] for s in order_state.values())
+
+                order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {total_required}"
+                if total_packed > 0:
+                    order_summary.at[index, 'Status'] = 'In Progress'
+            # Check if order was already completed from a previous run (not in packing_state)
+            elif row['Status'] == 'Completed':
+                 total_required = order_summary.at[index, 'Total_Quantity']
+                 order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
+
 
         self.order_summary_df = order_summary
         self.table_model = OrderTableModel(self.order_summary_df)
@@ -275,15 +332,49 @@ class MainWindow(QMainWindow):
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
 
+    def _on_item_packed(self, order_number, packed_count, required_count):
+        """Slot to handle real-time progress updates from the logic layer."""
+        try:
+            row_index = self.order_summary_df.index[self.order_summary_df['Order_Number'] == order_number][0]
+            progress_col_index = self.order_summary_df.columns.get_loc('Packing Progress')
+
+            new_progress = f"{packed_count} / {required_count}"
+            self.order_summary_df.iloc[row_index, progress_col_index] = new_progress
+
+            # Emit dataChanged for the specific cell that was updated
+            self.table_model.dataChanged.emit(
+                self.table_model.index(row_index, progress_col_index),
+                self.table_model.index(row_index, progress_col_index)
+            )
+        except (IndexError, KeyError):
+            # This might happen in rare cases, can be ignored.
+            pass
+
     def update_order_status(self, order_number, status):
         try:
             row_index = self.order_summary_df.index[self.order_summary_df['Order_Number'] == order_number][0]
-            status_col_index = self.order_summary_df.columns.get_loc('Status')
 
+            # Update Status
+            status_col_index = self.order_summary_df.columns.get_loc('Status')
             self.order_summary_df.iloc[row_index, status_col_index] = status
+
+            # Update Packing Progress column as well
+            progress_col_index = self.order_summary_df.columns.get_loc('Packing Progress')
             if status == 'Completed':
+                total_quantity = self.order_summary_df.iloc[row_index]['Total_Quantity']
+                self.order_summary_df.iloc[row_index, progress_col_index] = f"{int(total_quantity)} / {int(total_quantity)}"
+
                 completed_col_index = self.order_summary_df.columns.get_loc('Completed At')
                 self.order_summary_df.iloc[row_index, completed_col_index] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            elif status == 'In Progress':
+                # The _on_item_packed slot will provide more granular updates.
+                # This just sets the initial progress if it's not already set.
+                if order_number in self.logic.session_packing_state:
+                    order_state = self.logic.session_packing_state[order_number]
+                    total_packed = sum(s['packed'] for s in order_state.values())
+                    total_required = sum(s['required'] for s in order_state.values())
+                    self.order_summary_df.iloc[row_index, progress_col_index] = f"{total_packed} / {total_required}"
 
             self.table_model.dataChanged.emit(
                 self.table_model.index(row_index, 0),
@@ -292,8 +383,53 @@ class MainWindow(QMainWindow):
         except (IndexError, KeyError):
             print(f"Warning: Could not update status for order number {order_number}. Not found in summary table.")
 
+def restore_session(window):
+    latest_dir = find_latest_session_dir()
+    if not latest_dir:
+        return
+
+    session_info_path = os.path.join(latest_dir, "session_info.json")
+    state_path = os.path.join(latest_dir, "packing_state.json")
+
+    # The check for session_info_path is already in find_latest_session_dir
+    msg_box = QMessageBox()
+    msg_box.setIcon(QMessageBox.Question)
+    msg_box.setText("An incomplete session was found.")
+    msg_box.setInformativeText(f"Would you like to restore session '{os.path.basename(latest_dir)}'?")
+    msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+    msg_box.setDefaultButton(QMessageBox.Yes)
+
+    reply = msg_box.exec()
+
+    if reply == QMessageBox.Yes:
+        try:
+            with open(session_info_path, 'r') as f:
+                session_info = json.load(f)
+            packing_list_path = session_info.get('packing_list_path')
+            if packing_list_path and os.path.exists(packing_list_path):
+                # Pass the restore_dir to start_session
+                window.start_session(file_path=packing_list_path, restore_dir=latest_dir)
+            else:
+                QMessageBox.critical(window, "Error", "Could not restore session. The original packing list file was not found.")
+        except Exception as e:
+            QMessageBox.critical(window, "Error", f"An error occurred during session restoration: {e}")
+    else:
+        # User chose not to restore, so rename files to ignore them next time
+        try:
+            if os.path.exists(session_info_path):
+                os.rename(session_info_path, session_info_path + ".ignored")
+            if os.path.exists(state_path):
+                os.rename(state_path, state_path + ".ignored")
+        except OSError as e:
+            QMessageBox.warning(window, "Cleanup Warning", f"Could not ignore all session files: {e}")
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
+
+    # Check for abandoned sessions before showing the main window
+    restore_session(window)
+
     window.show()
     sys.exit(app.exec())
