@@ -3,9 +3,10 @@ import os
 import json
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
-    QTableView, QHBoxLayout, QMessageBox, QHeaderView
+    QTableView, QHBoxLayout, QMessageBox, QHeaderView, QStyle
 )
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtMultimedia import QSoundEffect
 from datetime import datetime
 from openpyxl.styles import PatternFill
@@ -17,6 +18,8 @@ from packer_mode_widget import PackerModeWidget
 from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
 from order_table_model import OrderTableModel
+from statistics_manager import StatisticsManager
+from custom_filter_proxy_model import CustomFilterProxyModel
 
 def find_latest_session_dir(base_dir="."):
     """Finds the most recent, valid, incomplete session directory."""
@@ -50,6 +53,8 @@ class MainWindow(QMainWindow):
 
         self.session_manager = SessionManager(base_dir=".")
         self.logic = None # Will be instantiated per session
+        self.stats_manager = StatisticsManager()
+        self.current_order_start_time = None
 
         self._init_sounds()
         self._init_ui()
@@ -57,19 +62,41 @@ class MainWindow(QMainWindow):
         if self.sounds_missing:
             self.status_label.setText(self.status_label.text() + "\nWarning: Sound files not found.")
 
+        self._update_dashboard()
+
     def _init_ui(self):
         self.session_widget = QWidget()
         main_layout = QVBoxLayout(self.session_widget)
+
+        # Dashboard
+        dashboard_widget = QWidget()
+        dashboard_widget.setObjectName("Dashboard")
+        dashboard_layout = QHBoxLayout(dashboard_widget)
+        main_layout.addWidget(dashboard_widget)
+
+        self.total_orders_label = QLabel("Total Orders: ...")
+        self.completed_label = QLabel("Completed: ...")
+        self.speed_label = QLabel("Packing Speed: ...")
+
+        for label in [self.total_orders_label, self.completed_label, self.speed_label]:
+            label.setAlignment(Qt.AlignCenter)
+            font = label.font()
+            font.setPointSize(14)
+            font.setBold(True)
+            label.setFont(font)
+            dashboard_layout.addWidget(label)
 
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel)
         main_layout.addWidget(control_panel)
 
         self.start_session_button = QPushButton("Start Session")
+        self.start_session_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.start_session_button.clicked.connect(self.start_session)
         control_layout.addWidget(self.start_session_button)
 
         self.end_session_button = QPushButton("End Session")
+        self.end_session_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
         self.end_session_button.setEnabled(False)
         self.end_session_button.clicked.connect(self.end_session)
         control_layout.addWidget(self.end_session_button)
@@ -77,14 +104,20 @@ class MainWindow(QMainWindow):
         control_layout.addStretch()
 
         self.print_button = QPushButton("Print Barcodes")
+        self.print_button.setIcon(self.style().standardIcon(QStyle.SP_FilePrint))
         self.print_button.setEnabled(False)
         self.print_button.clicked.connect(self.open_print_dialog)
         control_layout.addWidget(self.print_button)
 
         self.packer_mode_button = QPushButton("Switch to Packer Mode")
+        self.packer_mode_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowRight))
         self.packer_mode_button.setEnabled(False)
         self.packer_mode_button.clicked.connect(self.switch_to_packer_mode)
         control_layout.addWidget(self.packer_mode_button)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
+        main_layout.addWidget(self.search_input)
 
         self.orders_table = QTableView()
         self.orders_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -101,6 +134,21 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.session_widget)
         self.stacked_widget.addWidget(self.packer_mode_widget)
         self.setCentralWidget(self.stacked_widget)
+
+    def _update_dashboard(self):
+        stats = self.stats_manager.get_display_stats()
+        self.total_orders_label.setText(f"Total Orders: {stats['Total Orders']}")
+        self.completed_label.setText(f"Completed: {stats['Completed']}")
+        self.speed_label.setText(f"Packing Speed: {stats['Packing Speed']}")
+
+    def flash_border(self, color, duration_ms=500):
+        """Flashes the window border with a specific color."""
+        # The main window's central widget is the QStackedWidget.
+        # We apply the border to it.
+        self.stacked_widget.setStyleSheet(f"border: 5px solid {color};")
+
+        # Set a timer to remove the border
+        QTimer.singleShot(duration_ms, lambda: self.stacked_widget.setStyleSheet(""))
 
     def _init_sounds(self):
         self.sounds_missing = False
@@ -205,6 +253,9 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Session '{session_id}' started. Processing file...")
             order_count = self.logic.process_data_and_generate_barcodes(mapping)
 
+            self.stats_manager.record_new_session(order_count)
+            self._update_dashboard()
+
             self.status_label.setText(f"Successfully processed {order_count} orders for session '{session_id}'.")
 
             self.setup_order_table()
@@ -267,7 +318,16 @@ class MainWindow(QMainWindow):
 
         self.order_summary_df = order_summary
         self.table_model = OrderTableModel(self.order_summary_df)
-        self.orders_table.setModel(self.table_model)
+
+        # Set up the proxy model for filtering
+        self.proxy_model = CustomFilterProxyModel()
+        self.proxy_model.setSourceModel(self.table_model)
+        self.proxy_model.set_processed_df(self.logic.processed_df)
+        self.orders_table.setModel(self.proxy_model)
+
+        # Connect search input to the proxy model's filter
+        self.search_input.textChanged.connect(self.proxy_model.setFilterFixedString)
+
         self.orders_table.resizeColumnsToContents()
 
     def switch_to_packer_mode(self):
@@ -294,38 +354,59 @@ class MainWindow(QMainWindow):
             order_number_from_scan = self.logic.barcode_to_order_number.get(text)
             if not order_number_from_scan:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
+                self.flash_border("red")
                 self.error_sound.play()
                 return
 
             # Check if order is already completed
             if order_number_from_scan in self.logic.session_packing_state.get('completed_orders', []):
                 self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
+                self.flash_border("orange")
                 self.error_sound.play()
                 return
 
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
+                self.current_order_start_time = datetime.now()
                 self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
             elif status == "ORDER_ALREADY_COMPLETED":
                 # This is a redundant check, but good for safety
                 self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
+                self.flash_border("orange")
                 self.error_sound.play()
             else: # Should not happen due to above checks, but as a fallback
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
+                self.flash_border("red")
                 self.error_sound.play()
         else:
             result, status = self.logic.process_sku_scan(text)
             if status == "SKU_OK":
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
+                self.flash_border("green")
                 self.success_sound.play()
             elif status == "SKU_NOT_FOUND":
                 self.packer_mode_widget.show_notification("INCORRECT ITEM!", "red")
+                self.flash_border("red")
                 self.error_sound.play()
             elif status == "ORDER_COMPLETE":
+                if self.current_order_start_time:
+                    duration = (datetime.now() - self.current_order_start_time).total_seconds()
+                    order_number = self.logic.current_order_number
+                    try:
+                        order_row = self.order_summary_df.loc[self.order_summary_df['Order_Number'] == order_number]
+                        quantity = int(order_row['Total_Quantity'].iloc[0])
+                        self.stats_manager.record_order_completion(quantity, duration)
+                        self._update_dashboard()
+                    except (IndexError, ValueError, TypeError) as e:
+                        print(f"Warning: Could not record stats for order {order_number}. Reason: {e}")
+
+                self.current_order_start_time = None
+
                 current_order_num = self.logic.current_order_number
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "green")
+                self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
                 self.victory_sound.play()
                 self.packer_mode_widget.scanner_input.setEnabled(False) # Disable input
@@ -426,6 +507,14 @@ def restore_session(window):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # Load and apply stylesheet
+    try:
+        with open("src/styles.qss", "r") as f:
+            app.setStyleSheet(f.read())
+    except FileNotFoundError:
+        print("Warning: stylesheet 'src/styles.qss' not found.")
+
     window = MainWindow()
 
     # Check for abandoned sessions before showing the main window

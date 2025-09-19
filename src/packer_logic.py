@@ -8,7 +8,7 @@ import io
 import json
 from PySide6.QtCore import QObject, Signal
 
-REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity']
+REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity', 'Courier']
 STATE_FILE_NAME = "packing_state.json"
 
 class PackerLogic(QObject):
@@ -104,19 +104,26 @@ class PackerLogic(QObject):
         LABEL_WIDTH_PX = int((LABEL_WIDTH_MM / 25.4) * DPI)
         LABEL_HEIGHT_PX = int((LABEL_HEIGHT_MM / 25.4) * DPI)
 
-        TEXT_AREA_HEIGHT = 50 # Approximate height for text
+        TEXT_AREA_HEIGHT = 80  # Increased height for an extra line of text
         BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT
 
         font = None
+        font_bold = None
         try:
-            # Use a common system font like Arial, which is likely to be on Windows
+            # Use common system fonts like Arial, which is likely to be on Windows
             font = ImageFont.truetype("arial.ttf", 32)
+            font_bold = ImageFont.truetype("arialbd.ttf", 32)  # Arial Bold
         except IOError:
-            print(f"Warning: Arial font not found. Falling back to default font.")
-            font = ImageFont.load_default() # Load Pillow's default font as a fallback
+            print("Warning: Arial fonts not found. Falling back to default font.")
+            try:
+                font = ImageFont.load_default()
+                # Default font has no separate bold variant, so we use the same for both
+                font_bold = ImageFont.load_default()
+            except Exception as e:
+                print(f"CRITICAL: Could not load the default font: {e}")
         except Exception as e:
             print(f"CRITICAL: An unexpected error occurred during font loading: {e}.")
-            # Font remains None, text will not be rendered
+            # Fonts remain None, text will not be rendered
 
         try:
             grouped = df.groupby('Order_Number')
@@ -160,16 +167,30 @@ class PackerLogic(QObject):
                 barcode_y = 0
                 label_img.paste(barcode_img, (barcode_x, barcode_y))
 
-                # Add text, but only if the font was loaded successfully
-                if font:
+                # Add text, but only if fonts were loaded successfully
+                if font and font_bold:
                     try:
                         draw = ImageDraw.Draw(label_img)
-                        text_to_draw = str(order_number)
-                        text_bbox = draw.textbbox((0, 0), text_to_draw, font=font)
-                        text_width = text_bbox[2] - text_bbox[0]
-                        text_x = (LABEL_WIDTH_PX - text_width) / 2
-                        text_y = new_barcode_height + 5
-                        draw.text((text_x, text_y), text_to_draw, font=font, fill='black')
+
+                        # 1. Order Number
+                        order_text = str(order_number)
+                        order_bbox = draw.textbbox((0, 0), order_text, font=font)
+                        order_width = order_bbox[2] - order_bbox[0]
+                        order_x = (LABEL_WIDTH_PX - order_width) / 2
+                        order_y = new_barcode_height + 5  # 5px padding below barcode
+                        draw.text((order_x, order_y), order_text, font=font, fill='black')
+
+                        # 2. Courier Name
+                        courier_name = str(group['Courier'].iloc[0])
+                        courier_bbox = draw.textbbox((0, 0), courier_name, font=font_bold)
+                        courier_width = courier_bbox[2] - courier_bbox[0]
+                        courier_x = (LABEL_WIDTH_PX - courier_width) / 2
+                        # Position courier below the order number text
+                        order_text_height = order_bbox[3] - order_bbox[1]
+                        courier_y = order_y + order_text_height + 5 # 5px padding below order text
+
+                        draw.text((courier_x, courier_y), courier_name, font=font_bold, fill='black')
+
                     except Exception as e:
                         print(f"Warning: Failed to draw text for order '{order_number}'. Error: {e}")
 

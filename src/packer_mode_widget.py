@@ -112,7 +112,7 @@ class PackerModeWidget(QWidget):
                 if packed_count > 0:
                     self.update_item_row(row_index, packed_count, is_complete)
 
-        self.status_label.setText(f"Order #{items[0]['Order_Number']}\nIn Progress...")
+        self.status_label.setText(f"Order {items[0]['Order_Number']}\nIn Progress...")
         self.set_focus_to_scanner()
 
     def update_item_row(self, row, packed_count, is_complete):

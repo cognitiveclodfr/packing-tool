@@ -48,3 +48,9 @@ class OrderTableModel(QAbstractTableModel):
 
     def flags(self, index):
         return super().flags(index) | Qt.ItemIsEditable
+
+    def get_column_index(self, column_name):
+        try:
+            return self._data.columns.get_loc(column_name)
+        except KeyError:
+            return -1
