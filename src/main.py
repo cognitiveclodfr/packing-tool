@@ -134,12 +134,12 @@ class MainWindow(QMainWindow):
         self.completed_label.setText(f"Total Completed: {stats['Total Completed']}")
 
     def flash_border(self, color, duration_ms=500):
-        """Flashes the border of the packer mode table with a specific color."""
-        # Apply the border to the table in packer mode
-        self.packer_mode_widget.table.setStyleSheet(f"border: 2px solid {color};")
+        """Flashes the border of the packer mode table's frame with a specific color."""
+        # Apply the border to the frame wrapping the table by using a specific object name
+        self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
 
         # Set a timer to remove the border
-        QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table.setStyleSheet(""))
+        QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table_frame.setStyleSheet(""))
 
     def _init_sounds(self):
         self.sounds_missing = False
@@ -342,6 +342,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def on_scanner_input(self, text: str):
+        self.packer_mode_widget.update_raw_scan_display(text)
         self.packer_mode_widget.show_notification("", "black")
 
         if self.logic.current_order_number is None:
@@ -362,6 +363,7 @@ class MainWindow(QMainWindow):
 
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
+                self.packer_mode_widget.add_order_to_history(order_number_from_scan)
                 self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
             elif status == "ORDER_ALREADY_COMPLETED":

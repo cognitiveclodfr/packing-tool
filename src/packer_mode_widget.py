@@ -1,7 +1,7 @@
 from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QLineEdit, QHeaderView, QPushButton, QAbstractItemView
+    QLabel, QLineEdit, QHeaderView, QPushButton, QAbstractItemView, QFrame
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
@@ -18,6 +18,14 @@ class PackerModeWidget(QWidget):
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
 
+        # Create a frame to wrap the table, this will receive the flashing border
+        self.table_frame = QFrame()
+        self.table_frame.setObjectName("TableFrame")
+        self.table_frame.setFrameShape(QFrame.Shape.NoFrame) # No default border
+        self.table_frame.setFrameShadow(QFrame.Shadow.Plain)
+        frame_layout = QVBoxLayout(self.table_frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Product Name", "SKU", "Packed / Required", "Status", "Action"])
@@ -26,7 +34,9 @@ class PackerModeWidget(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
-        left_layout.addWidget(self.table)
+
+        frame_layout.addWidget(self.table)
+        left_layout.addWidget(self.table_frame)
 
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
@@ -48,8 +58,38 @@ class PackerModeWidget(QWidget):
         self.notification_label.setWordWrap(True)
 
         right_layout.addWidget(self.status_label)
-        right_layout.addStretch()
         right_layout.addWidget(self.notification_label)
+        right_layout.addStretch()
+
+        # Raw Scan Display
+        raw_scan_title = QLabel("Last Scan:")
+        raw_scan_title.setAlignment(Qt.AlignCenter)
+        self.raw_scan_label = QLabel("-")
+        self.raw_scan_label.setAlignment(Qt.AlignCenter)
+        self.raw_scan_label.setObjectName("RawScanLabel")
+        self.raw_scan_label.setWordWrap(True)
+
+        # History Table
+        history_title = QLabel("Scanned Orders History:")
+        history_title.setAlignment(Qt.AlignCenter)
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(1)
+        self.history_table.setHorizontalHeaderLabels(["Order #"])
+        self.history_table.horizontalHeader().setStretchLastSection(True)
+        self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.history_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.history_table.setFocusPolicy(Qt.NoFocus)
+
+        # Group the new info widgets in a container
+        info_container = QWidget()
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0,0,0,0)
+        info_layout.addWidget(raw_scan_title)
+        info_layout.addWidget(self.raw_scan_label)
+        info_layout.addWidget(history_title)
+        info_layout.addWidget(self.history_table)
+
+        right_layout.addWidget(info_container)
         right_layout.addStretch()
 
         self.scanner_input = QLineEdit()
@@ -141,3 +181,10 @@ class PackerModeWidget(QWidget):
 
     def set_focus_to_scanner(self):
         self.scanner_input.setFocus()
+
+    def update_raw_scan_display(self, text: str):
+        self.raw_scan_label.setText(text)
+
+    def add_order_to_history(self, order_number: str):
+        self.history_table.insertRow(0)
+        self.history_table.setItem(0, 0, QTableWidgetItem(str(order_number)))
