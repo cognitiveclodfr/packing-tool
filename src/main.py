@@ -3,10 +3,9 @@ import os
 import json
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
-    QTableView, QHBoxLayout, QMessageBox, QHeaderView, QStyle
+    QTableView, QHBoxLayout, QMessageBox, QHeaderView
 )
 from PySide6.QtCore import QTimer, QUrl, Qt
-from PySide6.QtGui import QIcon
 from PySide6.QtMultimedia import QSoundEffect
 from datetime import datetime
 from openpyxl.styles import PatternFill
@@ -91,12 +90,10 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(control_panel)
 
         self.start_session_button = QPushButton("Start Session")
-        self.start_session_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.start_session_button.clicked.connect(self.start_session)
         control_layout.addWidget(self.start_session_button)
 
         self.end_session_button = QPushButton("End Session")
-        self.end_session_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop))
         self.end_session_button.setEnabled(False)
         self.end_session_button.clicked.connect(self.end_session)
         control_layout.addWidget(self.end_session_button)
@@ -104,13 +101,11 @@ class MainWindow(QMainWindow):
         control_layout.addStretch()
 
         self.print_button = QPushButton("Print Barcodes")
-        self.print_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FilePrint))
         self.print_button.setEnabled(False)
         self.print_button.clicked.connect(self.open_print_dialog)
         control_layout.addWidget(self.print_button)
 
         self.packer_mode_button = QPushButton("Switch to Packer Mode")
-        self.packer_mode_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
         self.packer_mode_button.setEnabled(False)
         self.packer_mode_button.clicked.connect(self.switch_to_packer_mode)
         control_layout.addWidget(self.packer_mode_button)
