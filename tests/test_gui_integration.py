@@ -105,6 +105,11 @@ def test_packer_mode_and_scan_simulation(app):
     packer_widget.scanner_input.setText(order_barcode_to_scan)
     qtbot.keyPress(packer_widget.scanner_input, Qt.Key_Return)
 
+    # Assert that the new UI elements are updated
+    assert packer_widget.raw_scan_label.text() == order_barcode_to_scan
+    assert packer_widget.history_table.rowCount() == 1
+    assert packer_widget.history_table.item(0, 0).text() == "#ORD-001"
+
     # Assert that the order number is displayed correctly (no double '##')
     expected_text = "Order #ORD-001\nIn Progress..."
     assert packer_widget.status_label.text() == expected_text
@@ -124,6 +129,9 @@ def test_packer_mode_and_scan_simulation(app):
 
     packer_widget.scanner_input.setText(sku_to_scan)
     qtbot.keyPress(packer_widget.scanner_input, Qt.Key_Return)
+
+    # Assert that the raw scan display is updated
+    assert packer_widget.raw_scan_label.text() == sku_to_scan
 
     # Assert that the progress text for the scanned item has been updated
     assert packer_widget.table.item(0, 2).text() == "1 / 1"

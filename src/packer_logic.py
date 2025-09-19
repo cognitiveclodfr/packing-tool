@@ -110,15 +110,18 @@ class PackerLogic(QObject):
         font = None
         font_bold = None
         try:
-            # Use common system fonts like Arial, which is likely to be on Windows
+            # Use common system fonts like Arial
             font = ImageFont.truetype("arial.ttf", 32)
-            font_bold = ImageFont.truetype("arialbd.ttf", 32)  # Arial Bold
+            try:
+                font_bold = ImageFont.truetype("arialbd.ttf", 32)  # Arial Bold
+            except IOError:
+                print("Warning: Arial bold font not found. Falling back to regular font.")
+                font_bold = font  # Fallback to the regular font
         except IOError:
-            print("Warning: Arial fonts not found. Falling back to default font.")
+            print("Warning: Arial regular font not found. Falling back to default font.")
             try:
                 font = ImageFont.load_default()
-                # Default font has no separate bold variant, so we use the same for both
-                font_bold = ImageFont.load_default()
+                font_bold = font  # Default font has no separate bold variant
             except Exception as e:
                 print(f"CRITICAL: Could not load the default font: {e}")
         except Exception as e:
