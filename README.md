@@ -6,27 +6,32 @@ Packer's Assistant is a desktop application designed to streamline the order ful
 
 ## Core Features
 
+- **Modern UI/UX:**
+    - **Dark Theme:** The application features a clean, modern dark theme for comfortable use in various lighting conditions.
+    - **Persistent Statistics Dashboard:** A dashboard at the top of the main window displays key performance indicators that persist across all sessions, including the total number of unique orders processed and the total number of orders completed.
+
 - **Robust Session Management:**
     - **Session-Based Workflow:** All work is organized into sessions. A session begins when a packing list is loaded and ends when the user manually closes it, ensuring that all related files are neatly organized in a timestamped folder (e.g., `OrdersFulfillment_YYYY-MM-DD_1`).
     - **Crash Recovery:** The application saves packing progress after every single scan. If the application closes unexpectedly, it will detect the incomplete session on the next startup and prompt the user to restore it, preventing any loss of work.
 
 - **Intelligent Excel Import:**
     - **Easy Import:** Easily load your daily orders from a standard `.xlsx` file.
-    - **Dynamic Column Mapping:** The application does not require a fixed column structure. On first load, it prompts the user to map the required fields (`Order_Number`, `SKU`, `Product_Name`, `Quantity`) to the corresponding columns in their file. These mappings are saved for future use with files of the same structure.
-    - **Automatic Data Display:** The main order table automatically detects and displays all additional, non-required columns from the source Excel file, ensuring all relevant order information is visible.
+    - **Dynamic Column Mapping:** The application does not require a fixed column structure. On first load, it prompts the user to map the required fields (`Order_Number`, `SKU`, `Product_Name`, `Quantity`, and `Courier`) to the corresponding columns in their file.
+    - **Automatic Data Display:** The main order table automatically detects and displays all additional, non-required columns from the source Excel file.
 
 - **Informative Real-Time UI:**
     - **Live Order Tracking:** The main window displays a table of all orders, showing the status of each (`New`, `In Progress`, `Completed`).
-    - **Real-Time Packing Progress:** A "Packing Progress" column (e.g., "5/8") updates instantly after every scan, providing immediate feedback.
-    - **Auto-Resizing Columns:** All tables automatically resize their columns to fit the content, ensuring data is never truncated.
+    - **Search and Filter:** A powerful search bar allows for instant filtering of the orders table by Order Number, SKU, or Status.
+    - **Real-Time Packing Progress:** A "Packing Progress" column (e.g., "5/8") updates instantly after every scan.
 
 - **Interactive Packer Mode:**
-    - **Scanner-First Approach:** Designed to be used with a hardware barcode scanner for fast input.
-    - **Visual Progress Restore:** When opening a partially packed order, the UI clearly shows which items have already been scanned and their packed quantities.
-    - **Manual Confirmation:** Each item has a "Confirm Manually" button, allowing packers to proceed even if a barcode is damaged or unreadable.
+    - **Enhanced Visual Feedback:** The UI provides clear, non-disruptive feedback by flashing the border of the item table—green for a successful scan and red for an error.
+    - **Scan History:** A history panel displays a running list of all scanned order barcodes for easy reference during a session.
+    - **Raw Scan Display:** A technical display shows the raw, unfiltered text from the last scanned barcode, aiding in troubleshooting.
+    - **Visual Progress Restore:** When opening a partially packed order, the UI clearly shows which items have already been scanned.
 
 - **Barcode Generation & Printing:**
-    - **Custom Barcode Generation:** Automatically generates Code-128 barcodes for each unique order, sized for 65mm x 35mm thermal labels.
+    - **Upgraded Label Layout:** Automatically generates Code-128 barcodes for each unique order. The printable label now includes the **Order Number**, the **Courier** name, and the barcode itself, all centered for a professional look.
     - **Integrated Printing:** A simple dialog allows for printing all generated barcodes to a selected thermal printer.
 
 
@@ -49,32 +54,42 @@ Packer's Assistant is a desktop application designed to streamline the order ful
 
 This is a Python application built with the **PySide6** GUI framework.
 
-### Backend Architecture
+### Architecture
 
-The application's backend is designed to be modular and stateful, separating core logic from the user interface.
+The application is designed to be modular and stateful, separating core business logic from the user interface.
+
+-   **`src/main.py` - `MainWindow` class:**
+    - The main application window and central orchestrator.
+    - **Responsibilities:**
+        - Initializes all UI components and backend managers.
+        - Applies a global QSS stylesheet (`src/styles.qss`) for a modern dark theme.
+        - Connects UI events (button clicks, text changes) to backend logic.
+        - Manages the display of different views (main session vs. packer mode) using a `QStackedWidget`.
+        - Implements the session restoration prompt at startup.
 
 -   **`src/packer_logic.py` - `PackerLogic` class:**
-    - This is the brain of the application. It inherits from `QObject` to emit signals for UI updates.
+    - The core engine for data processing. It inherits from `QObject` to emit signals for UI updates.
     - **Responsibilities:**
         - **Data Processing:** Uses **pandas** to load and parse data from `.xlsx` files.
-        - **Barcode Generation:** Uses **python-barcode** and **Pillow** to create Code-128 barcodes in memory and save them as PNG files.
+        - **Barcode Generation:** Uses **python-barcode** and **Pillow** to create Code-128 barcodes with the correct text layout.
         - **Packing State Machine:** Manages the state of the currently active order (`current_order_state`), tracking the required vs. packed count for each SKU.
-        - **State Persistence:** Manages the `packing_state.json` file. It saves the entire session's progress after every scan and loads it when a session is initialized.
+        - **Session State Persistence:** Manages the `packing_state.json` file within a session's directory. It saves the session's progress after every scan.
 
 -   **`src/session_manager.py` - `SessionManager` class:**
     - Handles the lifecycle of a packing session.
     - **Responsibilities:**
         - Creates unique, timestamped directories for each session.
-        - Manages a `session_info.json` file within the session directory. This file's existence signals that a session is active or was left incomplete, which is key to the restoration feature.
-        - Handles the cleanup of session files upon graceful termination.
+        - Manages a `session_info.json` file to track active/incomplete sessions for the restoration feature.
 
--   **`src/main.py` - `MainWindow` class:**
-    - The main application window and orchestrator.
+-   **`src/statistics_manager.py` - `StatisticsManager` class:**
+    - Handles persistent, cross-session application statistics.
     - **Responsibilities:**
-        - Initializes the UI and all backend components.
-        - Connects UI events (button clicks) to backend logic.
-        - Implements the session restoration prompt at startup.
-        - Listens for signals from `PackerLogic` (e.g., `item_packed`) to update the UI in real-time without tightly coupling the components.
+        - Loads and saves aggregate data to `~/.packers_assistant/stats.json`.
+        - Tracks unique order IDs to prevent duplicate counting across sessions.
+
+-   **`src/custom_filter_proxy_model.py` - `CustomFilterProxyModel` class:**
+    - A subclass of `QSortFilterProxyModel` that provides the live search/filter functionality for the main orders table.
+    - Its custom `filterAcceptsRow` method implements logic to search by Order Number, Status, and SKU simultaneously.
 
 ### State Management and Crash Recovery
 
