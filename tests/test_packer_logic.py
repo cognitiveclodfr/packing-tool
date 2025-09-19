@@ -36,29 +36,37 @@ class TestPackerLogic(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Не вдалося прочитати Excel файл"):
             self.logic.load_packing_list_from_file('non_existent_file.xlsx')
 
-    def test_process_with_missing_column_mapping(self):
-        """Test processing data when a required column is not mapped."""
-        dummy_data = {'Order': ['1'], 'Identifier': ['A-1'], 'Name': ['Prod A'], 'Amount': [1]}
+    def test_process_with_missing_courier_mapping(self):
+        """Test processing data when the Courier column is not mapped."""
+        dummy_data = {
+            'Order': ['1'],
+            'Identifier': ['A-1'],
+            'Name': ['Prod A'],
+            'Amount': [1],
+            'CarrierService': ['UPS'] # Using a different name for the courier column
+        }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
 
+        # Mapping is missing 'Courier'
         mapping = {
             'Order_Number': 'Order',
             'SKU': 'Identifier',
+            'Product_Name': 'Name',
             'Quantity': 'Amount'
-            # 'Product_Name' is missing
         }
 
-        with self.assertRaisesRegex(ValueError, "Не всі необхідні колонки були зіставлені"):
+        with self.assertRaisesRegex(ValueError, "Не всі необхідні колонки були зіставлені.*Courier"):
             self.logic.process_data_and_generate_barcodes(mapping)
 
     def test_successful_processing_and_barcode_generation(self):
-        """Test successful data processing and barcode generation."""
+        """Test successful data processing and barcode generation with the new Courier column."""
         dummy_data = {
             'Order_Number': ['1001', '1001', '1002'],
             'SKU': ['A-1', 'B-2', 'A-1'],
             'Product_Name': ['Product A', 'Product B', 'Product A'],
-            'Quantity': [1, 2, 3]
+            'Quantity': [1, 2, 3],
+            'Courier': ['UPS', 'UPS', 'FedEx']
         }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
@@ -80,7 +88,8 @@ class TestPackerLogic(unittest.TestCase):
             'Order_Number': ['1001', '1001'],
             'SKU': ['A-1', 'B-2'],
             'Product_Name': ['Product A', 'Product B'],
-            'Quantity': [1, 2]
+            'Quantity': [1, 2],
+            'Courier': ['UPS', 'UPS']
         }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
@@ -112,7 +121,7 @@ class TestPackerLogic(unittest.TestCase):
 
     def test_packing_with_extra_and_unknown_skus(self):
         """Test scanning extra and unknown SKUs."""
-        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1]}
+        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1], 'Courier': ['UPS']}
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
         self.logic.process_data_and_generate_barcodes()
@@ -144,7 +153,8 @@ class TestPackerLogic(unittest.TestCase):
             'Order_Number': ['1001'],
             'SKU': ['A-1'],
             'Product_Name': ['Product A'],
-            'Quantity': [1]
+            'Quantity': [1],
+            'Courier': ['UPS']
         }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
@@ -163,7 +173,8 @@ class TestPackerLogic(unittest.TestCase):
             'Order_Number': ['1001'],
             'SKU': ['A-1'],
             'Product_Name': ['Product A'],
-            'Quantity': ['invalid_string'] # Invalid quantity
+            'Quantity': ['invalid_string'], # Invalid quantity
+            'Courier': ['UPS']
         }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
@@ -183,7 +194,8 @@ class TestPackerLogic(unittest.TestCase):
             'Order_Number': ['1001', '1002'],
             'SKU': ['A-1', 'B-2'],
             'Product_Name': ['Product A', 'Product B'],
-            'Quantity': [1, 1]
+            'Quantity': [1, 1],
+            'Courier': ['UPS', 'FedEx']
         }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
@@ -199,7 +211,7 @@ class TestPackerLogic(unittest.TestCase):
 
     def test_clear_current_order(self):
         """Test that the current order state is cleared properly."""
-        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1]}
+        dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1], 'Courier': ['UPS']}
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)
         self.logic.process_data_and_generate_barcodes()
@@ -218,7 +230,8 @@ class TestPackerLogic(unittest.TestCase):
             'Order_Number': ['1001', '1001'],
             'SKU': ['A-1', ''], # One SKU is empty
             'Product_Name': ['Product A', 'Product B'],
-            'Quantity': [1, 1]
+            'Quantity': [1, 1],
+            'Courier': ['UPS', 'UPS']
         }
         file_path = self._create_dummy_excel(dummy_data)
         self.logic.load_packing_list_from_file(file_path)

@@ -20,21 +20,16 @@ def test_excel_file(tmp_path_factory):
     Pytest fixture to create a dummy Excel file for testing.
     This fixture has a 'session' scope, so it's created once per test session.
     """
-    # Create a temporary directory for the file
     fn = tmp_path_factory.mktemp("data") / "test_packing_list.xlsx"
-
-    # Create a sample DataFrame
     data = {
-        "Order_Number": ["ORD-001", "ORD-001", "ORD-002"],
+        "Order_Number": ["#ORD-001", "#ORD-001", "ORD-002"],
         "Product_Name": ["Product A", "Product B", "Product C"],
         "SKU": ["SKU-A-123", "SKU-B-456", "SKU-C-789"],
-        "Quantity": [1, 2, 3]
+        "Quantity": [1, 2, 3],
+        "Courier": ["UPS", "UPS", "FedEx"]
     }
     df = pd.DataFrame(data)
-
-    # Write the DataFrame to an Excel file
     df.to_excel(fn, index=False)
-
     return str(fn)
 
 @pytest.fixture
@@ -110,9 +105,13 @@ def test_packer_mode_and_scan_simulation(app):
     packer_widget.scanner_input.setText(order_barcode_to_scan)
     qtbot.keyPress(packer_widget.scanner_input, Qt.Key_Return)
 
+    # Assert that the order number is displayed correctly (no double '##')
+    expected_text = "Order #ORD-001\nIn Progress..."
+    assert packer_widget.status_label.text() == expected_text
+
     # Assert that the packer mode item table is now populated
     assert packer_widget.table.rowCount() > 0
-    # Order ORD-001 has two items
+    # Order #ORD-001 has two items
     assert packer_widget.table.rowCount() == 2
     assert packer_widget.table.item(0, 0).text() == "Product A"
     assert packer_widget.table.item(1, 0).text() == "Product B"
@@ -130,3 +129,35 @@ def test_packer_mode_and_scan_simulation(app):
     assert packer_widget.table.item(0, 2).text() == "1 / 1"
     # Assert that the status is now "Packed"
     assert packer_widget.table.item(0, 3).text() == "Packed"
+
+def test_search_filter(app):
+    """
+    Test Case 3: Verifies the search filter functionality on the main table.
+    """
+    window, qtbot = app
+
+    # --- Setup: Start a session first ---
+    qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
+    proxy_model = window.orders_table.model()
+    assert proxy_model.rowCount() == 2
+
+    # --- Step 1: Filter by Order Number ---
+    qtbot.keyClicks(window.search_input, "ORD-001")
+    assert proxy_model.rowCount() == 1
+
+    # --- Step 2: Filter by SKU ---
+    window.search_input.clear()
+    qtbot.keyClicks(window.search_input, "SKU-C")
+    assert proxy_model.rowCount() == 1
+    # Check that the correct order is shown
+    first_cell_index = proxy_model.index(0, 0)
+    assert proxy_model.data(first_cell_index) == "ORD-002"
+
+    # --- Step 3: Filter by Status (no results expected) ---
+    window.search_input.clear()
+    qtbot.keyClicks(window.search_input, "Completed")
+    assert proxy_model.rowCount() == 0
+
+    # --- Step 4: Clear filter ---
+    window.search_input.clear()
+    assert proxy_model.rowCount() == 2
