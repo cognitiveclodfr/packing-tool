@@ -53,7 +53,6 @@ class MainWindow(QMainWindow):
         self.session_manager = SessionManager(base_dir=".")
         self.logic = None # Will be instantiated per session
         self.stats_manager = StatisticsManager()
-        self.current_order_start_time = None
 
         self._init_sounds()
         self._init_ui()
@@ -73,11 +72,10 @@ class MainWindow(QMainWindow):
         dashboard_layout = QHBoxLayout(dashboard_widget)
         main_layout.addWidget(dashboard_widget)
 
-        self.total_orders_label = QLabel("Total Orders: ...")
-        self.completed_label = QLabel("Completed: ...")
-        self.speed_label = QLabel("Packing Speed: ...")
+        self.total_orders_label = QLabel("Total Unique Orders: 0")
+        self.completed_label = QLabel("Total Completed: 0")
 
-        for label in [self.total_orders_label, self.completed_label, self.speed_label]:
+        for label in [self.total_orders_label, self.completed_label]:
             label.setAlignment(Qt.AlignCenter)
             font = label.font()
             font.setPointSize(14)
@@ -132,18 +130,16 @@ class MainWindow(QMainWindow):
 
     def _update_dashboard(self):
         stats = self.stats_manager.get_display_stats()
-        self.total_orders_label.setText(f"Total Orders: {stats['Total Orders']}")
-        self.completed_label.setText(f"Completed: {stats['Completed']}")
-        self.speed_label.setText(f"Packing Speed: {stats['Packing Speed']}")
+        self.total_orders_label.setText(f"Total Unique Orders: {stats['Total Unique Orders']}")
+        self.completed_label.setText(f"Total Completed: {stats['Total Completed']}")
 
     def flash_border(self, color, duration_ms=500):
-        """Flashes the window border with a specific color."""
-        # The main window's central widget is the QStackedWidget.
-        # We apply the border to it.
-        self.stacked_widget.setStyleSheet(f"border: 5px solid {color};")
+        """Flashes the border of the packer mode table with a specific color."""
+        # Apply the border to the table in packer mode
+        self.packer_mode_widget.table.setStyleSheet(f"border: 2px solid {color};")
 
         # Set a timer to remove the border
-        QTimer.singleShot(duration_ms, lambda: self.stacked_widget.setStyleSheet(""))
+        QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table.setStyleSheet(""))
 
     def _init_sounds(self):
         self.sounds_missing = False
@@ -165,6 +161,9 @@ class MainWindow(QMainWindow):
         if self.session_manager.is_active():
             self.status_label.setText("A session is already active. Please end it first.")
             return
+
+        # Defensively clear the table model to prevent state issues.
+        self.orders_table.setModel(None)
 
         if not file_path:
             file_path, _ = QFileDialog.getOpenFileName(self, "Select Packing List", "", "Excel Files (*.xlsx)")
@@ -248,12 +247,13 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Session '{session_id}' started. Processing file...")
             order_count = self.logic.process_data_and_generate_barcodes(mapping)
 
-            self.stats_manager.record_new_session(order_count)
+            self.setup_order_table() # Call this first to have order_summary_df
+
+            order_ids = self.order_summary_df['Order_Number'].tolist()
+            self.stats_manager.record_new_orders(order_ids)
             self._update_dashboard()
 
             self.status_label.setText(f"Successfully processed {order_count} orders for session '{session_id}'.")
-
-            self.setup_order_table()
 
             self.start_session_button.setEnabled(False)
             self.end_session_button.setEnabled(True)
@@ -362,7 +362,6 @@ class MainWindow(QMainWindow):
 
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
-                self.current_order_start_time = datetime.now()
                 self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
             elif status == "ORDER_ALREADY_COMPLETED":
@@ -385,20 +384,10 @@ class MainWindow(QMainWindow):
                 self.flash_border("red")
                 self.error_sound.play()
             elif status == "ORDER_COMPLETE":
-                if self.current_order_start_time:
-                    duration = (datetime.now() - self.current_order_start_time).total_seconds()
-                    order_number = self.logic.current_order_number
-                    try:
-                        order_row = self.order_summary_df.loc[self.order_summary_df['Order_Number'] == order_number]
-                        quantity = int(order_row['Total_Quantity'].iloc[0])
-                        self.stats_manager.record_order_completion(quantity, duration)
-                        self._update_dashboard()
-                    except (IndexError, ValueError, TypeError) as e:
-                        print(f"Warning: Could not record stats for order {order_number}. Reason: {e}")
-
-                self.current_order_start_time = None
-
                 current_order_num = self.logic.current_order_number
+                self.stats_manager.record_order_completion(current_order_num)
+                self._update_dashboard()
+
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "green")
                 self.flash_border("green")
