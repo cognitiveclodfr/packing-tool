@@ -19,6 +19,8 @@ from session_manager import SessionManager
 from order_table_model import OrderTableModel
 from statistics_manager import StatisticsManager
 from custom_filter_proxy_model import CustomFilterProxyModel
+from sku_mapping_manager import SKUMappingManager
+from sku_mapping_dialog import SKUMappingDialog
 
 def find_latest_session_dir(base_dir: str = ".") -> str | None:
     """
@@ -82,6 +84,7 @@ class MainWindow(QMainWindow):
         self.resize(1024, 768)
 
         self.session_manager = SessionManager(base_dir=".")
+        self.sku_manager = SKUMappingManager()
         self.logic = None # Will be instantiated per session
         self.stats_manager = StatisticsManager()
 
@@ -139,6 +142,10 @@ class MainWindow(QMainWindow):
         self.packer_mode_button.setEnabled(False)
         self.packer_mode_button.clicked.connect(self.switch_to_packer_mode)
         control_layout.addWidget(self.packer_mode_button)
+
+        self.sku_mapping_button = QPushButton("SKU Mapping")
+        self.sku_mapping_button.clicked.connect(self.open_sku_mapping_dialog)
+        control_layout.addWidget(self.sku_mapping_button)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
@@ -223,9 +230,19 @@ class MainWindow(QMainWindow):
 
         self.session_manager.start_session(file_path, restore_dir=restore_dir)
         self.logic = PackerLogic(self.session_manager.get_output_dir())
+        self.logic.set_sku_map(self.sku_manager.get_map()) # Pass the map to the logic
         self.logic.item_packed.connect(self._on_item_packed)
 
         self.load_and_process_file(file_path)
+
+    def open_sku_mapping_dialog(self):
+        """Opens the SKU mapping dialog and updates logic if changes are made."""
+        dialog = SKUMappingDialog(self.sku_manager, self)
+        if dialog.exec(): # This is true if the user clicks "Save & Close"
+            # If a session is active, update its logic instance with the new map
+            if self.logic:
+                self.logic.set_sku_map(self.sku_manager.get_map())
+            self.status_label.setText("SKU mapping updated successfully.")
 
     def end_session(self):
         """

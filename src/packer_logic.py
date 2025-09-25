@@ -58,7 +58,20 @@ class PackerLogic(QObject):
         self.current_order_number = None
         self.current_order_state = {}
         self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+        self.sku_map = {}
         self._load_session_state()
+
+    def set_sku_map(self, sku_map: Dict[str, str]):
+        """
+        Sets the SKU map and creates a normalized version for quick lookups.
+
+        The barcode (key) is normalized to ensure consistent matching with
+        scanner input. The SKU (value) is left as is.
+
+        Args:
+            sku_map (Dict[str, str]): The Barcode-to-SKU mapping.
+        """
+        self.sku_map = {self._normalize_sku(k): v for k, v in sku_map.items()}
 
     def _get_state_file_path(self) -> str:
         """Returns the absolute path for the session state file."""
@@ -295,10 +308,18 @@ class PackerLogic(QObject):
         if not self.current_order_number:
             return None, "NO_ACTIVE_ORDER"
 
-        normalized_scanned_sku = self._normalize_sku(sku)
+        normalized_scan = self._normalize_sku(sku)
 
-        if normalized_scanned_sku in self.current_order_state:
-            state = self.current_order_state[normalized_scanned_sku]
+        # Core logic change: Check if the scanned barcode has a mapped SKU.
+        # If so, use the mapped SKU. If not, use the scanned code itself.
+        # This ensures backward compatibility.
+        final_sku = self.sku_map.get(normalized_scan, normalized_scan)
+
+        # The rest of the logic uses the potentially translated SKU.
+        normalized_final_sku = self._normalize_sku(final_sku)
+
+        if normalized_final_sku in self.current_order_state:
+            state = self.current_order_state[normalized_final_sku]
             if state['packed'] < state['required']:
                 state['packed'] += 1
                 is_complete = state['packed'] == state['required']
