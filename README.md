@@ -56,40 +56,27 @@ This is a Python application built with the **PySide6** GUI framework.
 
 ### Architecture
 
-The application is designed to be modular and stateful, separating core business logic from the user interface.
+The application is designed to be modular and stateful, separating core business logic from the user interface. Key components include:
 
--   **`src/main.py` - `MainWindow` class:**
-    - The main application window and central orchestrator.
-    - **Responsibilities:**
-        - Initializes all UI components and backend managers.
-        - Applies a global QSS stylesheet (`src/styles.qss`) for a modern dark theme.
-        - Connects UI events (button clicks, text changes) to backend logic.
-        - Manages the display of different views (main session vs. packer mode) using a `QStackedWidget`.
-        - Implements the session restoration prompt at startup.
+-   **`src/main.py` - `MainWindow`:** The main application window and central orchestrator. It initializes all UI components and backend managers, connects UI events to logic, and manages the application's different views.
 
--   **`src/packer_logic.py` - `PackerLogic` class:**
-    - The core engine for data processing. It inherits from `QObject` to emit signals for UI updates.
-    - **Responsibilities:**
-        - **Data Processing:** Uses **pandas** to load and parse data from `.xlsx` files.
-        - **Barcode Generation:** Uses **python-barcode** and **Pillow** to create Code-128 barcodes with the correct text layout.
-        - **Packing State Machine:** Manages the state of the currently active order (`current_order_state`), tracking the required vs. packed count for each SKU.
-        - **Session State Persistence:** Manages the `packing_state.json` file within a session's directory. It saves the session's progress after every scan.
+-   **`src/packer_logic.py` - `PackerLogic`:** The core engine for all data processing and business logic. It handles loading Excel files, generating barcodes, managing the packing state machine, and persisting session progress after every scan.
 
--   **`src/session_manager.py` - `SessionManager` class:**
-    - Handles the lifecycle of a packing session.
-    - **Responsibilities:**
-        - Creates unique, timestamped directories for each session.
-        - Manages a `session_info.json` file to track active/incomplete sessions for the restoration feature.
+-   **`src/session_manager.py` - `SessionManager`:** Manages the lifecycle of a packing session, including creating unique, timestamped session directories and handling the logic for the crash recovery feature.
 
--   **`src/statistics_manager.py` - `StatisticsManager` class:**
-    - Handles persistent, cross-session application statistics.
-    - **Responsibilities:**
-        - Loads and saves aggregate data to `~/.packers_assistant/stats.json`.
-        - Tracks unique order IDs to prevent duplicate counting across sessions.
+-   **`src/statistics_manager.py` - `StatisticsManager`:** Handles persistent, cross-session application statistics, tracking metrics like total unique orders processed and completed over time.
 
--   **`src/custom_filter_proxy_model.py` - `CustomFilterProxyModel` class:**
-    - A subclass of `QSortFilterProxyModel` that provides the live search/filter functionality for the main orders table.
-    - Its custom `filterAcceptsRow` method implements logic to search by Order Number, Status, and SKU simultaneously.
+-   **`src/packer_mode_widget.py` - `PackerModeWidget`:** The dedicated UI widget for the "Packer Mode" screen. It displays the items for the active order and captures barcode scanner input.
+
+-   **`src/order_table_model.py` - `OrderTableModel`:** A `QAbstractTableModel` that serves as the bridge between the pandas DataFrame of order data and the `QTableView` in the UI.
+
+-   **`src/custom_filter_proxy_model.py` - `CustomFilterProxyModel`:** A `QSortFilterProxyModel` subclass that provides advanced, multi-column live search functionality for the main orders table (by Order Number, Status, and SKU).
+
+-   **`src/mapping_dialog.py` - `ColumnMappingDialog`:** A dialog that allows users to map the columns in their Excel file to the required data fields if the headers don't match the standard format.
+
+-   **`src/print_dialog.py` - `PrintDialog`:** A dialog for previewing all generated barcodes and sending them to a printer.
+
+-   **`src/styles.qss`:** A global Qt Stylesheet (QSS) file that defines the application's modern dark theme.
 
 ### State Management and Crash Recovery
 

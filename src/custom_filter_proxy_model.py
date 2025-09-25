@@ -1,24 +1,74 @@
-from PySide6.QtCore import QSortFilterProxyModel, Qt
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QModelIndex
+from PySide6.QtWidgets import QWidget
 import pandas as pd
 
 class CustomFilterProxyModel(QSortFilterProxyModel):
-    def __init__(self, parent=None):
+    """
+    A custom filter proxy model for advanced, multi-column filtering.
+
+    This class extends QSortFilterProxyModel to provide a more sophisticated
+    filtering mechanism tailored for the Packer's Assistant application. It
+    allows filtering the main order table based on a single search term that is
+    matched against the 'Order_Number', 'Status', and associated 'SKU' values
+    for each order.
+
+    Attributes:
+        _processed_df (pd.DataFrame): A DataFrame containing the detailed order
+                                      information, including SKUs.
+        search_term (str): The current search term used for filtering.
+    """
+    def __init__(self, parent: QWidget = None):
+        """
+        Initializes the CustomFilterProxyModel.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self._processed_df = None
         self.search_term = ""
 
     def set_processed_df(self, df: pd.DataFrame):
+        """
+        Sets the DataFrame containing detailed order and SKU information.
+
+        This DataFrame is used for the SKU-based search logic in the filter.
+
+        Args:
+            df (pd.DataFrame): The DataFrame with detailed order data.
+        """
         self._processed_df = df
 
-    def setFilterFixedString(self, text):
+    def setFilterFixedString(self, text: str):
         """
-        Overrides the default method to use our custom logic.
-        The name is set to match the QSortFilterProxyModel API.
+        Sets the search term and triggers a filter invalidation.
+
+        This method overrides the base class method to store the search term
+        in a normalized (lowercase) format and then forces the model to
+        re-evaluate its filter.
+
+        Args:
+            text (str): The search string entered by the user.
         """
         self.search_term = text.lower()
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, source_row, source_parent):
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        """
+        Determines whether a row should be included in the filtered view.
+
+        This is the core filtering logic. It checks if the search term matches:
+        1. The order number for the row.
+        2. The status for the row.
+        3. Any of the SKUs associated with the order number for that row.
+
+        Args:
+            source_row (int): The row number in the source model.
+            source_parent (QModelIndex): The parent index in the source model.
+
+        Returns:
+            bool: True if the row should be included, False otherwise.
+        """
         if not self.search_term:
             return True
 
