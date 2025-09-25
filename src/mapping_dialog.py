@@ -1,9 +1,36 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QDialogButtonBox, QMessageBox
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QMessageBox, QWidget
 )
+from typing import List, Dict
 
 class ColumnMappingDialog(QDialog):
-    def __init__(self, required_columns, file_columns, parent=None):
+    """
+    A dialog window for mapping required columns to columns from an imported file.
+
+    This dialog is presented to the user when an imported Excel file does not
+    contain the standard required column names. It allows the user to manually
+    associate the application's required fields (e.g., 'Order_Number', 'SKU')
+    with the actual column names present in their file.
+
+    Attributes:
+        mapping (Dict[str, str]): The resulting mapping from required columns
+                                   to file columns.
+        required_columns (List[str]): The list of column names the application needs.
+        file_columns (List[str]): The list of column names found in the user's file.
+        combo_boxes (Dict[str, QComboBox]): A dictionary holding the QComboBox
+                                            widgets for each required column.
+    """
+    def __init__(self, required_columns: List[str], file_columns: List[str], parent: QWidget = None):
+        """
+        Initializes the ColumnMappingDialog.
+
+        Args:
+            required_columns (List[str]): A list of column names that the
+                                          application requires.
+            file_columns (List[str]): A list of column names found in the
+                                      imported file.
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Column Mapping")
 
@@ -24,20 +51,26 @@ class ColumnMappingDialog(QDialog):
             row_layout.addWidget(label)
 
             combo = QComboBox()
-            combo.addItems([""] + self.file_columns) # Add a blank option
+            combo.addItems([""] + self.file_columns)  # Add a blank option
             row_layout.addWidget(combo)
 
             self.combo_boxes[req_col] = combo
             layout.addLayout(row_layout)
 
-        # OK and Cancel buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.validate_and_accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
     def validate_and_accept(self):
-        """Validates that all required columns are mapped before accepting."""
+        """
+        Validates that all required columns are mapped before closing the dialog.
+
+        This method is connected to the 'OK' button's accepted signal. It checks
+        if every required column has been assigned a corresponding file column.
+        If the mapping is incomplete, it shows a warning message. Otherwise, it
+        accepts the dialog.
+        """
         self.mapping = {}
         unmapped_columns = []
         for req_col, combo in self.combo_boxes.items():
@@ -54,6 +87,13 @@ class ColumnMappingDialog(QDialog):
         else:
             self.accept()
 
-    def get_mapping(self):
-        """Returns the mapping dictionary selected by the user."""
+    def get_mapping(self) -> Dict[str, str]:
+        """
+        Returns the final mapping dictionary created by the user.
+
+        Returns:
+            Dict[str, str]: A dictionary where keys are the required column
+                            names and values are the corresponding column names
+                            from the user's file.
+        """
         return self.mapping

@@ -7,17 +7,52 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import json
 from PySide6.QtCore import QObject, Signal
+from typing import List, Dict, Any, Tuple
 
 REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity', 'Courier']
 STATE_FILE_NAME = "packing_state.json"
 
 class PackerLogic(QObject):
-    item_packed = Signal(str, int, int) # order_number, packed_count, required_count
+    """
+    Handles the core business logic of the Packer's Assistant application.
 
-    def __init__(self, barcode_dir):
+    This class is responsible for loading and processing packing lists,
+    generating barcodes, managing the state of the packing process (what has
+    been packed), and handling the logic for scanning items. It operates
+    independently of the UI, communicating changes via Qt signals.
+
+    Attributes:
+        item_packed (Signal): A signal emitted when an item is packed, providing
+                              real-time progress updates.
+        barcode_dir (str): The directory where generated barcodes and session
+                           state files are stored.
+        packing_list_df (pd.DataFrame): The original, unprocessed DataFrame
+                                        loaded from the Excel file.
+        processed_df (pd.DataFrame): The DataFrame after column mapping and
+                                     validation.
+        orders_data (Dict): A dictionary containing details for each order,
+                            including its barcode path and item list.
+        barcode_to_order_number (Dict[str, str]): A mapping from barcode content
+                                                  to the original order number.
+        current_order_number (str | None): The order number currently being packed.
+        current_order_state (Dict): The detailed packing state for the current
+                                    order (required vs. packed counts for each SKU).
+        session_packing_state (Dict): The packing state for the entire session,
+                                      including in-progress and completed orders.
+    """
+    item_packed = Signal(str, int, int)  # order_number, packed_count, required_count
+
+    def __init__(self, barcode_dir: str):
+        """
+        Initializes the PackerLogic instance.
+
+        Args:
+            barcode_dir (str): The directory for storing session files.
+        """
         super().__init__()
         self.barcode_dir = barcode_dir
         self.packing_list_df = None
+        self.processed_df = None
         self.orders_data = {}
         self.barcode_to_order_number = {}
         self.current_order_number = None
@@ -25,22 +60,21 @@ class PackerLogic(QObject):
         self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
         self._load_session_state()
 
-    def _get_state_file_path(self):
+    def _get_state_file_path(self) -> str:
         """Returns the absolute path for the session state file."""
         return os.path.join(self.barcode_dir, STATE_FILE_NAME)
 
     def _load_session_state(self):
-        """Loads the packing state for the entire session from a JSON file."""
+        """Loads the packing state for the session from a JSON file."""
         state_file = self._get_state_file_path()
         if os.path.exists(state_file):
             try:
                 with open(state_file, 'r') as f:
                     data = json.load(f)
-                    # Ensure both keys exist for compatibility with older state files
                     self.session_packing_state['in_progress'] = data.get('in_progress', {})
                     self.session_packing_state['completed_orders'] = data.get('completed_orders', [])
             except (json.JSONDecodeError, IOError):
-                 self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
         else:
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
@@ -53,16 +87,39 @@ class PackerLogic(QObject):
         except IOError as e:
             print(f"Error: Could not save session state to {state_file}. Reason: {e}")
 
-    def _normalize_sku(self, sku):
-        """Normalizes an SKU by removing non-alphanumeric characters and converting to lowercase."""
+    def _normalize_sku(self, sku: Any) -> str:
+        """
+        Normalizes an SKU for consistent comparison.
+
+        Removes all non-alphanumeric characters and converts the string to
+        lowercase. This makes the matching process robust against variations
+        in barcode scanner output or data entry.
+
+        Args:
+            sku (Any): The SKU to normalize, typically a string or number.
+
+        Returns:
+            str: The normalized SKU string.
+        """
         return ''.join(filter(str.isalnum, str(sku))).lower()
 
-    def load_packing_list_from_file(self, file_path):
-        """Loads and processes the packing list from an Excel file."""
+    def load_packing_list_from_file(self, file_path: str) -> pd.DataFrame:
+        """
+        Loads a packing list from an Excel file into a pandas DataFrame.
+
+        Args:
+            file_path (str): The path to the .xlsx file.
+
+        Returns:
+            pd.DataFrame: The loaded data as a DataFrame.
+
+        Raises:
+            ValueError: If the file cannot be read or is empty.
+        """
         try:
             df = pd.read_excel(file_path, dtype=str).fillna('')
         except Exception as e:
-            raise ValueError(f"Не вдалося прочитати Excel файл: {e}")
+            raise ValueError(f"Could not read the Excel file: {e}")
 
         if df.empty:
             raise ValueError("The file is empty or contains no data.")
@@ -70,24 +127,33 @@ class PackerLogic(QObject):
         self.packing_list_df = df
         return self.packing_list_df
 
-    def process_data_and_generate_barcodes(self, column_mapping=None):
-        """Processes the loaded dataframe and generates barcodes."""
+    def process_data_and_generate_barcodes(self, column_mapping: Dict[str, str] = None) -> int:
+        """
+        Processes the loaded DataFrame and generates barcodes for each order.
+
+        This method validates columns, applies user-defined mappings, and then
+        iterates through each unique order to generate a printable barcode image.
+        The image includes the order number, courier, and the barcode itself.
+
+        Args:
+            column_mapping (Dict[str, str], optional): A mapping from required
+                column names to the actual names in the file. Defaults to None.
+
+        Returns:
+            int: The total number of unique orders processed.
+
+        Raises:
+            ValueError: If the packing list is not loaded or columns are missing.
+            RuntimeError: If a critical error occurs during barcode generation.
+        """
         if self.packing_list_df is None:
             raise ValueError("Packing list not loaded.")
 
         df = self.packing_list_df.copy()
         if column_mapping:
-            # Check if all required columns are mapped
-            mapped_cols = set(column_mapping.keys())
-            required_cols = set(REQUIRED_COLUMNS)
-            if not required_cols.issubset(mapped_cols):
-                missing = required_cols - mapped_cols
-                raise ValueError(f"Не всі необхідні колонки були зіставлені. Відсутні: {', '.join(missing)}")
-
             inverted_mapping = {v: k for k, v in column_mapping.items()}
             df.rename(columns=inverted_mapping, inplace=True)
 
-        # Verify columns after potential renaming
         missing_final = [col for col in REQUIRED_COLUMNS if col not in df.columns]
         if missing_final:
             raise ValueError(f"The file is missing required columns: {', '.join(missing_final)}")
@@ -97,105 +163,59 @@ class PackerLogic(QObject):
         self.barcode_to_order_number = {}
         code128 = barcode.get_barcode_class('code128')
 
-        # Barcode dimensions
         DPI = 203
-        LABEL_WIDTH_MM = 65
-        LABEL_HEIGHT_MM = 35
+        LABEL_WIDTH_MM, LABEL_HEIGHT_MM = 65, 35
         LABEL_WIDTH_PX = int((LABEL_WIDTH_MM / 25.4) * DPI)
         LABEL_HEIGHT_PX = int((LABEL_HEIGHT_MM / 25.4) * DPI)
-
-        TEXT_AREA_HEIGHT = 80  # Increased height for an extra line of text
+        TEXT_AREA_HEIGHT = 80
         BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT
 
-        font = None
-        font_bold = None
+        font, font_bold = None, None
         try:
-            # Use common system fonts like Arial
             font = ImageFont.truetype("arial.ttf", 32)
-            try:
-                font_bold = ImageFont.truetype("arialbd.ttf", 32)  # Arial Bold
-            except IOError:
-                print("Warning: Arial bold font not found. Falling back to regular font.")
-                font_bold = font  # Fallback to the regular font
+            font_bold = ImageFont.truetype("arialbd.ttf", 32)
         except IOError:
-            print("Warning: Arial regular font not found. Falling back to default font.")
-            try:
-                font = ImageFont.load_default()
-                font_bold = font  # Default font has no separate bold variant
-            except Exception as e:
-                print(f"CRITICAL: Could not load the default font: {e}")
-        except Exception as e:
-            print(f"CRITICAL: An unexpected error occurred during font loading: {e}.")
-            # Fonts remain None, text will not be rendered
+            print("Warning: Arial fonts not found. Falling back to default.")
+            font = ImageFont.load_default()
+            font_bold = font
 
         try:
             grouped = df.groupby('Order_Number')
-            unnamed_counter = 1
             for order_number, group in grouped:
-                safe_barcode_content = "".join(c for c in str(order_number) if c.isalnum() or c in ('-', '_')).rstrip()
+                safe_barcode_content = "".join(c for c in str(order_number) if c.isalnum() or c in '-_').rstrip()
                 if not safe_barcode_content:
-                    safe_barcode_content = f"unnamed_order_{unnamed_counter}"
-                    unnamed_counter += 1
+                    safe_barcode_content = f"unnamed_order_{len(self.orders_data)}"
 
                 self.barcode_to_order_number[safe_barcode_content] = order_number
 
-                # Generate barcode in memory
                 barcode_obj = code128(safe_barcode_content, writer=ImageWriter())
-
-                options = {
-                    'module_height': 15.0,
-                    'write_text': False,
-                    'quiet_zone': 2,
-                }
-
                 buffer = io.BytesIO()
-                barcode_obj.write(buffer, options)
+                barcode_obj.write(buffer, {'module_height': 15.0, 'write_text': False, 'quiet_zone': 2})
                 buffer.seek(0)
-
                 barcode_img = Image.open(buffer)
 
-                barcode_aspect_ratio = barcode_img.width / barcode_img.height
-                new_barcode_height = BARCODE_HEIGHT_PX
-                new_barcode_width = int(new_barcode_height * barcode_aspect_ratio)
-
-                if new_barcode_width > LABEL_WIDTH_PX:
-                    new_barcode_width = LABEL_WIDTH_PX
-                    new_barcode_height = int(new_barcode_width / barcode_aspect_ratio)
-
-                barcode_img = barcode_img.resize((new_barcode_width, new_barcode_height), Image.LANCZOS)
+                aspect_ratio = barcode_img.width / barcode_img.height
+                new_h = BARCODE_HEIGHT_PX
+                new_w = min(int(new_h * aspect_ratio), LABEL_WIDTH_PX)
+                barcode_img = barcode_img.resize((new_w, new_h), Image.LANCZOS)
 
                 label_img = Image.new('RGB', (LABEL_WIDTH_PX, LABEL_HEIGHT_PX), 'white')
+                barcode_x = (LABEL_WIDTH_PX - new_w) // 2
+                label_img.paste(barcode_img, (barcode_x, 0))
 
-                barcode_x = (LABEL_WIDTH_PX - new_barcode_width) // 2
-                barcode_y = 0
-                label_img.paste(barcode_img, (barcode_x, barcode_y))
+                draw = ImageDraw.Draw(label_img)
+                order_text = str(order_number)
+                courier_name = str(group['Courier'].iloc[0])
+                order_bbox = draw.textbbox((0, 0), order_text, font=font)
+                courier_bbox = draw.textbbox((0, 0), courier_name, font=font_bold)
 
-                # Add text, but only if fonts were loaded successfully
-                if font and font_bold:
-                    try:
-                        draw = ImageDraw.Draw(label_img)
+                order_x = (LABEL_WIDTH_PX - (order_bbox[2] - order_bbox[0])) / 2
+                order_y = new_h + 5
+                draw.text((order_x, order_y), order_text, font=font, fill='black')
 
-                        # 1. Order Number
-                        order_text = str(order_number)
-                        order_bbox = draw.textbbox((0, 0), order_text, font=font)
-                        order_width = order_bbox[2] - order_bbox[0]
-                        order_x = (LABEL_WIDTH_PX - order_width) / 2
-                        order_y = new_barcode_height + 5  # 5px padding below barcode
-                        draw.text((order_x, order_y), order_text, font=font, fill='black')
-
-                        # 2. Courier Name
-                        courier_name = str(group['Courier'].iloc[0])
-                        courier_bbox = draw.textbbox((0, 0), courier_name, font=font_bold)
-                        courier_width = courier_bbox[2] - courier_bbox[0]
-                        courier_x = (LABEL_WIDTH_PX - courier_width) / 2
-                        # Position courier below the order number text
-                        order_text_height = order_bbox[3] - order_bbox[1]
-                        courier_y = order_y + order_text_height + 5 # 5px padding below order text
-
-                        draw.text((courier_x, courier_y), courier_name, font=font_bold, fill='black')
-
-                    except Exception as e:
-                        print(f"Warning: Failed to draw text for order '{order_number}'. Error: {e}")
+                courier_x = (LABEL_WIDTH_PX - (courier_bbox[2] - courier_bbox[0])) / 2
+                courier_y = order_y + (order_bbox[3] - order_bbox[1]) + 5
+                draw.text((courier_x, courier_y), courier_name, font=font_bold, fill='black')
 
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
                 label_img.save(barcode_path)
@@ -208,52 +228,70 @@ class PackerLogic(QObject):
         except Exception as e:
             raise RuntimeError(f"Error during barcode generation: {e}")
 
-    def start_order_packing(self, scanned_text):
-        """Starts packing an order based on a scanned barcode."""
+    def start_order_packing(self, scanned_text: str) -> Tuple[List[Dict] | None, str]:
+        """
+        Starts or resumes packing an order based on a scanned barcode.
+
+        It looks up the order number, validates its status (e.g., not already
+        completed), and loads its packing state into memory.
+
+        Args:
+            scanned_text (str): The content from the scanned order barcode.
+
+        Returns:
+            Tuple[List[Dict] | None, str]: A tuple containing the list of items
+                                           for the order and a status string
+                                           ("ORDER_LOADED", "ORDER_NOT_FOUND",
+                                           "ORDER_ALREADY_COMPLETED").
+        """
         if scanned_text not in self.barcode_to_order_number:
             return None, "ORDER_NOT_FOUND"
 
         original_order_number = self.barcode_to_order_number[scanned_text]
 
-        # Check if order is already completed
         if original_order_number in self.session_packing_state['completed_orders']:
             return None, "ORDER_ALREADY_COMPLETED"
 
         self.current_order_number = original_order_number
         items = self.orders_data[original_order_number]['items']
 
-        # Check if state already exists for this order
         if original_order_number in self.session_packing_state['in_progress']:
             self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
         else:
-            # If not, create a new state for it
             self.current_order_state = {}
             for i, item in enumerate(items):
                 sku = item.get('SKU')
-                if not sku:
-                    continue
-
+                if not sku: continue
                 try:
                     quantity = int(float(item.get('Quantity', 0)))
                 except (ValueError, TypeError):
                     quantity = 1
-
-                # Use normalized SKU as the key for consistency
                 normalized_sku = self._normalize_sku(sku)
                 self.current_order_state[normalized_sku] = {
-                    'original_sku': sku,
-                    'required': quantity,
-                    'packed': 0,
-                    'row': i
+                    'original_sku': sku, 'required': quantity, 'packed': 0, 'row': i
                 }
-            # Immediately save the newly initialized state
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state()
 
         return items, "ORDER_LOADED"
 
-    def process_sku_scan(self, sku):
-        """Processes a scanned SKU for the current order, normalizing for comparison."""
+    def process_sku_scan(self, sku: str) -> Tuple[Dict | None, str]:
+        """
+        Processes a scanned SKU for the currently active order.
+
+        It normalizes the SKU, checks if it's part of the order, updates the
+        packed count, and determines if the item or the entire order is complete.
+        The packing state is saved after every valid scan.
+
+        Args:
+            sku (str): The content from the scanned product SKU barcode.
+
+        Returns:
+            Tuple[Dict | None, str]: A tuple containing a result dictionary
+                                     (with row index and packed count) and a
+                                     status string ("SKU_OK", "SKU_NOT_FOUND",
+                                     "ORDER_COMPLETE", "SKU_EXTRA").
+        """
         if not self.current_order_number:
             return None, "NO_ACTIVE_ORDER"
 
@@ -264,21 +302,17 @@ class PackerLogic(QObject):
             if state['packed'] < state['required']:
                 state['packed'] += 1
                 is_complete = state['packed'] == state['required']
-
-                # Update the session state
                 self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
 
                 all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state.values())
 
                 if all_items_complete:
                     status = "ORDER_COMPLETE"
-                    # Remove completed order from in_progress and add to completed_orders
                     del self.session_packing_state['in_progress'][self.current_order_number]
                     if self.current_order_number not in self.session_packing_state['completed_orders']:
                         self.session_packing_state['completed_orders'].append(self.current_order_number)
                 else:
                     status = "SKU_OK"
-                    # Emit signal for real-time table update
                     total_packed = sum(s['packed'] for s in self.current_order_state.values())
                     total_required = sum(s['required'] for s in self.current_order_state.values())
                     self.item_packed.emit(self.current_order_number, total_packed, total_required)
@@ -291,12 +325,12 @@ class PackerLogic(QObject):
             return None, "SKU_NOT_FOUND"
 
     def clear_current_order(self):
-        """Clears the currently active order from memory (does not affect saved state)."""
+        """Clears the currently active order from memory."""
         self.current_order_number = None
         self.current_order_state = {}
 
     def end_session_cleanup(self):
-        """Cleans up session-related files, like the state file."""
+        """Removes the session state file upon graceful session termination."""
         state_file = self._get_state_file_path()
         if os.path.exists(state_file):
             try:

@@ -20,8 +20,20 @@ from order_table_model import OrderTableModel
 from statistics_manager import StatisticsManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 
-def find_latest_session_dir(base_dir="."):
-    """Finds the most recent, valid, incomplete session directory."""
+def find_latest_session_dir(base_dir: str = ".") -> str | None:
+    """
+    Finds the most recent, valid, and incomplete session directory.
+
+    A session is considered valid and incomplete if it is a directory matching
+    the session name pattern and contains a `session_info.json` file.
+
+    Args:
+        base_dir (str): The directory to search for session folders.
+
+    Returns:
+        str | None: The path to the latest valid session directory, or None if
+                    none is found.
+    """
     session_pattern = "OrdersFulfillment_"
     session_dirs = []
     try:
@@ -45,7 +57,26 @@ def find_latest_session_dir(base_dir="."):
 
 
 class MainWindow(QMainWindow):
+    """
+    The main application window, acting as the central orchestrator.
+
+    This class initializes the UI, manages application state, and connects UI
+    events to the backend logic. It handles the overall workflow, including
+    session management, data loading, and switching between different views.
+
+    Attributes:
+        session_manager (SessionManager): Manages the lifecycle of packing sessions.
+        logic (PackerLogic | None): The core business logic for the current session.
+        stats_manager (StatisticsManager): Manages persistent application statistics.
+        session_widget (QWidget): The main widget for the session view.
+        packer_mode_widget (PackerModeWidget): The widget for the packer mode view.
+        stacked_widget (QStackedWidget): Manages switching between views.
+        orders_table (QTableView): The table displaying the list of orders.
+        table_model (OrderTableModel): The model for the orders table.
+        proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
+    """
     def __init__(self):
+        """Initializes the MainWindow, sets up UI, and loads initial state."""
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
         self.resize(1024, 768)
@@ -63,6 +94,7 @@ class MainWindow(QMainWindow):
         self._update_dashboard()
 
     def _init_ui(self):
+        """Initializes all user interface components and layouts."""
         self.session_widget = QWidget()
         main_layout = QVBoxLayout(self.session_widget)
 
@@ -129,19 +161,27 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stacked_widget)
 
     def _update_dashboard(self):
+        """Updates the statistics dashboard with the latest data."""
         stats = self.stats_manager.get_display_stats()
         self.total_orders_label.setText(f"Total Unique Orders: {stats['Total Unique Orders']}")
         self.completed_label.setText(f"Total Completed: {stats['Total Completed']}")
 
-    def flash_border(self, color, duration_ms=500):
-        """Flashes the border of the packer mode table's frame with a specific color."""
-        # Apply the border to the frame wrapping the table by using a specific object name
-        self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
+    def flash_border(self, color: str, duration_ms: int = 500):
+        """
+        Flashes the border of the packer mode table's frame.
 
-        # Set a timer to remove the border
+        This provides visual feedback for scan results (e.g., green for success,
+        red for error).
+
+        Args:
+            color (str): The color of the border (e.g., "green", "red").
+            duration_ms (int): The duration of the flash in milliseconds.
+        """
+        self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
         QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table_frame.setStyleSheet(""))
 
     def _init_sounds(self):
+        """Initializes QSoundEffect objects for audio feedback."""
         self.sounds_missing = False
         sound_files = {"success": "sounds/success.wav", "error": "sounds/error.wav", "victory": "sounds/victory.wav"}
 
@@ -157,12 +197,22 @@ class MainWindow(QMainWindow):
         if os.path.exists(sound_files["victory"]): self.victory_sound.setSource(QUrl.fromLocalFile(sound_files["victory"]))
         else: self.sounds_missing = True
 
-    def start_session(self, file_path=None, restore_dir=None):
+    def start_session(self, file_path: str = None, restore_dir: str = None):
+        """
+        Starts a new packing session.
+
+        This can be triggered by the user selecting a file or by the application
+        restoring a previous, incomplete session.
+
+        Args:
+            file_path (str, optional): The path to the packing list Excel file.
+                                       If None, a file dialog is shown.
+            restore_dir (str, optional): The directory of the session to restore.
+        """
         if self.session_manager.is_active():
             self.status_label.setText("A session is already active. Please end it first.")
             return
 
-        # Defensively clear the table model to prevent state issues.
         self.orders_table.setModel(None)
 
         if not file_path:
@@ -178,6 +228,12 @@ class MainWindow(QMainWindow):
         self.load_and_process_file(file_path)
 
     def end_session(self):
+        """
+        Ends the current session gracefully.
+
+        This involves saving a final report, cleaning up session files, and
+        resetting the UI to its initial state.
+        """
         if not self.session_manager.is_active():
             return
 
@@ -196,12 +252,9 @@ class MainWindow(QMainWindow):
 
             with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                 final_df.to_excel(writer, index=False, sheet_name='Sheet1')
-
                 workbook = writer.book
                 worksheet = writer.sheets['Sheet1']
-
                 green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-
                 status_col_idx = final_df.columns.get_loc('Status') + 1
 
                 for row_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row)):
@@ -211,7 +264,6 @@ class MainWindow(QMainWindow):
                             cell.fill = green_fill
 
             self.status_label.setText(f"Session ended. Report saved to {output_path}")
-
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")
             print(f"Error during end_session: {e}")
@@ -229,7 +281,17 @@ class MainWindow(QMainWindow):
         self.orders_table.setModel(None)
         self.status_label.setText("Session ended. Start a new session to begin.")
 
-    def load_and_process_file(self, file_path):
+    def load_and_process_file(self, file_path: str):
+        """
+        Loads, processes, and displays the data from a packing list file.
+
+        This method coordinates the PackerLogic to parse the file, handle column
+        mapping if necessary, generate barcodes, and then sets up the main
+        orders table.
+
+        Args:
+            file_path (str): The path to the Excel file to load.
+        """
         try:
             df = self.logic.load_packing_list_from_file(file_path)
 
@@ -247,31 +309,29 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Session '{session_id}' started. Processing file...")
             order_count = self.logic.process_data_and_generate_barcodes(mapping)
 
-            self.setup_order_table() # Call this first to have order_summary_df
+            self.setup_order_table()
 
             order_ids = self.order_summary_df['Order_Number'].tolist()
             self.stats_manager.record_new_orders(order_ids)
             self._update_dashboard()
 
             self.status_label.setText(f"Successfully processed {order_count} orders for session '{session_id}'.")
-
             self.start_session_button.setEnabled(False)
             self.end_session_button.setEnabled(True)
             self.print_button.setEnabled(True)
             self.packer_mode_button.setEnabled(True)
-
-        except (ValueError, RuntimeError) as e:
-            print("--- A known error occurred ---")
-            traceback.print_exc()
-            self.status_label.setText(f"Error: {e}")
-            self.end_session()
         except Exception as e:
-            print("--- An unexpected error occurred ---")
-            traceback.print_exc()
             self.status_label.setText(f"An unexpected error occurred: {e}")
             self.end_session()
 
     def setup_order_table(self):
+        """
+        Generates an aggregated summary and sets up the main orders table.
+
+        This method transforms the detailed, item-level DataFrame from
+        PackerLogic into a summarized, per-order view. It then initializes
+        the table model and the proxy model for filtering.
+        """
         df = self.logic.processed_df
         extra_cols = [col for col in df.columns if col not in REQUIRED_COLUMNS]
 
@@ -292,7 +352,6 @@ class MainWindow(QMainWindow):
         order_summary['Status'] = 'New'
         order_summary['Completed At'] = ''
 
-        # Update progress and status from loaded session state
         completed_orders = self.logic.session_packing_state.get('completed_orders', [])
         in_progress_orders = self.logic.session_packing_state.get('in_progress', {})
 
@@ -306,35 +365,32 @@ class MainWindow(QMainWindow):
             elif order_number in in_progress_orders:
                 order_state = in_progress_orders[order_number]
                 total_packed = sum(s['packed'] for s in order_state.values())
-
                 order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {int(total_required)}"
                 if total_packed > 0:
                     order_summary.at[index, 'Status'] = 'In Progress'
 
         self.order_summary_df = order_summary
         self.table_model = OrderTableModel(self.order_summary_df)
-
-        # Set up the proxy model for filtering
         self.proxy_model = CustomFilterProxyModel()
         self.proxy_model.setSourceModel(self.table_model)
         self.proxy_model.set_processed_df(self.logic.processed_df)
         self.orders_table.setModel(self.proxy_model)
-
-        # Connect search input to the proxy model's filter
         self.search_input.textChanged.connect(self.proxy_model.setFilterFixedString)
-
         self.orders_table.resizeColumnsToContents()
 
     def switch_to_packer_mode(self):
+        """Switches the view to the Packer Mode widget."""
         self.stacked_widget.setCurrentWidget(self.packer_mode_widget)
         self.packer_mode_widget.set_focus_to_scanner()
 
     def switch_to_session_view(self):
+        """Switches the view back to the main session widget."""
         self.logic.clear_current_order()
         self.packer_mode_widget.clear_screen()
         self.stacked_widget.setCurrentWidget(self.session_widget)
 
     def open_print_dialog(self):
+        """Opens the dialog for printing order barcodes."""
         if not self.logic.orders_data:
             self.status_label.setText("No data to print.")
             return
@@ -342,11 +398,19 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def on_scanner_input(self, text: str):
+        """
+        Handles input from the barcode scanner in Packer Mode.
+
+        This is the central callback for all barcode scans. It determines if
+        the scan is for an order or a product SKU and routes the logic accordingly.
+
+        Args:
+            text (str): The decoded text from the barcode scanner.
+        """
         self.packer_mode_widget.update_raw_scan_display(text)
         self.packer_mode_widget.show_notification("", "black")
 
         if self.logic.current_order_number is None:
-            # This is an order barcode scan
             order_number_from_scan = self.logic.barcode_to_order_number.get(text)
             if not order_number_from_scan:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
@@ -354,7 +418,6 @@ class MainWindow(QMainWindow):
                 self.error_sound.play()
                 return
 
-            # Check if order is already completed
             if order_number_from_scan in self.logic.session_packing_state.get('completed_orders', []):
                 self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
                 self.flash_border("orange")
@@ -366,12 +429,7 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.add_order_to_history(order_number_from_scan)
                 self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
-            elif status == "ORDER_ALREADY_COMPLETED":
-                # This is a redundant check, but good for safety
-                self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
-                self.flash_border("orange")
-                self.error_sound.play()
-            else: # Should not happen due to above checks, but as a fallback
+            else:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
                 self.flash_border("red")
                 self.error_sound.play()
@@ -395,12 +453,22 @@ class MainWindow(QMainWindow):
                 self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
                 self.victory_sound.play()
-                self.packer_mode_widget.scanner_input.setEnabled(False) # Disable input
+                self.packer_mode_widget.scanner_input.setEnabled(False)
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
 
-    def _on_item_packed(self, order_number, packed_count, required_count):
-        """Slot to handle real-time progress updates from the logic layer."""
+    def _on_item_packed(self, order_number: str, packed_count: int, required_count: int):
+        """
+        Slot to handle real-time progress updates from the logic layer.
+
+        This method is connected to the `item_packed` signal from PackerLogic.
+        It updates the 'Packing Progress' cell in the main orders table.
+
+        Args:
+            order_number (str): The order number that was updated.
+            packed_count (int): The new total of items packed for the order.
+            required_count (int): The total items required for the order.
+        """
         try:
             row_index = self.order_summary_df.index[self.order_summary_df['Order_Number'] == order_number][0]
             progress_col_index = self.order_summary_df.columns.get_loc('Packing Progress')
@@ -408,35 +476,34 @@ class MainWindow(QMainWindow):
             new_progress = f"{packed_count} / {required_count}"
             self.order_summary_df.iloc[row_index, progress_col_index] = new_progress
 
-            # Emit dataChanged for the specific cell that was updated
             self.table_model.dataChanged.emit(
                 self.table_model.index(row_index, progress_col_index),
                 self.table_model.index(row_index, progress_col_index)
             )
         except (IndexError, KeyError):
-            # This might happen in rare cases, can be ignored.
             pass
 
-    def update_order_status(self, order_number, status):
+    def update_order_status(self, order_number: str, status: str):
+        """
+        Updates the status and related fields of an order in the main table.
+
+        Args:
+            order_number (str): The order number to update.
+            status (str): The new status ('In Progress' or 'Completed').
+        """
         try:
             row_index = self.order_summary_df.index[self.order_summary_df['Order_Number'] == order_number][0]
 
-            # Update Status
             status_col_index = self.order_summary_df.columns.get_loc('Status')
             self.order_summary_df.iloc[row_index, status_col_index] = status
 
-            # Update Packing Progress column as well
             progress_col_index = self.order_summary_df.columns.get_loc('Packing Progress')
             if status == 'Completed':
                 total_quantity = self.order_summary_df.iloc[row_index]['Total_Quantity']
                 self.order_summary_df.iloc[row_index, progress_col_index] = f"{int(total_quantity)} / {int(total_quantity)}"
-
                 completed_col_index = self.order_summary_df.columns.get_loc('Completed At')
                 self.order_summary_df.iloc[row_index, completed_col_index] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
             elif status == 'In Progress':
-                # The _on_item_packed slot will provide more granular updates.
-                # This just sets the initial progress if it's not already set.
                 if order_number in self.logic.session_packing_state:
                     order_state = self.logic.session_packing_state[order_number]
                     total_packed = sum(s['packed'] for s in order_state.values())
@@ -450,7 +517,13 @@ class MainWindow(QMainWindow):
         except (IndexError, KeyError):
             print(f"Warning: Could not update status for order number {order_number}. Not found in summary table.")
 
-def restore_session(window):
+def restore_session(window: MainWindow):
+    """
+    Checks for and offers to restore an incomplete session on startup.
+
+    Args:
+        window (MainWindow): The main application window instance.
+    """
     latest_dir = find_latest_session_dir()
     if not latest_dir:
         return
@@ -458,14 +531,12 @@ def restore_session(window):
     session_info_path = os.path.join(latest_dir, "session_info.json")
     state_path = os.path.join(latest_dir, "packing_state.json")
 
-    # The check for session_info_path is already in find_latest_session_dir
     msg_box = QMessageBox()
     msg_box.setIcon(QMessageBox.Question)
     msg_box.setText("An incomplete session was found.")
     msg_box.setInformativeText(f"Would you like to restore session '{os.path.basename(latest_dir)}'?")
     msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
     msg_box.setDefaultButton(QMessageBox.Yes)
-
     reply = msg_box.exec()
 
     if reply == QMessageBox.Yes:
@@ -474,14 +545,12 @@ def restore_session(window):
                 session_info = json.load(f)
             packing_list_path = session_info.get('packing_list_path')
             if packing_list_path and os.path.exists(packing_list_path):
-                # Pass the restore_dir to start_session
                 window.start_session(file_path=packing_list_path, restore_dir=latest_dir)
             else:
                 QMessageBox.critical(window, "Error", "Could not restore session. The original packing list file was not found.")
         except Exception as e:
             QMessageBox.critical(window, "Error", f"An error occurred during session restoration: {e}")
     else:
-        # User chose not to restore, so rename files to ignore them next time
         try:
             if os.path.exists(session_info_path):
                 os.rename(session_info_path, session_info_path + ".ignored")
