@@ -33,7 +33,7 @@ class TestPackerLogic(unittest.TestCase):
 
     def test_load_file_not_found(self):
         """Test loading a non-existent file."""
-        with self.assertRaisesRegex(ValueError, "Не вдалося прочитати Excel файл"):
+        with self.assertRaisesRegex(ValueError, "Could not read the Excel file"):
             self.logic.load_packing_list_from_file('non_existent_file.xlsx')
 
     def test_process_with_missing_courier_mapping(self):
@@ -56,7 +56,7 @@ class TestPackerLogic(unittest.TestCase):
             'Quantity': 'Amount'
         }
 
-        with self.assertRaisesRegex(ValueError, "Не всі необхідні колонки були зіставлені.*Courier"):
+        with self.assertRaisesRegex(ValueError, "The file is missing required columns: Courier"):
             self.logic.process_data_and_generate_barcodes(mapping)
 
     def test_successful_processing_and_barcode_generation(self):
