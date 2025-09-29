@@ -271,7 +271,7 @@ class PackerLogic(QObject):
         if original_order_number in self.session_packing_state['in_progress']:
             self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
         else:
-            self.current_order_state = {}
+            self.current_order_state = []
             for i, item in enumerate(items):
                 sku = item.get('SKU')
                 if not sku: continue
@@ -279,10 +279,15 @@ class PackerLogic(QObject):
                     quantity = int(float(item.get('Quantity', 0)))
                 except (ValueError, TypeError):
                     quantity = 1
+
                 normalized_sku = self._normalize_sku(sku)
-                self.current_order_state[normalized_sku] = {
-                    'original_sku': sku, 'required': quantity, 'packed': 0, 'row': i
-                }
+                self.current_order_state.append({
+                    'original_sku': sku,
+                    'normalized_sku': normalized_sku,
+                    'required': quantity,
+                    'packed': 0,
+                    'row': i
+                })
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state()
 
@@ -318,30 +323,39 @@ class PackerLogic(QObject):
         # The rest of the logic uses the potentially translated SKU.
         normalized_final_sku = self._normalize_sku(final_sku)
 
-        if normalized_final_sku in self.current_order_state:
-            state = self.current_order_state[normalized_final_sku]
-            if state['packed'] < state['required']:
-                state['packed'] += 1
-                is_complete = state['packed'] == state['required']
-                self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
+        # Find the first matching item that is not yet fully packed
+        found_item = None
+        for item_state in self.current_order_state:
+            if item_state['normalized_sku'] == normalized_final_sku and item_state['packed'] < item_state['required']:
+                found_item = item_state
+                break
 
-                all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state.values())
+        if found_item:
+            found_item['packed'] += 1
+            is_complete = found_item['packed'] == found_item['required']
+            self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
 
-                if all_items_complete:
-                    status = "ORDER_COMPLETE"
-                    del self.session_packing_state['in_progress'][self.current_order_number]
-                    if self.current_order_number not in self.session_packing_state['completed_orders']:
-                        self.session_packing_state['completed_orders'].append(self.current_order_number)
-                else:
-                    status = "SKU_OK"
-                    total_packed = sum(s['packed'] for s in self.current_order_state.values())
-                    total_required = sum(s['required'] for s in self.current_order_state.values())
-                    self.item_packed.emit(self.current_order_number, total_packed, total_required)
+            all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state)
 
-                self._save_session_state()
-                return {"row": state['row'], "packed": state['packed'], "is_complete": is_complete}, status
+            if all_items_complete:
+                status = "ORDER_COMPLETE"
+                del self.session_packing_state['in_progress'][self.current_order_number]
+                if self.current_order_number not in self.session_packing_state['completed_orders']:
+                    self.session_packing_state['completed_orders'].append(self.current_order_number)
             else:
-                return None, "SKU_EXTRA"
+                status = "SKU_OK"
+                total_packed = sum(s['packed'] for s in self.current_order_state)
+                total_required = sum(s['required'] for s in self.current_order_state)
+                self.item_packed.emit(self.current_order_number, total_packed, total_required)
+
+            self._save_session_state()
+            return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
+
+        # If no item was found above, it might be because all matching SKUs are already packed.
+        # Let's check for that to return the correct status.
+        is_sku_in_order = any(s['normalized_sku'] == normalized_final_sku for s in self.current_order_state)
+        if is_sku_in_order:
+            return None, "SKU_EXTRA"  # All items with this SKU are already packed
         else:
             return None, "SKU_NOT_FOUND"
 

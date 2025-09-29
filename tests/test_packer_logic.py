@@ -182,7 +182,7 @@ class TestPackerLogic(unittest.TestCase):
 
         self.logic.start_order_packing('1001')
         # The logic should treat 'invalid_string' as a quantity of 1
-        self.assertEqual(self.logic.current_order_state['a1']['required'], 1)
+        self.assertEqual(self.logic.current_order_state[0]['required'], 1)
 
         # Scan the item, should complete the order
         result, status = self.logic.process_sku_scan('A-1')
@@ -218,7 +218,7 @@ class TestPackerLogic(unittest.TestCase):
 
         self.logic.start_order_packing('1001')
         self.assertIsNotNone(self.logic.current_order_number)
-        self.assertNotEqual(self.logic.current_order_state, {})
+        self.assertNotEqual(self.logic.current_order_state, [])
 
         self.logic.clear_current_order()
         self.assertIsNone(self.logic.current_order_number)
@@ -238,10 +238,66 @@ class TestPackerLogic(unittest.TestCase):
         self.logic.process_data_and_generate_barcodes()
 
         self.logic.start_order_packing('1001')
-        # The state should only contain the valid SKU, keyed by its normalized form
-        self.assertIn('a1', self.logic.current_order_state)
-        self.assertNotIn('', self.logic.current_order_state)
+        # The state should only contain the valid SKU
         self.assertEqual(len(self.logic.current_order_state), 1)
+        self.assertEqual(self.logic.current_order_state[0]['normalized_sku'], 'a1')
+
+    def test_packing_with_duplicate_sku_rows(self):
+        """Test packing an order with duplicate SKUs as separate rows."""
+        dummy_data = {
+            'Order_Number': ['ORD-001', 'ORD-001', 'ORD-001'],
+            'SKU': ['SKU-A', 'SKU-B', 'SKU-A'],
+            'Product_Name': ['Product A', 'Product B', 'Product A'],
+            'Quantity': [1, 2, 1],
+            'Courier': ['CourierX', 'CourierX', 'CourierX']
+        }
+        file_path = self._create_dummy_excel(dummy_data)
+        self.logic.load_packing_list_from_file(file_path)
+        self.logic.process_data_and_generate_barcodes()
+
+        # Start packing the order
+        items, status = self.logic.start_order_packing('ORD-001')
+        self.assertEqual(status, "ORDER_LOADED")
+        self.assertEqual(len(items), 3)
+        self.assertEqual(len(self.logic.current_order_state), 3)
+
+        # Scan the first SKU-A
+        result, status = self.logic.process_sku_scan('SKU-A')
+        self.assertEqual(status, "SKU_OK")
+        self.assertEqual(result['row'], 0) # First row with SKU-A
+        self.assertEqual(result['packed'], 1)
+        self.assertTrue(result['is_complete'])
+        self.assertEqual(self.logic.current_order_state[0]['packed'], 1)
+        self.assertEqual(self.logic.current_order_state[2]['packed'], 0) # The other SKU-A is untouched
+
+        # Scan SKU-B
+        result, status = self.logic.process_sku_scan('SKU-B')
+        self.assertEqual(status, "SKU_OK")
+        self.assertEqual(result['row'], 1)
+        self.assertEqual(result['packed'], 1)
+        self.assertFalse(result['is_complete'])
+
+        # Scan the second SKU-A
+        result, status = self.logic.process_sku_scan('SKU-A')
+        self.assertEqual(status, "SKU_OK")
+        self.assertEqual(result['row'], 2) # Second row with SKU-A
+        self.assertEqual(result['packed'], 1)
+        self.assertTrue(result['is_complete'])
+        self.assertEqual(self.logic.current_order_state[2]['packed'], 1)
+
+        # Scan the second SKU-B
+        result, status = self.logic.process_sku_scan('SKU-B')
+        self.assertEqual(status, "ORDER_COMPLETE")
+        self.assertEqual(result['row'], 1)
+        self.assertEqual(result['packed'], 2)
+        self.assertTrue(result['is_complete'])
+
+        # Check order is marked as complete
+        self.assertIn('ORD-001', self.logic.session_packing_state['completed_orders'])
+
+        # Test extra scan
+        result, status = self.logic.process_sku_scan('SKU-A')
+        self.assertEqual(status, "SKU_EXTRA")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
