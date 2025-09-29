@@ -15,12 +15,9 @@ from main import MainWindow
 REQUIRED_COLUMNS = ["Order_Number", "Product_Name", "SKU", "Quantity"]
 
 @pytest.fixture(scope="session")
-def test_excel_file(tmp_path_factory):
-    """
-    Pytest fixture to create a dummy Excel file for testing.
-    This fixture has a 'session' scope, so it's created once per test session.
-    """
-    fn = tmp_path_factory.mktemp("data") / "test_packing_list.xlsx"
+def test_excel_file_basic(tmp_path_factory):
+    """Basic test file for general UI tests."""
+    fn = tmp_path_factory.mktemp("data") / "test_packing_list_basic.xlsx"
     data = {
         "Order_Number": ["#ORD-001", "#ORD-001", "ORD-002"],
         "Product_Name": ["Product A", "Product B", "Product C"],
@@ -32,34 +29,50 @@ def test_excel_file(tmp_path_factory):
     df.to_excel(fn, index=False)
     return str(fn)
 
-@pytest.fixture
-def app(qtbot, test_excel_file):
-    """
-    Pytest fixture to create and tear down the main application window.
-    This fixture is created for each test function.
-    """
-    # Patch QFileDialog to prevent it from opening a real dialog
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
-        # Set the mock to return the path to our test file and a filter string
-        mock_dialog.return_value = (test_excel_file, "Excel Files (*.xlsx)")
+@pytest.fixture(scope="session")
+def test_excel_file_duplicates(tmp_path_factory):
+    """Test file specifically for testing duplicate SKU handling and UI restoration."""
+    fn = tmp_path_factory.mktemp("data") / "test_packing_list_duplicates.xlsx"
+    data = {
+        "Order_Number": ["ORD-100", "ORD-100", "ORD-100"],
+        "Product_Name": ["Product X", "Product Y", "Product X"],
+        "SKU": ["SKU-X", "SKU-Y", "SKU-X"],
+        "Quantity": [1, 2, 1],
+        "Courier": ["FedEx", "FedEx", "FedEx"]
+    }
+    df = pd.DataFrame(data)
+    df.to_excel(fn, index=False)
+    return str(fn)
 
-        # Create an instance of the main window
+@pytest.fixture
+def app_basic(qtbot, test_excel_file_basic):
+    """App fixture using the basic test file."""
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+        mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
-
-        # Yield the window and qtbot to the test function
         yield window, qtbot
-
-        # Teardown: ensure the session is ended to clean up files
         if window.session_manager.is_active():
             window.end_session()
 
-def test_start_session_and_load_data(app):
+@pytest.fixture
+def app_duplicates(qtbot, test_excel_file_duplicates):
+    """App fixture using the test file with duplicate SKUs."""
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+        mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.show()
+        yield window, qtbot
+        if window.session_manager.is_active():
+            window.end_session()
+
+def test_start_session_and_load_data(app_basic):
     """
     Test Case 1: Verifies starting a session and loading data from the Excel file.
     """
-    window, qtbot = app
+    window, qtbot = app_basic
 
     # Initial state assertions
     assert window.start_session_button.isEnabled()
@@ -82,11 +95,11 @@ def test_start_session_and_load_data(app):
     # The test data has two unique orders
     assert model.rowCount() == 2
 
-def test_packer_mode_and_scan_simulation(app):
+def test_packer_mode_and_scan_simulation(app_basic):
     """
     Test Case 2: Verifies switching to packer mode and simulating barcode scans.
     """
-    window, qtbot = app
+    window, qtbot = app_basic
 
     # --- Setup: Start a session first ---
     qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
@@ -138,11 +151,11 @@ def test_packer_mode_and_scan_simulation(app):
     # Assert that the status is now "Packed"
     assert packer_widget.table.item(0, 3).text() == "Packed"
 
-def test_search_filter(app):
+def test_search_filter(app_basic):
     """
     Test Case 3: Verifies the search filter functionality on the main table.
     """
-    window, qtbot = app
+    window, qtbot = app_basic
 
     # --- Setup: Start a session first ---
     qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
@@ -169,3 +182,48 @@ def test_search_filter(app):
     # --- Step 4: Clear filter ---
     window.search_input.clear()
     assert proxy_model.rowCount() == 2
+
+def test_reload_in_progress_order_restores_ui_state(app_duplicates):
+    """
+    Test Case 4: Verifies that reloading an in-progress order correctly
+    restores the visual state of its items in the UI.
+    """
+    window, qtbot = app_duplicates
+
+    # --- Setup: Start a session with the duplicate SKU file ---
+    qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
+    qtbot.mouseClick(window.packer_mode_button, Qt.LeftButton)
+    packer_widget = window.packer_mode_widget
+
+    # --- Step 1: Scan the order and one of the duplicate SKUs ---
+    packer_widget.scanner_input.setText("ORD-100")
+    qtbot.keyPress(packer_widget.scanner_input, Qt.Key_Return)
+
+    packer_widget.scanner_input.setText("SKU-X")
+    qtbot.keyPress(packer_widget.scanner_input, Qt.Key_Return)
+
+    # Verify the first SKU-X (row 0) is packed
+    assert packer_widget.table.item(0, 3).text() == "Packed"
+    assert packer_widget.table.item(1, 3).text() == "Pending" # SKU-Y
+    assert packer_widget.table.item(2, 3).text() == "Pending" # Second SKU-X
+
+    # --- Step 2: Exit to main menu ---
+    qtbot.mouseClick(packer_widget.exit_button, Qt.LeftButton)
+    assert window.stacked_widget.currentWidget() == window.main_menu_widget
+
+    # --- Step 3: Re-enter packer mode and reload the same order ---
+    qtbot.mouseClick(window.packer_mode_button, Qt.LeftButton)
+    packer_widget.scanner_input.setText("ORD-100")
+    qtbot.keyPress(packer_widget.scanner_input, Qt.Key_Return)
+
+    # --- Step 4: Assert that the UI state was correctly restored ---
+    # The first SKU-X (row 0) should still be marked as "Packed"
+    assert packer_widget.table.item(0, 3).text() == "Packed"
+    # The progress text should also be correct
+    assert packer_widget.table.item(0, 2).text() == "1 / 1"
+
+    # The other items should still be "Pending"
+    assert packer_widget.table.item(1, 3).text() == "Pending"
+    assert packer_widget.table.item(1, 2).text() == "0 / 2"
+    assert packer_widget.table.item(2, 3).text() == "Pending"
+    assert packer_widget.table.item(2, 2).text() == "0 / 1"
