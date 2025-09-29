@@ -152,7 +152,7 @@ class PackerModeWidget(QWidget):
             self.barcode_scanned.emit(sku)
         self.set_focus_to_scanner()
 
-    def display_order(self, items: List[Dict[str, Any]], order_state: Dict[str, Any]):
+    def display_order(self, items: List[Dict[str, Any]], order_state: List[Dict[str, Any]]):
         """
         Populates the items table with the details of the current order.
 
@@ -163,36 +163,38 @@ class PackerModeWidget(QWidget):
         Args:
             items (List[Dict[str, Any]]): A list of dictionaries, where each
                                           represents a product in the order.
-            order_state (Dict[str, Any]): The current packing state for the
-                                          order, showing packed counts.
+            order_state (List[Dict[str, Any]]): The current packing state for the
+                                                order, showing packed counts for each row.
         """
         self.table.setRowCount(len(items))
-        sku_to_row_map = {}
 
+        # First, populate the table with all items as 'Pending'
         for row, item in enumerate(items):
             sku = item.get('SKU', '')
-            sku_to_row_map[sku] = row
             quantity = str(item.get('Quantity', ''))
 
             self.table.setItem(row, 0, QTableWidgetItem(item.get('Product_Name', '')))
             self.table.setItem(row, 1, QTableWidgetItem(sku))
-            self.table.setItem(row, 2, QTableWidgetItem(f"0 / {quantity}"))
+            self.table.setItem(row, 2, QTableWidgetItem(f"0 / {quantity}")) # Default to 0 packed
 
-            status_item = QTableWidgetItem("Pending"); status_item.setBackground(QColor("yellow"))
+            status_item = QTableWidgetItem("Pending")
+            status_item.setBackground(QColor("yellow"))
             self.table.setItem(row, 3, status_item)
 
             confirm_button = QPushButton("Confirm Manually")
             confirm_button.clicked.connect(partial(self._on_manual_confirm, sku))
             self.table.setCellWidget(row, 4, confirm_button)
 
-        for state in order_state.values():
-            original_sku = state.get('original_sku')
-            if original_sku in sku_to_row_map:
-                row_index = sku_to_row_map[original_sku]
-                packed_count = state.get('packed', 0)
-                is_complete = packed_count >= state.get('required', 1)
-                if packed_count > 0:
-                    self.update_item_row(row_index, packed_count, is_complete)
+        # Now, iterate through the state list and update rows that have progress
+        for state_item in order_state:
+            row_index = state_item.get('row')
+            packed_count = state_item.get('packed', 0)
+
+            # Check if the row index is valid and if there's anything packed
+            if row_index is not None and packed_count > 0 and row_index < self.table.rowCount():
+                required_count = state_item.get('required', 1)
+                is_complete = packed_count >= required_count
+                self.update_item_row(row_index, packed_count, is_complete)
 
         self.status_label.setText(f"Order {items[0]['Order_Number']}\nIn Progress...")
         self.set_focus_to_scanner()
