@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from logger import get_logger
+from src.exceptions import SessionLockedError, StaleLockError
 
 logger = get_logger(__name__)
 
@@ -34,20 +35,23 @@ class SessionManager:
         packing_list_path (str | None): Path to the original Excel packing list
     """
 
-    def __init__(self, client_id: str, profile_manager):
+    def __init__(self, client_id: str, profile_manager, lock_manager):
         """
         Initialize SessionManager for a specific client.
 
         Args:
             client_id: Client identifier (e.g., "M", "R")
             profile_manager: ProfileManager instance for path operations
+            lock_manager: SessionLockManager instance for session locking
         """
         self.client_id = client_id
         self.profile_manager = profile_manager
+        self.lock_manager = lock_manager
         self.session_id = None
         self.session_active = False
         self.output_dir = None
         self.packing_list_path = None
+        self.heartbeat_timer = None
 
         logger.info(f"SessionManager initialized for client {client_id}")
 
@@ -67,6 +71,8 @@ class SessionManager:
 
         Raises:
             Exception: If a session is already active
+            SessionLockedError: If session is locked by another process
+            StaleLockError: If session has a stale lock
         """
         if self.session_active:
             logger.error("Attempted to start session while one is already active")
@@ -75,9 +81,37 @@ class SessionManager:
         logger.info(f"Starting session for client {self.client_id}")
 
         if restore_dir:
-            # Restore existing session
+            # Restore existing session - check if it's locked
             self.output_dir = Path(restore_dir)
             self.session_id = self.output_dir.name
+
+            # Check lock status
+            is_locked, lock_info = self.lock_manager.is_locked(self.output_dir)
+            if is_locked:
+                # Check if it's our own lock
+                if (lock_info.get('locked_by') == self.lock_manager.hostname and
+                    lock_info.get('process_id') == self.lock_manager.process_id):
+                    # Our own lock, just continue
+                    logger.info(f"Restoring our own locked session: {self.session_id}")
+                else:
+                    # Check if lock is stale
+                    if self.lock_manager.is_lock_stale(lock_info):
+                        # Stale lock - raise StaleLockError
+                        stale_minutes = self.lock_manager._get_stale_minutes(lock_info)
+                        logger.warning(f"Session has stale lock: {self.session_id}")
+                        raise StaleLockError(
+                            f"Session has stale lock",
+                            lock_info=lock_info,
+                            stale_minutes=stale_minutes
+                        )
+                    else:
+                        # Active lock by another process
+                        logger.warning(f"Session is locked by another process: {self.session_id}")
+                        raise SessionLockedError(
+                            f"Session is locked by another process",
+                            lock_info=lock_info
+                        )
+
             logger.info(f"Restoring session: {self.session_id}")
         else:
             # Create new session
@@ -91,6 +125,12 @@ class SessionManager:
 
             logger.info(f"Created new session: {self.session_id}")
             logger.debug(f"Session directory: {self.output_dir}")
+
+        # Acquire lock on this session
+        success, error_msg = self.lock_manager.acquire_lock(self.client_id, self.output_dir)
+        if not success:
+            logger.error(f"Failed to acquire session lock: {error_msg}")
+            raise SessionLockedError(error_msg)
 
         self.packing_list_path = packing_list_path
         self.session_active = True
@@ -111,14 +151,18 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Failed to create session info file: {e}")
 
-        logger.info(f"Session {self.session_id} started successfully")
+        # Start heartbeat timer
+        self._start_heartbeat()
+
+        logger.info(f"Session {self.session_id} started successfully with lock")
         return self.session_id
 
     def end_session(self):
         """
         End the current session and perform cleanup.
 
-        This resets the manager's state and removes the `session_info.json` file,
+        This resets the manager's state, releases the session lock,
+        stops the heartbeat timer, and removes the `session_info.json` file,
         effectively marking the session as gracefully closed and not in need
         of restoration.
         """
@@ -127,6 +171,13 @@ class SessionManager:
             return
 
         logger.info(f"Ending session: {self.session_id}")
+
+        # Stop heartbeat timer
+        self._stop_heartbeat()
+
+        # Release session lock
+        if self.output_dir:
+            self.lock_manager.release_lock(self.output_dir)
 
         self._cleanup_session_files()
 
@@ -203,3 +254,63 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Error reading session info: {e}")
             return None
+
+    def _start_heartbeat(self):
+        """
+        Start periodic heartbeat updates.
+
+        This method starts a timer that updates the session lock's heartbeat
+        every 60 seconds to prove the session is still active.
+
+        Note: This requires Qt event loop to be running (PySide6.QtCore.QTimer).
+        Import is done inside the method to avoid circular dependencies.
+        """
+        try:
+            from PySide6.QtCore import QTimer
+
+            if self.heartbeat_timer is not None:
+                # Already running
+                return
+
+            self.heartbeat_timer = QTimer()
+            self.heartbeat_timer.timeout.connect(self._update_heartbeat)
+            self.heartbeat_timer.start(60000)  # 60 seconds in milliseconds
+
+            logger.info(f"Heartbeat timer started for session {self.session_id}")
+
+        except ImportError:
+            logger.warning("PySide6 not available, heartbeat disabled")
+        except Exception as e:
+            logger.error(f"Failed to start heartbeat timer: {e}")
+
+    def _stop_heartbeat(self):
+        """
+        Stop the heartbeat timer.
+
+        This should be called when ending a session to stop periodic
+        heartbeat updates.
+        """
+        if self.heartbeat_timer is not None:
+            try:
+                self.heartbeat_timer.stop()
+                self.heartbeat_timer = None
+                logger.info("Heartbeat timer stopped")
+            except Exception as e:
+                logger.error(f"Failed to stop heartbeat timer: {e}")
+
+    def _update_heartbeat(self):
+        """
+        Update the heartbeat in the session lock file.
+
+        This is called periodically by the heartbeat timer to update
+        the heartbeat timestamp in the lock file.
+        """
+        if not self.output_dir:
+            return
+
+        try:
+            success = self.lock_manager.update_heartbeat(self.output_dir)
+            if not success:
+                logger.warning(f"Heartbeat update failed for session {self.session_id}")
+        except Exception as e:
+            logger.error(f"Error updating heartbeat: {e}")
