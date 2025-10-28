@@ -1,15 +1,34 @@
+# ============================================================================
 # Packing Tool Configuration File
-# Copy this file to 'config.ini' and adjust settings for your environment
+# ============================================================================
+#
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to 'config.ini' (remove .example extension)
+# 2. Adjust FileServerPath below if your network location is different
+# 3. Save and restart the application
+#
+# ============================================================================
 
 [Network]
-# File server path for centralized data storage
-# Use UNC path for Windows network shares
-FileServerPath = \\192.168.88.101\Z_GreenDelivery\PACKING_TOOL_DATA
+# ============================================================================
+# File Server Path - CHANGE THIS IF YOUR NETWORK LOCATION IS DIFFERENT
+# ============================================================================
+#
+# This is where all client profiles, SKU mappings, and session data are stored.
+# Use UNC path format: \\SERVER\SHARE\PATH
+#
+# Default: \\192.168.88.101\Z_GreenDelivery\WAREHOUSE\2Packing-tool
+#
+# The application will create this structure inside:
+#   CLIENTS/     - Client profiles and SKU mappings
+#   SESSIONS/    - Packing sessions organized by client
+#
+FileServerPath = \\192.168.88.101\Z_GreenDelivery\WAREHOUSE\2Packing-tool
 
-# Connection timeout in seconds
+# Connection timeout in seconds (increase if server is slow)
 ConnectionTimeout = 5
 
-# Local cache directory (fallback if network unavailable)
+# Local cache directory (advanced users only)
 # Leave empty to use default: %USERPROFILE%\.packers_assistant\cache
 LocalCachePath =
 

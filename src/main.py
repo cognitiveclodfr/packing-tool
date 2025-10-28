@@ -15,6 +15,10 @@ import pandas as pd
 
 from logger import get_logger
 from profile_manager import ProfileManager, ProfileManagerError, NetworkError, ValidationError
+from session_lock_manager import SessionLockManager
+from exceptions import SessionLockedError, StaleLockError
+from restore_session_dialog import RestoreSessionDialog
+from session_monitor_widget import SessionMonitorWidget
 from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
 from packer_mode_widget import PackerModeWidget
@@ -109,6 +113,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to initialize application:\n\n{e}")
             sys.exit(1)
 
+        # Initialize SessionLockManager
+        self.lock_manager = SessionLockManager(self.profile_manager)
+        logger.info("SessionLockManager initialized successfully")
+
         # Current client state
         self.current_client_id = None
         self.session_manager = None  # Will be instantiated per client
@@ -188,6 +196,10 @@ class MainWindow(QMainWindow):
         self.start_session_button.clicked.connect(self.start_session)
         control_layout.addWidget(self.start_session_button)
 
+        self.restore_session_button = QPushButton("Restore Session")
+        self.restore_session_button.clicked.connect(self.open_restore_session_dialog)
+        control_layout.addWidget(self.restore_session_button)
+
         self.end_session_button = QPushButton("End Session")
         self.end_session_button.setEnabled(False)
         self.end_session_button.clicked.connect(self.end_session)
@@ -208,6 +220,10 @@ class MainWindow(QMainWindow):
         self.sku_mapping_button = QPushButton("SKU Mapping")
         self.sku_mapping_button.clicked.connect(self.open_sku_mapping_dialog)
         control_layout.addWidget(self.sku_mapping_button)
+
+        self.session_monitor_button = QPushButton("Session Monitor")
+        self.session_monitor_button.clicked.connect(self.open_session_monitor)
+        control_layout.addWidget(self.session_monitor_button)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
@@ -425,7 +441,8 @@ class MainWindow(QMainWindow):
             # Create SessionManager for this client
             self.session_manager = SessionManager(
                 client_id=self.current_client_id,
-                profile_manager=self.profile_manager
+                profile_manager=self.profile_manager,
+                lock_manager=self.lock_manager
             )
 
             # Start session
@@ -447,6 +464,20 @@ class MainWindow(QMainWindow):
 
             # Load and process file
             self.load_and_process_file(file_path)
+
+        except StaleLockError as e:
+            # Session has a stale lock - offer to force-release it
+            logger.warning(f"Session has stale lock: {e}")
+            self._handle_stale_lock_error(e, file_path, restore_dir)
+            self.session_manager = None
+            self.logic = None
+
+        except SessionLockedError as e:
+            # Session is actively locked by another process
+            logger.warning(f"Session is locked: {e}")
+            self._handle_session_locked_error(e)
+            self.session_manager = None
+            self.logic = None
 
         except Exception as e:
             logger.error(f"Failed to start session: {e}", exc_info=True)
@@ -779,6 +810,202 @@ class MainWindow(QMainWindow):
             )
         except (IndexError, KeyError):
             logger.warning(f"Could not update status for order number {order_number}. Not found in summary table.")
+
+    def open_restore_session_dialog(self):
+        """Open dialog to select and restore an incomplete session."""
+        if not self.current_client_id:
+            logger.warning("Attempted to restore session without selecting client")
+            QMessageBox.warning(
+                self,
+                "No Client Selected",
+                "Please select a client first!"
+            )
+            return
+
+        # Check if session already active
+        if self.session_manager and self.session_manager.is_active():
+            logger.warning("Attempted to restore session while one is already active")
+            QMessageBox.warning(
+                self,
+                "Session Active",
+                "A session is already active. Please end it first."
+            )
+            return
+
+        logger.info(f"Opening restore session dialog for client {self.current_client_id}")
+
+        dialog = RestoreSessionDialog(
+            self.current_client_id,
+            self.profile_manager,
+            self.lock_manager,
+            self
+        )
+
+        if dialog.exec() == QDialog.Accepted:
+            selected_session = dialog.get_selected_session()
+            if selected_session:
+                logger.info(f"User selected session to restore: {selected_session}")
+
+                # Get session info to find packing list path
+                session_info_path = selected_session / "session_info.json"
+                try:
+                    import json
+                    with open(session_info_path, 'r', encoding='utf-8') as f:
+                        session_info = json.load(f)
+
+                    packing_list_path = session_info.get('packing_list_path')
+                    if packing_list_path:
+                        # Start session with restore_dir
+                        self.start_session(file_path=packing_list_path, restore_dir=str(selected_session))
+                    else:
+                        QMessageBox.warning(
+                            self,
+                            "Error",
+                            "Session info does not contain packing list path."
+                        )
+                except Exception as e:
+                    logger.error(f"Error reading session info: {e}", exc_info=True)
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to read session information:\n\n{e}"
+                    )
+
+    def open_session_monitor(self):
+        """Open the session monitor window."""
+        logger.info("Opening session monitor")
+
+        monitor_dialog = QDialog(self)
+        monitor_dialog.setWindowTitle("Active Sessions Monitor")
+        monitor_dialog.setMinimumSize(800, 400)
+
+        layout = QVBoxLayout(monitor_dialog)
+
+        monitor_widget = SessionMonitorWidget(self.lock_manager)
+        layout.addWidget(monitor_widget)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(monitor_dialog.close)
+        layout.addWidget(close_button)
+
+        monitor_dialog.exec()
+
+    def _handle_session_locked_error(self, error: SessionLockedError):
+        """
+        Handle when a session is actively locked by another process.
+
+        Shows a dialog informing the user that the session is currently in use.
+
+        Args:
+            error: SessionLockedError with lock information
+        """
+        lock_info = error.lock_info
+        if not lock_info:
+            QMessageBox.warning(
+                self,
+                "Session Locked",
+                "This session is currently locked by another process.\n\n"
+                "Please wait or choose a different session."
+            )
+            return
+
+        locked_by = lock_info.get('locked_by', 'Unknown PC')
+        user_name = lock_info.get('user_name', 'Unknown user')
+        lock_time = lock_info.get('lock_time', 'Unknown time')
+
+        # Format time nicely
+        try:
+            from datetime import datetime
+            lock_dt = datetime.fromisoformat(lock_time)
+            lock_time_formatted = lock_dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            lock_time_formatted = lock_time
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Session Already in Use")
+        msg.setText("This session is currently active on another computer.")
+        msg.setInformativeText(
+            f"<b>User:</b> {user_name}<br>"
+            f"<b>Computer:</b> {locked_by}<br>"
+            f"<b>Started:</b> {lock_time_formatted}<br><br>"
+            "Please wait for the user to finish, or choose another session."
+        )
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
+
+    def _handle_stale_lock_error(self, error: StaleLockError, file_path: str, restore_dir: str):
+        """
+        Handle when a session has a stale lock (possible crash).
+
+        Shows a dialog allowing the user to force-release the lock and open the session.
+
+        Args:
+            error: StaleLockError with lock information
+            file_path: Path to the packing list file
+            restore_dir: Directory of the session to restore
+        """
+        lock_info = error.lock_info
+        if not lock_info:
+            QMessageBox.warning(self, "Stale Lock", "Session has an invalid lock file.")
+            return
+
+        locked_by = lock_info.get('locked_by', 'Unknown PC')
+        user_name = lock_info.get('user_name', 'Unknown user')
+        heartbeat = lock_info.get('heartbeat', 'Unknown')
+        stale_minutes = error.stale_minutes
+
+        # Format time nicely
+        try:
+            from datetime import datetime
+            heartbeat_dt = datetime.fromisoformat(heartbeat)
+            heartbeat_formatted = heartbeat_dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            heartbeat_formatted = heartbeat
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Stale Session Lock Detected")
+        msg.setText("This session has a stale lock - the application may have crashed.")
+        msg.setInformativeText(
+            f"<b>Original user:</b> {user_name}<br>"
+            f"<b>Computer:</b> {locked_by}<br>"
+            f"<b>Last heartbeat:</b> {heartbeat_formatted}<br>"
+            f"<b>No response for:</b> {stale_minutes} minutes<br><br>"
+            "The application may have crashed on that PC.<br><br>"
+            "<b>Do you want to force-release the lock and open this session?</b>"
+        )
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+
+        reply = msg.exec()
+
+        if reply == QMessageBox.Yes:
+            # Force release the lock
+            logger.info(f"User chose to force-release stale lock for session {restore_dir}")
+            try:
+                success = self.lock_manager.force_release_lock(Path(restore_dir))
+                if success:
+                    logger.info("Stale lock force-released successfully")
+                    # Retry opening the session
+                    QTimer.singleShot(100, lambda: self.start_session(file_path=file_path, restore_dir=restore_dir))
+                else:
+                    logger.error("Failed to force-release lock")
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        "Failed to release the lock. Please try again or contact support."
+                    )
+            except Exception as e:
+                logger.error(f"Error force-releasing lock: {e}", exc_info=True)
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to release lock:\n\n{e}"
+                )
+        else:
+            logger.info("User cancelled force-release of stale lock")
+            self.status_label.setText("Session opening cancelled.")
 
 
 # ==============================================================================
