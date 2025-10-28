@@ -17,6 +17,8 @@ from logger import get_logger
 from profile_manager import ProfileManager, ProfileManagerError, NetworkError, ValidationError
 from session_lock_manager import SessionLockManager
 from exceptions import SessionLockedError, StaleLockError
+from restore_session_dialog import RestoreSessionDialog
+from session_monitor_widget import SessionMonitorWidget
 from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
 from packer_mode_widget import PackerModeWidget
@@ -194,6 +196,10 @@ class MainWindow(QMainWindow):
         self.start_session_button.clicked.connect(self.start_session)
         control_layout.addWidget(self.start_session_button)
 
+        self.restore_session_button = QPushButton("Restore Session")
+        self.restore_session_button.clicked.connect(self.open_restore_session_dialog)
+        control_layout.addWidget(self.restore_session_button)
+
         self.end_session_button = QPushButton("End Session")
         self.end_session_button.setEnabled(False)
         self.end_session_button.clicked.connect(self.end_session)
@@ -214,6 +220,10 @@ class MainWindow(QMainWindow):
         self.sku_mapping_button = QPushButton("SKU Mapping")
         self.sku_mapping_button.clicked.connect(self.open_sku_mapping_dialog)
         control_layout.addWidget(self.sku_mapping_button)
+
+        self.session_monitor_button = QPushButton("Session Monitor")
+        self.session_monitor_button.clicked.connect(self.open_session_monitor)
+        control_layout.addWidget(self.session_monitor_button)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
@@ -800,6 +810,85 @@ class MainWindow(QMainWindow):
             )
         except (IndexError, KeyError):
             logger.warning(f"Could not update status for order number {order_number}. Not found in summary table.")
+
+    def open_restore_session_dialog(self):
+        """Open dialog to select and restore an incomplete session."""
+        if not self.current_client_id:
+            logger.warning("Attempted to restore session without selecting client")
+            QMessageBox.warning(
+                self,
+                "No Client Selected",
+                "Please select a client first!"
+            )
+            return
+
+        # Check if session already active
+        if self.session_manager and self.session_manager.is_active():
+            logger.warning("Attempted to restore session while one is already active")
+            QMessageBox.warning(
+                self,
+                "Session Active",
+                "A session is already active. Please end it first."
+            )
+            return
+
+        logger.info(f"Opening restore session dialog for client {self.current_client_id}")
+
+        dialog = RestoreSessionDialog(
+            self.current_client_id,
+            self.profile_manager,
+            self.lock_manager,
+            self
+        )
+
+        if dialog.exec() == QDialog.Accepted:
+            selected_session = dialog.get_selected_session()
+            if selected_session:
+                logger.info(f"User selected session to restore: {selected_session}")
+
+                # Get session info to find packing list path
+                session_info_path = selected_session / "session_info.json"
+                try:
+                    import json
+                    with open(session_info_path, 'r', encoding='utf-8') as f:
+                        session_info = json.load(f)
+
+                    packing_list_path = session_info.get('packing_list_path')
+                    if packing_list_path:
+                        # Start session with restore_dir
+                        self.start_session(file_path=packing_list_path, restore_dir=str(selected_session))
+                    else:
+                        QMessageBox.warning(
+                            self,
+                            "Error",
+                            "Session info does not contain packing list path."
+                        )
+                except Exception as e:
+                    logger.error(f"Error reading session info: {e}", exc_info=True)
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to read session information:\n\n{e}"
+                    )
+
+    def open_session_monitor(self):
+        """Open the session monitor window."""
+        logger.info("Opening session monitor")
+
+        monitor_dialog = QDialog(self)
+        monitor_dialog.setWindowTitle("Active Sessions Monitor")
+        monitor_dialog.setMinimumSize(800, 400)
+
+        layout = QVBoxLayout(monitor_dialog)
+
+        monitor_widget = SessionMonitorWidget(self.lock_manager)
+        layout.addWidget(monitor_widget)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(monitor_dialog.close)
+        layout.addWidget(close_button)
+
+        monitor_dialog.exec()
 
     def _handle_session_locked_error(self, error: SessionLockedError):
         """
