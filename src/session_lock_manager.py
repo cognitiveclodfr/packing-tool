@@ -16,8 +16,8 @@ from typing import Dict, Optional, Tuple
 import shutil
 import tempfile
 
-from src.logger import AppLogger
-from src.exceptions import SessionLockedError, StaleLockError
+from logger import AppLogger
+from exceptions import SessionLockedError, StaleLockError
 
 
 class SessionLockManager:
