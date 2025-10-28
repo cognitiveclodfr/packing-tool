@@ -1,6 +1,13 @@
 import os
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from collections import defaultdict
+
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class StatisticsManager:
     """
@@ -11,10 +18,14 @@ class StatisticsManager:
     over the application's lifetime. The stats are stored in a JSON file in the
     user's home directory.
 
+    Enhanced in Phase 1.3 to include:
+    - Per-client statistics
+    - Time-based metrics
+    - Performance tracking
+
     Attributes:
         stats_file (str): The full path to the statistics JSON file.
-        stats (Dict[str, List[str]]): A dictionary holding the loaded statistics,
-                                      primarily lists of unique order IDs.
+        stats (Dict[str, Any]): A dictionary holding the loaded statistics.
     """
     def __init__(self):
         """
@@ -28,12 +39,15 @@ class StatisticsManager:
             try:
                 os.makedirs(config_dir)
             except OSError as e:
-                print(f"Warning: Could not create config directory: {e}")
+                logger.warning(f"Could not create config directory: {e}")
 
         self.stats_file = os.path.join(config_dir, "stats.json")
-        self.stats: Dict[str, List[str]] = {
+        self.stats: Dict[str, Any] = {
             "processed_order_ids": [],
             "completed_order_ids": [],
+            "version": "1.1",  # Version 1.1 with Phase 1.3 enhancements
+            "client_stats": {},  # Per-client statistics
+            "session_history": [],  # Session completion records
         }
         self.load_stats()
 
@@ -53,11 +67,17 @@ class StatisticsManager:
                         # For backward compatibility, add new keys if they are missing
                         if "completed_order_ids" not in loaded_stats:
                             loaded_stats["completed_order_ids"] = []
+                        if "version" not in loaded_stats:
+                            loaded_stats["version"] = "1.0"
+                        if "client_stats" not in loaded_stats:
+                            loaded_stats["client_stats"] = {}
+                        if "session_history" not in loaded_stats:
+                            loaded_stats["session_history"] = []
                         self.stats.update(loaded_stats)
                     else:
-                        print("Warning: Statistics file format is outdated. Starting fresh.")
-            except (json.JSONDecodeError, IOError, TypeError):
-                print(f"Warning: Could not load or parse statistics file at {self.stats_file}. Starting fresh.")
+                        logger.warning("Statistics file format is outdated. Starting fresh.")
+            except (json.JSONDecodeError, IOError, TypeError) as e:
+                logger.warning(f"Could not load or parse statistics file at {self.stats_file}. Starting fresh. Error: {e}")
 
     def save_stats(self):
         """Saves the current in-memory statistics to the JSON file."""
@@ -65,7 +85,7 @@ class StatisticsManager:
             with open(self.stats_file, 'w') as f:
                 json.dump(self.stats, f, indent=4)
         except IOError as e:
-            print(f"Warning: Could not save statistics file to {self.stats_file}. Reason: {e}")
+            logger.warning(f"Could not save statistics file to {self.stats_file}. Reason: {e}")
 
     def record_new_orders(self, order_ids: List[str]):
         """
@@ -112,4 +132,244 @@ class StatisticsManager:
         return {
             "Total Unique Orders": total_orders,
             "Total Completed": completed_orders,
+        }
+
+    # ==================== Phase 1.3: Enhanced Analytics ====================
+
+    def record_session_completion(
+        self,
+        client_id: str,
+        session_id: str,
+        start_time: datetime,
+        end_time: datetime,
+        orders_completed: int,
+        items_packed: int
+    ):
+        """
+        Record session completion with detailed metrics.
+
+        Args:
+            client_id: Client identifier
+            session_id: Session identifier
+            start_time: Session start time
+            end_time: Session end time
+            orders_completed: Number of orders completed
+            items_packed: Total items packed
+        """
+        duration_seconds = (end_time - start_time).total_seconds()
+
+        session_record = {
+            'session_id': session_id,
+            'client_id': client_id,
+            'start_time': start_time.isoformat(),
+            'end_time': end_time.isoformat(),
+            'duration_seconds': duration_seconds,
+            'orders_completed': orders_completed,
+            'items_packed': items_packed
+        }
+
+        self.stats["session_history"].append(session_record)
+
+        # Update client-specific stats
+        self._update_client_stats(
+            client_id,
+            orders_completed,
+            items_packed,
+            duration_seconds
+        )
+
+        self.save_stats()
+        logger.info(f"Recorded session completion for client {client_id}: {session_id}")
+
+    def _update_client_stats(
+        self,
+        client_id: str,
+        orders_completed: int,
+        items_packed: int,
+        duration_seconds: float
+    ):
+        """
+        Update per-client statistics.
+
+        Args:
+            client_id: Client identifier
+            orders_completed: Orders completed in this session
+            items_packed: Items packed in this session
+            duration_seconds: Session duration in seconds
+        """
+        if client_id not in self.stats["client_stats"]:
+            self.stats["client_stats"][client_id] = {
+                'total_sessions': 0,
+                'total_orders': 0,
+                'total_items': 0,
+                'total_duration_seconds': 0.0,
+                'last_session_time': None
+            }
+
+        client_stats = self.stats["client_stats"][client_id]
+        client_stats['total_sessions'] += 1
+        client_stats['total_orders'] += orders_completed
+        client_stats['total_items'] += items_packed
+        client_stats['total_duration_seconds'] += duration_seconds
+        client_stats['last_session_time'] = datetime.now().isoformat()
+
+    def get_client_stats(self, client_id: str) -> Dict[str, Any]:
+        """
+        Get statistics for a specific client.
+
+        Args:
+            client_id: Client identifier
+
+        Returns:
+            Dictionary with client statistics
+        """
+        if client_id not in self.stats["client_stats"]:
+            return {
+                'total_sessions': 0,
+                'total_orders': 0,
+                'total_items': 0,
+                'average_orders_per_session': 0.0,
+                'average_items_per_session': 0.0,
+                'average_duration_minutes': 0.0,
+                'last_session_time': None
+            }
+
+        client_stats = self.stats["client_stats"][client_id]
+        total_sessions = client_stats['total_sessions']
+
+        avg_orders = client_stats['total_orders'] / total_sessions if total_sessions > 0 else 0.0
+        avg_items = client_stats['total_items'] / total_sessions if total_sessions > 0 else 0.0
+        avg_duration_minutes = (client_stats['total_duration_seconds'] / 60.0 / total_sessions
+                                if total_sessions > 0 else 0.0)
+
+        return {
+            'total_sessions': total_sessions,
+            'total_orders': client_stats['total_orders'],
+            'total_items': client_stats['total_items'],
+            'average_orders_per_session': round(avg_orders, 2),
+            'average_items_per_session': round(avg_items, 2),
+            'average_duration_minutes': round(avg_duration_minutes, 2),
+            'last_session_time': client_stats['last_session_time']
+        }
+
+    def get_all_clients_stats(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get statistics for all clients.
+
+        Returns:
+            Dictionary mapping client IDs to their statistics
+        """
+        all_stats = {}
+        for client_id in self.stats["client_stats"].keys():
+            all_stats[client_id] = self.get_client_stats(client_id)
+
+        return all_stats
+
+    def get_session_history(
+        self,
+        client_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get session history with optional filtering.
+
+        Args:
+            client_id: Filter by client ID (None for all clients)
+            start_date: Filter sessions after this date
+            end_date: Filter sessions before this date
+            limit: Maximum number of records to return (newest first)
+
+        Returns:
+            List of session records
+        """
+        sessions = self.stats["session_history"]
+
+        # Apply filters
+        if client_id:
+            sessions = [s for s in sessions if s.get('client_id') == client_id]
+
+        if start_date:
+            sessions = [
+                s for s in sessions
+                if datetime.fromisoformat(s['start_time']) >= start_date
+            ]
+
+        if end_date:
+            sessions = [
+                s for s in sessions
+                if datetime.fromisoformat(s['start_time']) <= end_date
+            ]
+
+        # Sort by start time (newest first)
+        sessions.sort(
+            key=lambda s: datetime.fromisoformat(s['start_time']),
+            reverse=True
+        )
+
+        # Apply limit
+        if limit:
+            sessions = sessions[:limit]
+
+        return sessions
+
+    def get_performance_metrics(
+        self,
+        client_id: Optional[str] = None,
+        days: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Get performance metrics for dashboard display.
+
+        Args:
+            client_id: Filter by client (None for all clients)
+            days: Number of days to include in analysis
+
+        Returns:
+            Dictionary with performance metrics
+        """
+        cutoff_date = datetime.now() - __import__('datetime').timedelta(days=days)
+
+        sessions = self.get_session_history(
+            client_id=client_id,
+            start_date=cutoff_date
+        )
+
+        if not sessions:
+            return {
+                'total_sessions': 0,
+                'total_orders': 0,
+                'total_items': 0,
+                'average_orders_per_session': 0.0,
+                'average_items_per_session': 0.0,
+                'average_duration_minutes': 0.0,
+                'orders_per_hour': 0.0,
+                'items_per_hour': 0.0
+            }
+
+        total_sessions = len(sessions)
+        total_orders = sum(s['orders_completed'] for s in sessions)
+        total_items = sum(s['items_packed'] for s in sessions)
+        total_duration_seconds = sum(s['duration_seconds'] for s in sessions)
+        total_duration_hours = total_duration_seconds / 3600.0
+
+        avg_orders = total_orders / total_sessions if total_sessions > 0 else 0.0
+        avg_items = total_items / total_sessions if total_sessions > 0 else 0.0
+        avg_duration_minutes = (total_duration_seconds / 60.0 / total_sessions
+                                if total_sessions > 0 else 0.0)
+
+        orders_per_hour = total_orders / total_duration_hours if total_duration_hours > 0 else 0.0
+        items_per_hour = total_items / total_duration_hours if total_duration_hours > 0 else 0.0
+
+        return {
+            'total_sessions': total_sessions,
+            'total_orders': total_orders,
+            'total_items': total_items,
+            'average_orders_per_session': round(avg_orders, 2),
+            'average_items_per_session': round(avg_items, 2),
+            'average_duration_minutes': round(avg_duration_minutes, 2),
+            'orders_per_hour': round(orders_per_hour, 2),
+            'items_per_hour': round(items_per_hour, 2),
+            'period_days': days
         }

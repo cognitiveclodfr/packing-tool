@@ -5,8 +5,9 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
     QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
-    QDialogButtonBox
+    QDialogButtonBox, QTabWidget
 )
+from PySide6.QtGui import QAction
 from PySide6.QtCore import QTimer, QUrl, Qt, QSettings
 from PySide6.QtMultimedia import QSoundEffect
 from datetime import datetime
@@ -29,6 +30,8 @@ from statistics_manager import StatisticsManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
+from dashboard_widget import DashboardWidget
+from session_history_widget import SessionHistoryWidget
 
 logger = get_logger(__name__)
 
@@ -240,10 +243,70 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
 
+        # Phase 1.3: Dashboard and History widgets
+        self.dashboard_widget = DashboardWidget(self.profile_manager, self.stats_manager)
+        self.history_widget = SessionHistoryWidget(self.profile_manager)
+
+        # Create tab widget for main views
+        self.tab_widget = QTabWidget()
+        self.tab_widget.addTab(self.session_widget, "Session")
+        self.tab_widget.addTab(self.dashboard_widget, "Dashboard")
+        self.tab_widget.addTab(self.history_widget, "History")
+
+        # Stacked widget to switch between tabbed view and packer mode
         self.stacked_widget = QStackedWidget()
-        self.stacked_widget.addWidget(self.session_widget)
+        self.stacked_widget.addWidget(self.tab_widget)
         self.stacked_widget.addWidget(self.packer_mode_widget)
         self.setCentralWidget(self.stacked_widget)
+
+        # Create menu bar
+        self._init_menu_bar()
+
+    def _init_menu_bar(self):
+        """Initialize the menu bar with actions."""
+        menubar = self.menuBar()
+
+        # View menu
+        view_menu = menubar.addMenu("&View")
+
+        session_action = QAction("&Session", self)
+        session_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(0))
+        view_menu.addAction(session_action)
+
+        dashboard_action = QAction("&Dashboard", self)
+        dashboard_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(1))
+        view_menu.addAction(dashboard_action)
+
+        history_action = QAction("&History", self)
+        history_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(2))
+        view_menu.addAction(history_action)
+
+        view_menu.addSeparator()
+
+        refresh_action = QAction("&Refresh All", self)
+        refresh_action.triggered.connect(self._refresh_all_views)
+        view_menu.addAction(refresh_action)
+
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        sku_mapping_action = QAction("SKU &Mapping", self)
+        sku_mapping_action.triggered.connect(self.open_sku_mapping_dialog)
+        tools_menu.addAction(sku_mapping_action)
+
+        session_monitor_action = QAction("Session &Monitor", self)
+        session_monitor_action.triggered.connect(self.open_session_monitor)
+        tools_menu.addAction(session_monitor_action)
+
+    def _refresh_all_views(self):
+        """Refresh all dashboard and history views."""
+        try:
+            self.dashboard_widget.refresh()
+            self.history_widget.refresh()
+            QMessageBox.information(self, "Refresh Complete", "All views have been refreshed")
+        except Exception as e:
+            logger.error(f"Error refreshing views: {e}")
+            QMessageBox.warning(self, "Refresh Error", f"Failed to refresh views: {e}")
 
     def _update_dashboard(self):
         """Update the statistics dashboard with the latest data."""
@@ -293,6 +356,10 @@ class MainWindow(QMainWindow):
                     logger.info(f"Restored last selected client: {last_client}")
 
             logger.info(f"Loaded {len(clients)} clients")
+
+            # Phase 1.3: Load clients into dashboard and history widgets
+            self.dashboard_widget.load_clients(clients)
+            self.history_widget.load_clients(clients)
 
         except Exception as e:
             logger.error(f"Error loading clients: {e}", exc_info=True)
@@ -558,9 +625,41 @@ class MainWindow(QMainWindow):
                             cell.fill = green_fill
 
             self.status_label.setText(f"Session ended. Report saved to {output_path}")
+
+            # Phase 1.3: Record session completion metrics
+            try:
+                session_info = self.session_manager.get_session_info()
+                if session_info and 'started_at' in session_info:
+                    start_time = datetime.fromisoformat(session_info['started_at'])
+                    end_time = datetime.now()
+
+                    # Count completed orders and items
+                    completed_orders = len(self.logic.session_packing_state.get('completed_orders', []))
+                    items_packed = sum(
+                        sum(
+                            sku_data.get('packed', 0)
+                            for sku_data in order_data.values()
+                            if isinstance(sku_data, dict)
+                        )
+                        for order_data in self.logic.session_packing_state.get('in_progress', {}).values()
+                    )
+
+                    # Record session completion
+                    self.stats_manager.record_session_completion(
+                        client_id=self.current_client_id,
+                        session_id=self.session_manager.session_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        orders_completed=completed_orders,
+                        items_packed=items_packed
+                    )
+                    logger.info(f"Recorded session completion: {completed_orders} orders, {items_packed} items")
+            except Exception as e:
+                logger.error(f"Error recording session metrics: {e}")
+
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")
-            print(f"Error during end_session: {e}")
+            logger.error(f"Error during end_session: {e}")
 
         if self.logic:
             self.logic.end_session_cleanup()
