@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from logger import get_logger
-from src.exceptions import SessionLockedError, StaleLockError
+from exceptions import SessionLockedError, StaleLockError
 
 logger = get_logger(__name__)
 

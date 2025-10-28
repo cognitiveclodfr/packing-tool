@@ -3,14 +3,22 @@
 
 a = Analysis(
     ['src/main.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
     datas=[
         ('sounds', 'sounds'),
         ('src/styles.qss', 'src'),
         ('config.ini.example', '.'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'exceptions',
+        'session_lock_manager',
+        'restore_session_dialog',
+        'session_monitor_widget',
+        'logger',
+        'profile_manager',
+        'session_manager',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
