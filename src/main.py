@@ -1,16 +1,20 @@
 import sys
 import os
 import json
+from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
-    QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit
+    QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
+    QDialogButtonBox
 )
-from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtCore import QTimer, QUrl, Qt, QSettings
 from PySide6.QtMultimedia import QSoundEffect
 from datetime import datetime
 from openpyxl.styles import PatternFill
 import pandas as pd
 
+from logger import get_logger
+from profile_manager import ProfileManager, ProfileManagerError, NetworkError, ValidationError
 from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
 from packer_mode_widget import PackerModeWidget
@@ -21,6 +25,8 @@ from statistics_manager import StatisticsManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
+
+logger = get_logger(__name__)
 
 def find_latest_session_dir(base_dir: str = ".") -> str | None:
     """
@@ -78,15 +84,42 @@ class MainWindow(QMainWindow):
         proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
     """
     def __init__(self):
-        """Initializes the MainWindow, sets up UI, and loads initial state."""
+        """Initialize the MainWindow, sets up UI, and loads initial state."""
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
         self.resize(1024, 768)
 
-        self.session_manager = SessionManager(base_dir=".")
-        self.sku_manager = SKUMappingManager()
-        self.logic = None # Will be instantiated per session
+        logger.info("Initializing MainWindow")
+
+        # Initialize ProfileManager (may raise NetworkError)
+        try:
+            self.profile_manager = ProfileManager()
+            logger.info("ProfileManager initialized successfully")
+        except NetworkError as e:
+            logger.error(f"Failed to initialize ProfileManager: {e}")
+            QMessageBox.critical(
+                self,
+                "Network Error",
+                f"Cannot connect to file server:\n\n{e}\n\n"
+                f"Please check your network connection and try again."
+            )
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Unexpected error initializing ProfileManager: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to initialize application:\n\n{e}")
+            sys.exit(1)
+
+        # Current client state
+        self.current_client_id = None
+        self.session_manager = None  # Will be instantiated per client
+        self.logic = None  # Will be instantiated per session
         self.stats_manager = StatisticsManager()
+
+        # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
+        self.sku_manager = SKUMappingManager()
+
+        # Settings for remembering last client
+        self.settings = QSettings("PackingTool", "ClientSelection")
 
         self._init_sounds()
         self._init_ui()
@@ -96,10 +129,39 @@ class MainWindow(QMainWindow):
 
         self._update_dashboard()
 
+        # Load available clients and restore last selected
+        self.load_available_clients()
+
+        logger.info("MainWindow initialized successfully")
+
     def _init_ui(self):
-        """Initializes all user interface components and layouts."""
+        """Initialize all user interface components and layouts."""
         self.session_widget = QWidget()
         main_layout = QVBoxLayout(self.session_widget)
+
+        # ====================================================================
+        # CLIENT SELECTION (NEW)
+        # ====================================================================
+        client_selection_widget = QWidget()
+        client_selection_widget.setObjectName("ClientSelection")
+        client_selection_layout = QHBoxLayout(client_selection_widget)
+        main_layout.addWidget(client_selection_widget)
+
+        client_label = QLabel("Client:")
+        client_label.setStyleSheet("font-size: 14pt; font-weight: bold;")
+        client_selection_layout.addWidget(client_label)
+
+        self.client_combo = QComboBox()
+        self.client_combo.setMinimumWidth(250)
+        self.client_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.client_combo.currentIndexChanged.connect(self.on_client_changed)
+        client_selection_layout.addWidget(self.client_combo)
+
+        self.new_client_button = QPushButton("+ New Client")
+        self.new_client_button.clicked.connect(self.create_new_client)
+        client_selection_layout.addWidget(self.new_client_button)
+
+        client_selection_layout.addStretch()
 
         # Dashboard
         dashboard_widget = QWidget()
@@ -168,10 +230,116 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stacked_widget)
 
     def _update_dashboard(self):
-        """Updates the statistics dashboard with the latest data."""
+        """Update the statistics dashboard with the latest data."""
         stats = self.stats_manager.get_display_stats()
         self.total_orders_label.setText(f"Total Unique Orders: {stats['Total Unique Orders']}")
         self.completed_label.setText(f"Total Completed: {stats['Total Completed']}")
+
+    # ========================================================================
+    # CLIENT MANAGEMENT (NEW)
+    # ========================================================================
+
+    def load_available_clients(self):
+        """Load available client profiles and populate dropdown."""
+        logger.info("Loading available clients")
+
+        self.client_combo.blockSignals(True)  # Prevent triggering on_client_changed during load
+        self.client_combo.clear()
+
+        try:
+            clients = self.profile_manager.get_available_clients()
+
+            if not clients:
+                logger.warning("No clients found")
+                self.client_combo.addItem("(No clients available)", None)
+                self.client_combo.setEnabled(False)
+                self.status_label.setText("No clients found. Click '+ New Client' to create one.")
+                return
+
+            self.client_combo.setEnabled(True)
+
+            for client_id in clients:
+                config = self.profile_manager.load_client_config(client_id)
+                if config:
+                    display_name = f"{config.get('client_name', client_id)} ({client_id})"
+                else:
+                    display_name = client_id
+
+                self.client_combo.addItem(display_name, client_id)
+                logger.debug(f"Added client: {client_id}")
+
+            # Restore last selected client
+            last_client = self.settings.value("last_client")
+            if last_client:
+                index = self.client_combo.findData(last_client)
+                if index >= 0:
+                    self.client_combo.setCurrentIndex(index)
+                    logger.info(f"Restored last selected client: {last_client}")
+
+            logger.info(f"Loaded {len(clients)} clients")
+
+        except Exception as e:
+            logger.error(f"Error loading clients: {e}", exc_info=True)
+            QMessageBox.warning(self, "Error", f"Failed to load clients:\n\n{e}")
+
+        finally:
+            self.client_combo.blockSignals(False)
+
+        # Trigger selection if there's a valid item
+        if self.client_combo.currentData():
+            self.on_client_changed(self.client_combo.currentIndex())
+
+    def on_client_changed(self, index: int):
+        """
+        Handle client selection change.
+
+        Args:
+            index: Index of selected item in combo box
+        """
+        client_id = self.client_combo.currentData()
+
+        if not client_id:
+            logger.debug("No valid client selected")
+            self.current_client_id = None
+            self.status_label.setText("Please select or create a client.")
+            return
+
+        logger.info(f"Client changed to: {client_id}")
+
+        self.current_client_id = client_id
+
+        # Save as last selected client
+        self.settings.setValue("last_client", client_id)
+
+        # Update status
+        client_name = self.client_combo.currentText()
+        self.status_label.setText(f"Selected client: {client_name}\nReady to start a session.")
+
+        logger.debug(f"Current client set to: {client_id}")
+
+    def create_new_client(self):
+        """Open dialog to create a new client profile."""
+        logger.info("Opening new client dialog")
+
+        dialog = NewClientDialog(self.profile_manager, self)
+
+        if dialog.exec() == QDialog.Accepted:
+            client_id = dialog.client_id
+            logger.info(f"New client created: {client_id}")
+
+            # Reload clients and select the new one
+            self.load_available_clients()
+
+            # Select newly created client
+            index = self.client_combo.findData(client_id)
+            if index >= 0:
+                self.client_combo.setCurrentIndex(index)
+
+            QMessageBox.information(
+                self,
+                "Client Created",
+                f"Client '{dialog.client_name}' (ID: {client_id}) created successfully!"
+            )
 
     def flash_border(self, color: str, duration_ms: int = 500):
         """
@@ -206,43 +374,121 @@ class MainWindow(QMainWindow):
 
     def start_session(self, file_path: str = None, restore_dir: str = None):
         """
-        Starts a new packing session.
+        Start a new packing session for the currently selected client.
 
         This can be triggered by the user selecting a file or by the application
         restoring a previous, incomplete session.
 
         Args:
-            file_path (str, optional): The path to the packing list Excel file.
-                                       If None, a file dialog is shown.
-            restore_dir (str, optional): The directory of the session to restore.
+            file_path: Optional path to the packing list Excel file. If None, a file dialog is shown
+            restore_dir: Optional directory of the session to restore
         """
-        if self.session_manager.is_active():
+        logger.info("Starting new session")
+
+        # Check if client is selected
+        if not self.current_client_id:
+            logger.warning("Attempted to start session without selecting client")
+            self.client_combo.setStyleSheet("border: 2px solid red;")
+            QMessageBox.warning(
+                self,
+                "No Client Selected",
+                "Please select a client before starting a session!"
+            )
+            QTimer.singleShot(2000, lambda: self.client_combo.setStyleSheet(""))
+            return
+
+        # Check if session already active
+        if self.session_manager and self.session_manager.is_active():
+            logger.warning("Attempted to start session while one is already active")
             self.status_label.setText("A session is already active. Please end it first.")
             return
 
+        # Clear existing table
         self.orders_table.setModel(None)
 
+        # File selection dialog if no path provided
         if not file_path:
-            file_path, _ = QFileDialog.getOpenFileName(self, "Select Packing List", "", "Excel Files (*.xlsx)")
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Packing List",
+                "",
+                "Excel Files (*.xlsx)"
+            )
             if not file_path:
+                logger.info("Session start cancelled by user")
                 self.status_label.setText("Session start cancelled.")
                 return
 
-        self.session_manager.start_session(file_path, restore_dir=restore_dir)
-        self.logic = PackerLogic(self.session_manager.get_output_dir())
-        self.logic.set_sku_map(self.sku_manager.get_map()) # Pass the map to the logic
-        self.logic.item_packed.connect(self._on_item_packed)
+        logger.info(f"Starting session for client {self.current_client_id} with file: {file_path}")
 
-        self.load_and_process_file(file_path)
+        try:
+            # Create SessionManager for this client
+            self.session_manager = SessionManager(
+                client_id=self.current_client_id,
+                profile_manager=self.profile_manager
+            )
+
+            # Start session
+            session_id = self.session_manager.start_session(file_path, restore_dir=restore_dir)
+            logger.info(f"Session started: {session_id}")
+
+            # Get barcode directory
+            barcodes_dir = self.session_manager.get_barcodes_dir()
+
+            # Create PackerLogic instance
+            self.logic = PackerLogic(
+                client_id=self.current_client_id,
+                profile_manager=self.profile_manager,
+                barcode_dir=barcodes_dir
+            )
+
+            # Connect signals
+            self.logic.item_packed.connect(self._on_item_packed)
+
+            # Load and process file
+            self.load_and_process_file(file_path)
+
+        except Exception as e:
+            logger.error(f"Failed to start session: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to start session:\n\n{e}")
+            if self.session_manager:
+                self.session_manager.end_session()
+            self.session_manager = None
+            self.logic = None
 
     def open_sku_mapping_dialog(self):
-        """Opens the SKU mapping dialog and updates logic if changes are made."""
+        """
+        Open SKU mapping dialog for current client.
+
+        Note: SKU mappings are now managed through ProfileManager and automatically
+        saved to the file server for cross-PC synchronization.
+        """
+        if not self.current_client_id:
+            logger.warning("Attempted to open SKU mapping without selecting client")
+            QMessageBox.warning(
+                self,
+                "No Client Selected",
+                "Please select a client first!"
+            )
+            return
+
+        logger.info(f"Opening SKU mapping dialog for client {self.current_client_id}")
+
+        # Use legacy dialog with SKUMappingManager
+        # TODO: Could be refactored to use ProfileManager directly
         dialog = SKUMappingDialog(self.sku_manager, self)
-        if dialog.exec(): # This is true if the user clicks "Save & Close"
+
+        if dialog.exec():  # User clicked "Save & Close"
             # If a session is active, update its logic instance with the new map
             if self.logic:
-                self.logic.set_sku_map(self.sku_manager.get_map())
-            self.status_label.setText("SKU mapping updated successfully.")
+                try:
+                    new_map = self.sku_manager.get_map()
+                    self.logic.set_sku_map(new_map)  # This now saves to ProfileManager
+                    self.status_label.setText("SKU mapping updated and saved to server.")
+                    logger.info("SKU mapping updated successfully")
+                except Exception as e:
+                    logger.error(f"Failed to update SKU mapping: {e}")
+                    QMessageBox.warning(self, "Error", f"Failed to save SKU mapping:\n\n{e}")
 
     def end_session(self):
         """
@@ -532,7 +778,153 @@ class MainWindow(QMainWindow):
                 self.table_model.index(row_index, self.table_model.columnCount() - 1)
             )
         except (IndexError, KeyError):
-            print(f"Warning: Could not update status for order number {order_number}. Not found in summary table.")
+            logger.warning(f"Could not update status for order number {order_number}. Not found in summary table.")
+
+
+# ==============================================================================
+# NEW CLIENT DIALOG
+# ==============================================================================
+
+class NewClientDialog(QDialog):
+    """Dialog for creating a new client profile."""
+
+    def __init__(self, profile_manager: ProfileManager, parent=None):
+        """
+        Initialize the new client dialog.
+
+        Args:
+            profile_manager: ProfileManager instance for validation and creation
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.profile_manager = profile_manager
+        self.client_id = None
+        self.client_name = None
+
+        self.setWindowTitle("Create New Client Profile")
+        self.setMinimumWidth(400)
+
+        layout = QFormLayout(self)
+
+        # Instructions
+        instructions = QLabel(
+            "Create a new client profile. The client ID should be short (1-10 characters) "
+            "and will be used to organize sessions and settings."
+        )
+        instructions.setWordWrap(True)
+        layout.addRow(instructions)
+
+        # Client ID input
+        self.client_id_input = QLineEdit()
+        self.client_id_input.setPlaceholderText("e.g., M, R, CLIENT_A")
+        self.client_id_input.setMaxLength(10)
+        self.client_id_input.textChanged.connect(self.on_id_changed)
+        layout.addRow("Client ID (short):", self.client_id_input)
+
+        # Validation label
+        self.validation_label = QLabel("")
+        self.validation_label.setStyleSheet("color: red;")
+        self.validation_label.setWordWrap(True)
+        layout.addRow("", self.validation_label)
+
+        # Client name input
+        self.client_name_input = QLineEdit()
+        self.client_name_input.setPlaceholderText("e.g., M Cosmetics, R Fashion")
+        layout.addRow("Client Full Name:", self.client_name_input)
+
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.ok_button = button_box.button(QDialogButtonBox.Ok)
+        self.ok_button.setEnabled(False)
+        button_box.accepted.connect(self.accept_dialog)
+        button_box.rejected.connect(self.reject)
+        layout.addRow(button_box)
+
+    def on_id_changed(self, text: str):
+        """
+        Validate client ID as user types.
+
+        Args:
+            text: Current text in client ID input
+        """
+        if not text:
+            self.validation_label.setText("")
+            self.ok_button.setEnabled(False)
+            return
+
+        # Convert to uppercase
+        text_upper = text.upper()
+        if text != text_upper:
+            # Update to uppercase
+            self.client_id_input.blockSignals(True)
+            cursor_pos = self.client_id_input.cursorPosition()
+            self.client_id_input.setText(text_upper)
+            self.client_id_input.setCursorPosition(cursor_pos)
+            self.client_id_input.blockSignals(False)
+            text = text_upper
+
+        # Validate
+        is_valid, error_msg = self.profile_manager.validate_client_id(text)
+
+        if not is_valid:
+            self.validation_label.setText(f"⚠ {error_msg}")
+            self.validation_label.setStyleSheet("color: red;")
+            self.ok_button.setEnabled(False)
+            return
+
+        # Check if already exists
+        if self.profile_manager.client_exists(text):
+            self.validation_label.setText(f"⚠ Client '{text}' already exists!")
+            self.validation_label.setStyleSheet("color: red;")
+            self.ok_button.setEnabled(False)
+            return
+
+        # Valid
+        self.validation_label.setText("✓ Valid client ID")
+        self.validation_label.setStyleSheet("color: green;")
+        self.ok_button.setEnabled(bool(self.client_name_input.text().strip()))
+
+    def accept_dialog(self):
+        """Handle OK button click."""
+        client_id = self.client_id_input.text().strip().upper()
+        client_name = self.client_name_input.text().strip()
+
+        if not client_name:
+            QMessageBox.warning(self, "Invalid Input", "Please enter a client name.")
+            return
+
+        logger.info(f"Creating new client: {client_id} - {client_name}")
+
+        try:
+            success = self.profile_manager.create_client_profile(client_id, client_name)
+
+            if success:
+                self.client_id = client_id
+                self.client_name = client_name
+                self.accept()
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Client '{client_id}' already exists!"
+                )
+
+        except ValidationError as e:
+            logger.error(f"Validation error creating client: {e}")
+            QMessageBox.warning(self, "Validation Error", str(e))
+
+        except Exception as e:
+            logger.error(f"Error creating client: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to create client profile:\n\n{e}"
+            )
+
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
 
 def restore_session(window: MainWindow):
     """
