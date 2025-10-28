@@ -22,7 +22,7 @@ Successfully implemented a client-based profile system that allows multiple user
 
 **New File Structure:**
 ```
-\\192.168.88.101\Z_GreenDelivery\PACKING_TOOL_DATA\
+\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\2Packing-tool\
 ├── CLIENTS\
 │   ├── CLIENT_M\
 │   │   ├── config.json          # Client settings
@@ -74,8 +74,8 @@ Successfully implemented a client-based profile system that allows multiple user
 ### **First Time Setup**
 
 1. **Launch Application**
-   - ProfileManager connects to `\\192.168.88.101\Z_GreenDelivery`
-   - Creates `PACKING_TOOL_DATA` structure if needed
+   - ProfileManager connects to `\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\2Packing-tool`
+   - Creates `CLIENTS` and `SESSIONS` structure if needed
 
 2. **Create Client**
    - Click "+ New Client"
