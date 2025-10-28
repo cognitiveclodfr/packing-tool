@@ -3,6 +3,14 @@ import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from collections import defaultdict
+from pathlib import Path
+
+# Windows-specific file locking
+try:
+    import msvcrt
+    WINDOWS_LOCKING_AVAILABLE = True
+except ImportError:
+    WINDOWS_LOCKING_AVAILABLE = False
 
 from logger import get_logger
 
@@ -14,34 +22,47 @@ class StatisticsManager:
     Manages the persistent, cross-session statistics for the application.
 
     This class handles the loading, saving, and updating of application-wide
-    statistics, such as the total number of unique orders processed and completed
-    over the application's lifetime. The stats are stored in a JSON file in the
-    user's home directory.
+    statistics. In Phase 1.3, statistics are stored on the centralized file
+    server for cross-PC access, with file locking for concurrent operations.
 
     Enhanced in Phase 1.3 to include:
+    - Centralized storage on file server (NOT local)
     - Per-client statistics
     - Time-based metrics
     - Performance tracking
+    - File locking for concurrent access
 
     Attributes:
-        stats_file (str): The full path to the statistics JSON file.
+        profile_manager: ProfileManager instance for file server paths
+        stats_file (Path): Path to statistics JSON file on file server
         stats (Dict[str, Any]): A dictionary holding the loaded statistics.
     """
-    def __init__(self):
+    def __init__(self, profile_manager=None):
         """
         Initializes the StatisticsManager.
 
-        This sets up the configuration directory and file path, and then
-        immediately attempts to load any existing statistics from the file.
+        Args:
+            profile_manager: ProfileManager instance for centralized storage.
+                           If None, falls back to local storage (backward compatibility)
         """
-        config_dir = os.path.expanduser("~/.packers_assistant")
-        if not os.path.exists(config_dir):
-            try:
-                os.makedirs(config_dir)
-            except OSError as e:
-                logger.warning(f"Could not create config directory: {e}")
+        self.profile_manager = profile_manager
 
-        self.stats_file = os.path.join(config_dir, "stats.json")
+        if profile_manager:
+            # Phase 1.3: Use centralized file server storage
+            self.stats_file = profile_manager.get_global_stats_path()
+            logger.info(f"StatisticsManager using centralized storage: {self.stats_file}")
+        else:
+            # Fallback to local storage for backward compatibility
+            config_dir = os.path.expanduser("~/.packers_assistant")
+            if not os.path.exists(config_dir):
+                try:
+                    os.makedirs(config_dir)
+                except OSError as e:
+                    logger.warning(f"Could not create config directory: {e}")
+
+            self.stats_file = Path(config_dir) / "stats.json"
+            logger.warning(f"StatisticsManager using LOCAL storage (not recommended): {self.stats_file}")
+
         self.stats: Dict[str, Any] = {
             "processed_order_ids": [],
             "completed_order_ids": [],
@@ -53,37 +74,91 @@ class StatisticsManager:
 
     def load_stats(self):
         """
-        Loads statistics from the JSON file into memory.
+        Loads statistics from the JSON file into memory with file locking.
 
         If the file doesn't exist or contains corrupted data, it gracefully
         resets to a default empty state. It also handles backward compatibility
         by adding new keys if they are missing from an older stats file.
         """
-        if os.path.exists(self.stats_file):
-            try:
+        if not self.stats_file.exists():
+            logger.info("Statistics file does not exist yet. Will be created on first save.")
+            return
+
+        try:
+            # Read with file locking if available
+            if WINDOWS_LOCKING_AVAILABLE and self.profile_manager:
+                with open(self.stats_file, 'r+') as f:
+                    try:
+                        # Acquire shared lock for reading
+                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                        loaded_stats = json.load(f)
+                    finally:
+                        # Release lock
+                        try:
+                            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                        except:
+                            pass
+            else:
                 with open(self.stats_file, 'r') as f:
                     loaded_stats = json.load(f)
-                    if isinstance(loaded_stats, dict) and "processed_order_ids" in loaded_stats:
-                        # For backward compatibility, add new keys if they are missing
-                        if "completed_order_ids" not in loaded_stats:
-                            loaded_stats["completed_order_ids"] = []
-                        if "version" not in loaded_stats:
-                            loaded_stats["version"] = "1.0"
-                        if "client_stats" not in loaded_stats:
-                            loaded_stats["client_stats"] = {}
-                        if "session_history" not in loaded_stats:
-                            loaded_stats["session_history"] = []
-                        self.stats.update(loaded_stats)
-                    else:
-                        logger.warning("Statistics file format is outdated. Starting fresh.")
-            except (json.JSONDecodeError, IOError, TypeError) as e:
-                logger.warning(f"Could not load or parse statistics file at {self.stats_file}. Starting fresh. Error: {e}")
+
+            if isinstance(loaded_stats, dict) and "processed_order_ids" in loaded_stats:
+                # For backward compatibility, add new keys if they are missing
+                if "completed_order_ids" not in loaded_stats:
+                    loaded_stats["completed_order_ids"] = []
+                if "version" not in loaded_stats:
+                    loaded_stats["version"] = "1.0"
+                if "client_stats" not in loaded_stats:
+                    loaded_stats["client_stats"] = {}
+                if "session_history" not in loaded_stats:
+                    loaded_stats["session_history"] = []
+                self.stats.update(loaded_stats)
+                logger.info(f"Loaded statistics: {len(loaded_stats.get('session_history', []))} sessions")
+            else:
+                logger.warning("Statistics file format is outdated. Starting fresh.")
+
+        except (json.JSONDecodeError, IOError, TypeError) as e:
+            logger.warning(f"Could not load or parse statistics file at {self.stats_file}. Starting fresh. Error: {e}")
 
     def save_stats(self):
-        """Saves the current in-memory statistics to the JSON file."""
+        """
+        Saves the current in-memory statistics to the JSON file with file locking.
+
+        Uses Windows file locking when available to ensure thread-safe concurrent writes
+        from multiple PCs accessing the centralized file server.
+        """
         try:
-            with open(self.stats_file, 'w') as f:
-                json.dump(self.stats, f, indent=4)
+            # Ensure parent directory exists
+            self.stats_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write with file locking if available
+            if WINDOWS_LOCKING_AVAILABLE and self.profile_manager:
+                # Open/create file for reading and writing
+                mode = 'r+' if self.stats_file.exists() else 'w+'
+                with open(self.stats_file, mode) as f:
+                    try:
+                        # Acquire exclusive lock for writing
+                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+
+                        # Write data
+                        f.seek(0)
+                        f.truncate()
+                        json.dump(self.stats, f, indent=4)
+                        f.flush()
+
+                    finally:
+                        # Release lock
+                        try:
+                            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                        except:
+                            pass
+            else:
+                # Fallback without locking
+                with open(self.stats_file, 'w') as f:
+                    json.dump(self.stats, f, indent=4)
+
+            logger.debug(f"Statistics saved to {self.stats_file}")
+
         except IOError as e:
             logger.warning(f"Could not save statistics file to {self.stats_file}. Reason: {e}")
 

@@ -787,3 +787,34 @@ class ProfileManager:
         except Exception as e:
             logger.error(f"Error listing clients: {e}", exc_info=True)
             return []
+
+    def get_sessions_root(self) -> Path:
+        """
+        Get the root directory for all sessions.
+
+        Returns:
+            Path to SESSIONS directory on file server
+        """
+        return self.sessions_dir
+
+    def get_clients_root(self) -> Path:
+        """
+        Get the root directory for all clients.
+
+        Returns:
+            Path to CLIENTS directory on file server
+        """
+        return self.clients_dir
+
+    def get_global_stats_path(self) -> Path:
+        """
+        Get path to global statistics file on file server.
+
+        This file stores centralized statistics accessible from all PCs.
+
+        Returns:
+            Path to stats.json on file server
+        """
+        stats_dir = self.base_path / "STATS"
+        stats_dir.mkdir(exist_ok=True, parents=True)
+        return stats_dir / "stats.json"

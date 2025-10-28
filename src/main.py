@@ -124,7 +124,9 @@ class MainWindow(QMainWindow):
         self.current_client_id = None
         self.session_manager = None  # Will be instantiated per client
         self.logic = None  # Will be instantiated per session
-        self.stats_manager = StatisticsManager()
+
+        # Phase 1.3: StatisticsManager with centralized storage on file server
+        self.stats_manager = StatisticsManager(profile_manager=self.profile_manager)
 
         # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
         self.sku_manager = SKUMappingManager()
