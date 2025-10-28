@@ -1,13 +1,21 @@
 import os
 import sys
+import tempfile
+import shutil
 import pandas as pd
 import barcode
 from barcode.writer import ImageWriter
 from PIL import Image, ImageDraw, ImageFont
 import io
 import json
+from pathlib import Path
+from datetime import datetime
 from PySide6.QtCore import QObject, Signal
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
+
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity', 'Courier']
 STATE_FILE_NAME = "packing_state.json"
@@ -24,6 +32,8 @@ class PackerLogic(QObject):
     Attributes:
         item_packed (Signal): A signal emitted when an item is packed, providing
                               real-time progress updates.
+        client_id (str): Client identifier for this session
+        profile_manager (ProfileManager): Manager for client profiles and SKU mappings
         barcode_dir (str): The directory where generated barcodes and session
                            state files are stored.
         packing_list_df (pd.DataFrame): The original, unprocessed DataFrame
@@ -39,18 +49,25 @@ class PackerLogic(QObject):
                                     order (required vs. packed counts for each SKU).
         session_packing_state (Dict): The packing state for the entire session,
                                       including in-progress and completed orders.
+        sku_map (Dict[str, str]): Normalized barcode-to-SKU mapping
     """
     item_packed = Signal(str, int, int)  # order_number, packed_count, required_count
 
-    def __init__(self, barcode_dir: str):
+    def __init__(self, client_id: str, profile_manager, barcode_dir: str):
         """
-        Initializes the PackerLogic instance.
+        Initialize PackerLogic instance for a specific client.
 
         Args:
-            barcode_dir (str): The directory for storing session files.
+            client_id: Client identifier (e.g., "M", "R")
+            profile_manager: ProfileManager instance for loading/saving SKU mappings
+            barcode_dir: Directory for storing session files and barcodes
         """
         super().__init__()
+
+        self.client_id = client_id
+        self.profile_manager = profile_manager
         self.barcode_dir = barcode_dir
+
         self.packing_list_df = None
         self.processed_df = None
         self.orders_data = {}
@@ -58,47 +75,152 @@ class PackerLogic(QObject):
         self.current_order_number = None
         self.current_order_state = {}
         self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
-        self.sku_map = {}
+
+        # Load SKU mapping from ProfileManager
+        self.sku_map = self._load_sku_mapping()
+
+        # Load session state if exists
         self._load_session_state()
+
+        logger.info(f"PackerLogic initialized for client {client_id}")
+        logger.debug(f"Barcode directory: {barcode_dir}")
+        logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
+
+    def _load_sku_mapping(self) -> Dict[str, str]:
+        """
+        Load SKU mapping from ProfileManager.
+
+        Returns:
+            Dictionary of normalized barcode -> SKU mappings
+        """
+        try:
+            mappings = self.profile_manager.load_sku_mapping(self.client_id)
+            # Normalize keys for consistent matching
+            normalized = {self._normalize_sku(k): v for k, v in mappings.items()}
+            logger.debug(f"Loaded {len(normalized)} SKU mappings for client {self.client_id}")
+            return normalized
+        except Exception as e:
+            logger.error(f"Error loading SKU mappings: {e}")
+            return {}
 
     def set_sku_map(self, sku_map: Dict[str, str]):
         """
-        Sets the SKU map and creates a normalized version for quick lookups.
+        Set the SKU map and save to ProfileManager.
 
         The barcode (key) is normalized to ensure consistent matching with
-        scanner input. The SKU (value) is left as is.
+        scanner input. The SKU (value) is left as is. Changes are persisted
+        to the centralized file server.
 
         Args:
-            sku_map (Dict[str, str]): The Barcode-to-SKU mapping.
+            sku_map: The Barcode-to-SKU mapping
+
+        Note:
+            This method now saves to ProfileManager for cross-PC synchronization.
         """
+        logger.info(f"Updating SKU mapping: {len(sku_map)} entries")
+
+        # Normalize for in-memory use
         self.sku_map = {self._normalize_sku(k): v for k, v in sku_map.items()}
+
+        # Save to ProfileManager (original keys, not normalized)
+        try:
+            self.profile_manager.save_sku_mapping(self.client_id, sku_map)
+            logger.info("SKU mapping saved successfully")
+        except Exception as e:
+            logger.error(f"Failed to save SKU mapping: {e}")
 
     def _get_state_file_path(self) -> str:
         """Returns the absolute path for the session state file."""
         return os.path.join(self.barcode_dir, STATE_FILE_NAME)
 
     def _load_session_state(self):
-        """Loads the packing state for the session from a JSON file."""
+        """Load the packing state for the session from JSON file."""
         state_file = self._get_state_file_path()
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, 'r') as f:
-                    data = json.load(f)
-                    self.session_packing_state['in_progress'] = data.get('in_progress', {})
-                    self.session_packing_state['completed_orders'] = data.get('completed_orders', [])
-            except (json.JSONDecodeError, IOError):
-                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
-        else:
+
+        if not os.path.exists(state_file):
+            logger.debug("No existing session state found, starting fresh")
+            self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+            return
+
+        try:
+            with open(state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Handle both old and new format (with version)
+            if isinstance(data, dict) and 'data' in data:
+                # New format with version
+                state_data = data['data']
+            else:
+                # Old format (direct state)
+                state_data = data
+
+            self.session_packing_state['in_progress'] = state_data.get('in_progress', {})
+            self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
+
+            in_progress_count = len(self.session_packing_state['in_progress'])
+            completed_count = len(self.session_packing_state['completed_orders'])
+
+            logger.info(f"Session state loaded: {in_progress_count} in progress, {completed_count} completed")
+
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
     def _save_session_state(self):
-        """Saves the current session's packing state to a JSON file."""
+        """
+        Save the current session's packing state to JSON file with atomic write.
+
+        Uses atomic write pattern to prevent corruption during crashes.
+        Creates backup before overwriting.
+        """
         state_file = self._get_state_file_path()
+
+        # Create data with version and timestamp
+        data = {
+            'version': '1.0',
+            'timestamp': datetime.now().isoformat(),
+            'client_id': self.client_id,
+            'data': self.session_packing_state
+        }
+
         try:
-            with open(state_file, 'w') as f:
-                json.dump(self.session_packing_state, f, indent=4)
-        except IOError as e:
-            print(f"Error: Could not save session state to {state_file}. Reason: {e}")
+            state_path = Path(state_file)
+            state_dir = state_path.parent
+
+            # Create backup if file exists
+            if state_path.exists():
+                backup_path = state_path.with_suffix('.json.backup')
+                shutil.copy2(state_path, backup_path)
+                logger.debug(f"Created backup: {backup_path}")
+
+            # Atomic write: write to temp file first
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                dir=state_dir,
+                prefix='.tmp_state_',
+                suffix='.json',
+                delete=False,
+                encoding='utf-8'
+            ) as tmp_file:
+                json.dump(data, tmp_file, indent=4)
+                tmp_path = tmp_file.name
+
+            # Atomic replace (works on Windows too)
+            shutil.move(tmp_path, state_file)
+
+            logger.debug("Session state saved successfully")
+
+        except Exception as e:
+            logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
+
+            # Try to restore from backup
+            backup_path = Path(state_file).with_suffix('.json.backup')
+            if backup_path.exists():
+                try:
+                    shutil.copy2(backup_path, state_file)
+                    logger.warning("Restored session state from backup")
+                except Exception as restore_error:
+                    logger.error(f"Failed to restore from backup: {restore_error}")
 
     def _normalize_sku(self, sku: Any) -> str:
         """
@@ -118,57 +240,68 @@ class PackerLogic(QObject):
 
     def load_packing_list_from_file(self, file_path: str) -> pd.DataFrame:
         """
-        Loads a packing list from an Excel file into a pandas DataFrame.
+        Load a packing list from an Excel file into a pandas DataFrame.
 
         Args:
-            file_path (str): The path to the .xlsx file.
+            file_path: Path to the .xlsx file
 
         Returns:
-            pd.DataFrame: The loaded data as a DataFrame.
+            The loaded data as a DataFrame
 
         Raises:
-            ValueError: If the file cannot be read or is empty.
+            ValueError: If the file cannot be read or is empty
         """
+        logger.info(f"Loading packing list from: {file_path}")
+
         try:
             df = pd.read_excel(file_path, dtype=str).fillna('')
+            logger.debug(f"Loaded {len(df)} rows, {len(df.columns)} columns")
         except Exception as e:
+            logger.error(f"Failed to read Excel file: {e}")
             raise ValueError(f"Could not read the Excel file: {e}")
 
         if df.empty:
+            logger.error("Loaded Excel file is empty")
             raise ValueError("The file is empty or contains no data.")
 
         self.packing_list_df = df
+        logger.info(f"Packing list loaded successfully: {len(df)} rows")
         return self.packing_list_df
 
     def process_data_and_generate_barcodes(self, column_mapping: Dict[str, str] = None) -> int:
         """
-        Processes the loaded DataFrame and generates barcodes for each order.
+        Process the loaded DataFrame and generate barcodes for each order.
 
         This method validates columns, applies user-defined mappings, and then
         iterates through each unique order to generate a printable barcode image.
         The image includes the order number, courier, and the barcode itself.
 
         Args:
-            column_mapping (Dict[str, str], optional): A mapping from required
-                column names to the actual names in the file. Defaults to None.
+            column_mapping: Optional mapping from required column names to actual names in file
 
         Returns:
-            int: The total number of unique orders processed.
+            Total number of unique orders processed
 
         Raises:
-            ValueError: If the packing list is not loaded or columns are missing.
-            RuntimeError: If a critical error occurs during barcode generation.
+            ValueError: If the packing list is not loaded or columns are missing
+            RuntimeError: If a critical error occurs during barcode generation
         """
+        logger.info("Processing data and generating barcodes")
+
         if self.packing_list_df is None:
+            logger.error("Cannot process data: packing list not loaded")
             raise ValueError("Packing list not loaded.")
 
         df = self.packing_list_df.copy()
+
         if column_mapping:
+            logger.debug(f"Applying column mapping: {column_mapping}")
             inverted_mapping = {v: k for k, v in column_mapping.items()}
             df.rename(columns=inverted_mapping, inplace=True)
 
         missing_final = [col for col in REQUIRED_COLUMNS if col not in df.columns]
         if missing_final:
+            logger.error(f"Missing required columns: {missing_final}")
             raise ValueError(f"The file is missing required columns: {', '.join(missing_final)}")
 
         self.processed_df = df
@@ -188,7 +321,7 @@ class PackerLogic(QObject):
             font = ImageFont.truetype("arial.ttf", 32)
             font_bold = ImageFont.truetype("arialbd.ttf", 32)
         except IOError:
-            print("Warning: Arial fonts not found. Falling back to default.")
+            logger.warning("Arial fonts not found, falling back to default font")
             font = ImageFont.load_default()
             font_bold = font
 
@@ -237,8 +370,13 @@ class PackerLogic(QObject):
                     'barcode_path': barcode_path,
                     'items': group.to_dict('records')
                 }
-            return len(self.orders_data)
+
+            order_count = len(self.orders_data)
+            logger.info(f"Successfully generated {order_count} barcodes")
+            return order_count
+
         except Exception as e:
+            logger.error(f"Error during barcode generation: {e}", exc_info=True)
             raise RuntimeError(f"Error during barcode generation: {e}")
 
     def start_order_packing(self, scanned_text: str) -> Tuple[List[Dict] | None, str]:
