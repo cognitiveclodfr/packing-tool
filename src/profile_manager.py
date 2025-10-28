@@ -716,3 +716,74 @@ class ProfileManager:
         except Exception as e:
             logger.error(f"Error listing sessions for {client_id}: {e}")
             return []
+
+    def get_incomplete_sessions(self, client_id: str) -> List[Path]:
+        """
+        Get list of incomplete sessions for a client.
+
+        A session is incomplete if it has a session_info.json file
+        (which is removed when the session ends gracefully).
+
+        Args:
+            client_id: Client identifier
+
+        Returns:
+            List of Path objects for incomplete session directories
+        """
+        client_sessions_dir = self.sessions_dir / f"CLIENT_{client_id}"
+
+        if not client_sessions_dir.exists():
+            logger.debug(f"No sessions directory for client {client_id}")
+            return []
+
+        incomplete_sessions = []
+
+        try:
+            for session_dir in client_sessions_dir.iterdir():
+                if not session_dir.is_dir():
+                    continue
+
+                # Check if session has session_info.json (incomplete session marker)
+                session_info_path = session_dir / "session_info.json"
+                if session_info_path.exists():
+                    incomplete_sessions.append(session_dir)
+
+            # Sort by modification time (newest first)
+            incomplete_sessions.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+            logger.debug(f"Found {len(incomplete_sessions)} incomplete sessions for client {client_id}")
+            return incomplete_sessions
+
+        except Exception as e:
+            logger.error(f"Error getting incomplete sessions for {client_id}: {e}", exc_info=True)
+            return []
+
+    def list_clients(self) -> List[str]:
+        """
+        Get list of all client IDs.
+
+        Returns:
+            List of client identifiers (without CLIENT_ prefix)
+        """
+        try:
+            if not self.clients_dir.exists():
+                logger.warning(f"Clients directory does not exist: {self.clients_dir}")
+                return []
+
+            clients = []
+            for client_dir in self.clients_dir.iterdir():
+                if not client_dir.is_dir():
+                    continue
+
+                # Extract client ID from CLIENT_X format
+                dir_name = client_dir.name
+                if dir_name.startswith("CLIENT_"):
+                    client_id = dir_name[7:]  # Remove "CLIENT_" prefix
+                    clients.append(client_id)
+
+            logger.debug(f"Found {len(clients)} clients")
+            return sorted(clients)
+
+        except Exception as e:
+            logger.error(f"Error listing clients: {e}", exc_info=True)
+            return []
