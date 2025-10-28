@@ -5,7 +5,11 @@ a = Analysis(
     ['src/main.py'],
     pathex=[],
     binaries=[],
-    datas=[('sounds', 'sounds')],
+    datas=[
+        ('sounds', 'sounds'),
+        ('src/styles.qss', 'src'),
+        ('config.ini.example', '.'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

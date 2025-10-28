@@ -1,0 +1,38 @@
+# Packing Tool Configuration File
+# Copy this file to 'config.ini' and adjust settings for your environment
+
+[Network]
+# File server path for centralized data storage
+# Use UNC path for Windows network shares
+FileServerPath = \\192.168.88.101\Z_GreenDelivery\PACKING_TOOL_DATA
+
+# Connection timeout in seconds
+ConnectionTimeout = 5
+
+# Local cache directory (fallback if network unavailable)
+# Leave empty to use default: %USERPROFILE%\.packers_assistant\cache
+LocalCachePath =
+
+[Logging]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LogLevel = INFO
+
+# Log retention days (older logs will be deleted)
+LogRetentionDays = 30
+
+# Maximum log file size in MB
+MaxLogSizeMB = 10
+
+[General]
+# Application environment: development or production
+Environment = production
+
+# Enable debug mode (more verbose output)
+DebugMode = false
+
+[UI]
+# Remember last selected client on startup
+RememberLastClient = true
+
+# Auto-refresh interval for session list (seconds, 0 = disabled)
+AutoRefreshInterval = 0
