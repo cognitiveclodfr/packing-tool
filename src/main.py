@@ -636,33 +636,51 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Session ended. Report saved to {output_path}")
 
             # Phase 1.3: Record session completion metrics and save session summary
-            try:
-                session_info = self.session_manager.get_session_info()
-                if session_info and 'started_at' in session_info:
+            # ALWAYS save session summary, even if session_info is missing
+            session_info = self.session_manager.get_session_info()
+
+            # Get timestamps
+            start_time = None
+            if session_info and 'started_at' in session_info:
+                try:
                     start_time = datetime.fromisoformat(session_info['started_at'])
-                    end_time = datetime.now()
+                except (ValueError, TypeError):
+                    logger.warning("Could not parse started_at from session_info")
 
-                    # Count completed orders and items
-                    completed_orders_list = self.logic.session_packing_state.get('completed_orders', [])
-                    completed_orders = len(completed_orders_list)
+            end_time = datetime.now()
 
-                    in_progress_orders_dict = self.logic.session_packing_state.get('in_progress', {})
-                    in_progress_orders = len(in_progress_orders_dict)
+            # Count completed orders and items
+            completed_orders_list = self.logic.session_packing_state.get('completed_orders', [])
+            completed_orders = len(completed_orders_list)
 
-                    items_packed = sum(
-                        sum(
-                            sku_data.get('packed', 0)
-                            for sku_data in order_data.values()
-                            if isinstance(sku_data, dict)
-                        )
-                        for order_data in in_progress_orders_dict.values()
-                    )
+            in_progress_orders_dict = self.logic.session_packing_state.get('in_progress', {})
+            in_progress_orders = len(in_progress_orders_dict)
 
-                    # Count total orders from processed_df
-                    total_orders = len(self.logic.processed_df['Order_Number'].unique()) if self.logic.processed_df is not None else 0
-                    total_items = int(self.logic.processed_df['Quantity'].sum()) if self.logic.processed_df is not None else 0
+            # Calculate items_packed correctly:
+            # 1. For completed orders: all items are packed
+            # 2. For in-progress orders: sum 'packed' values
+            items_packed = 0
 
-                    # Record session completion in statistics
+            # Items from completed orders (all items packed)
+            if self.logic.processed_df is not None and completed_orders_list:
+                completed_items = self.logic.processed_df[
+                    self.logic.processed_df['Order_Number'].isin(completed_orders_list)
+                ]['Quantity'].sum()
+                items_packed += int(completed_items)
+
+            # Items from in-progress orders (partial packing)
+            for order_data in in_progress_orders_dict.values():
+                for sku_data in order_data.values():
+                    if isinstance(sku_data, dict):
+                        items_packed += sku_data.get('packed', 0)
+
+            # Count total orders from processed_df
+            total_orders = len(self.logic.processed_df['Order_Number'].unique()) if self.logic.processed_df is not None else 0
+            total_items = int(self.logic.processed_df['Quantity'].sum()) if self.logic.processed_df is not None else 0
+
+            # Record session completion in statistics
+            try:
+                if start_time:  # Only record if we have start_time
                     self.stats_manager.record_session_completion(
                         client_id=self.current_client_id,
                         session_id=self.session_manager.session_id,
@@ -672,37 +690,36 @@ class MainWindow(QMainWindow):
                         items_packed=items_packed
                     )
                     logger.info(f"Recorded session completion: {completed_orders} orders, {items_packed} items")
-
-                    # Phase 1.3: Save session summary for History
-                    try:
-                        summary_path = os.path.join(output_dir, "session_summary.json")
-                        session_summary = {
-                            "version": "1.0",
-                            "session_id": self.session_manager.session_id,
-                            "client_id": self.current_client_id,
-                            "started_at": start_time.isoformat(),
-                            "completed_at": end_time.isoformat(),
-                            "duration_seconds": int((end_time - start_time).total_seconds()),
-                            "packing_list_path": self.session_manager.packing_list_path,
-                            "completed_file_path": output_path,
-                            "pc_name": session_info.get('pc_name', os.environ.get('COMPUTERNAME', 'Unknown')),
-                            "user_name": os.environ.get('USERNAME', 'Unknown'),
-                            "total_orders": total_orders,
-                            "completed_orders": completed_orders,
-                            "in_progress_orders": in_progress_orders,
-                            "total_items": total_items,
-                            "items_packed": items_packed
-                        }
-
-                        with open(summary_path, 'w', encoding='utf-8') as f:
-                            json.dump(session_summary, f, indent=2, ensure_ascii=False)
-
-                        logger.info(f"Saved session summary to {summary_path}")
-                    except Exception as e:
-                        logger.error(f"Error saving session summary: {e}", exc_info=True)
-
             except Exception as e:
                 logger.error(f"Error recording session metrics: {e}")
+
+            # Phase 1.3: ALWAYS save session summary for History
+            try:
+                summary_path = os.path.join(output_dir, "session_summary.json")
+                session_summary = {
+                    "version": "1.0",
+                    "session_id": self.session_manager.session_id,
+                    "client_id": self.current_client_id,
+                    "started_at": start_time.isoformat() if start_time else None,
+                    "completed_at": end_time.isoformat(),
+                    "duration_seconds": int((end_time - start_time).total_seconds()) if start_time else None,
+                    "packing_list_path": self.session_manager.packing_list_path,
+                    "completed_file_path": output_path,
+                    "pc_name": session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown'),
+                    "user_name": os.environ.get('USERNAME', 'Unknown'),
+                    "total_orders": total_orders,
+                    "completed_orders": completed_orders,
+                    "in_progress_orders": in_progress_orders,
+                    "total_items": total_items,
+                    "items_packed": items_packed
+                }
+
+                with open(summary_path, 'w', encoding='utf-8') as f:
+                    json.dump(session_summary, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"Saved session summary: {completed_orders}/{total_orders} orders, {items_packed}/{total_items} items")
+            except Exception as e:
+                logger.error(f"Error saving session summary: {e}", exc_info=True)
 
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")
