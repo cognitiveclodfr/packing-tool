@@ -131,36 +131,46 @@ class SessionHistoryManager:
             sessions_root = self.profile_manager.get_sessions_root() / f"CLIENT_{client_id}"
 
             if not sessions_root.exists():
-                logger.warning(f"Sessions directory not found for client {client_id}")
+                logger.warning(f"Sessions directory not found for client {client_id}: {sessions_root}")
                 return []
 
+            logger.debug(f"Searching for sessions in: {sessions_root}")
             sessions = []
+            session_dirs = list(sessions_root.iterdir())
+            logger.info(f"Found {len(session_dirs)} directories/files in {sessions_root}")
 
             # Iterate through all session directories
-            for session_dir in sessions_root.iterdir():
+            for session_dir in session_dirs:
                 if not session_dir.is_dir():
+                    logger.debug(f"Skipping non-directory: {session_dir.name}")
                     continue
 
+                logger.debug(f"Parsing session directory: {session_dir.name}")
                 try:
                     record = self._parse_session_directory(client_id, session_dir)
 
                     if record is None:
+                        logger.debug(f"Skipping session {session_dir.name}: _parse_session_directory returned None")
                         continue
 
                     # Apply filters
                     if not include_incomplete and record.in_progress_orders > 0:
+                        logger.debug(f"Skipping incomplete session: {session_dir.name}")
                         continue
 
                     if start_date and record.start_time and record.start_time < start_date:
+                        logger.debug(f"Skipping session {session_dir.name}: before start_date")
                         continue
 
                     if end_date and record.start_time and record.start_time > end_date:
+                        logger.debug(f"Skipping session {session_dir.name}: after end_date")
                         continue
 
+                    logger.debug(f"Adding session {session_dir.name} to results")
                     sessions.append(record)
 
                 except Exception as e:
-                    logger.warning(f"Error parsing session {session_dir.name}: {e}")
+                    logger.warning(f"Error parsing session {session_dir.name}: {e}", exc_info=True)
                     continue
 
             # Sort by start time, newest first
@@ -170,7 +180,7 @@ class SessionHistoryManager:
             return sessions
 
         except Exception as e:
-            logger.error(f"Error retrieving sessions for client {client_id}: {e}")
+            logger.error(f"Error retrieving sessions for client {client_id}: {e}", exc_info=True)
             return []
 
     def _parse_session_directory(
@@ -192,10 +202,27 @@ class SessionHistoryManager:
 
         # Check for packing_state.json in barcodes subdirectory
         state_file = session_dir / "barcodes" / "packing_state.json"
+
+        # DEBUG: Log directory contents
+        try:
+            if session_dir.exists():
+                dir_contents = list(session_dir.iterdir())
+                logger.debug(f"Session {session_id} directory contents: {[f.name for f in dir_contents]}")
+
+                barcodes_dir = session_dir / "barcodes"
+                if barcodes_dir.exists():
+                    barcodes_contents = list(barcodes_dir.iterdir())
+                    logger.debug(f"Session {session_id} barcodes/ contents: {[f.name for f in barcodes_contents]}")
+                else:
+                    logger.info(f"Session {session_id}: barcodes/ directory does NOT exist - session will be skipped")
+        except Exception as e:
+            logger.warning(f"Error listing directory contents for {session_id}: {e}")
+
         if not state_file.exists():
-            logger.debug(f"No packing state found for session {session_id} at {state_file}")
+            logger.info(f"No packing_state.json found for session {session_id} at {state_file} - session will be skipped")
             return None
 
+        logger.debug(f"Found packing_state.json for session {session_id}, parsing...")
         try:
             # Load packing state
             with open(state_file, 'r', encoding='utf-8') as f:
