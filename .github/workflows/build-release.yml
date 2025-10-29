@@ -35,5 +35,5 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/Packers-Assistant.exe
           asset_name: Packers-Assistant-v${{ github.ref_name }}.exe
-          tag: ${{ github.ref_name }}
+          tag: ${{ github.event.release.tag_name }}
           overwrite: true
