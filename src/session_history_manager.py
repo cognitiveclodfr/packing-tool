@@ -200,7 +200,13 @@ class SessionHistoryManager:
         """
         session_id = session_dir.name
 
-        # Check for packing_state.json in barcodes subdirectory
+        # Phase 1.3: Try to load session_summary.json first (completed sessions)
+        summary_file = session_dir / "session_summary.json"
+        if summary_file.exists():
+            logger.debug(f"Found session_summary.json for session {session_id}, parsing...")
+            return self._parse_session_summary(client_id, session_dir, summary_file)
+
+        # Fallback: Try packing_state.json (incomplete/active sessions)
         state_file = session_dir / "barcodes" / "packing_state.json"
 
         # DEBUG: Log directory contents
@@ -214,15 +220,15 @@ class SessionHistoryManager:
                     barcodes_contents = list(barcodes_dir.iterdir())
                     logger.debug(f"Session {session_id} barcodes/ contents: {[f.name for f in barcodes_contents]}")
                 else:
-                    logger.info(f"Session {session_id}: barcodes/ directory does NOT exist - session will be skipped")
+                    logger.debug(f"Session {session_id}: barcodes/ directory does NOT exist")
         except Exception as e:
             logger.warning(f"Error listing directory contents for {session_id}: {e}")
 
         if not state_file.exists():
-            logger.info(f"No packing_state.json found for session {session_id} at {state_file} - session will be skipped")
+            logger.info(f"No session_summary.json or packing_state.json found for session {session_id} - session will be skipped")
             return None
 
-        logger.debug(f"Found packing_state.json for session {session_id}, parsing...")
+        logger.debug(f"Found packing_state.json for session {session_id}, parsing incomplete session...")
         try:
             # Load packing state
             with open(state_file, 'r', encoding='utf-8') as f:
@@ -290,6 +296,70 @@ class SessionHistoryManager:
 
         except Exception as e:
             logger.error(f"Error parsing session directory {session_id}: {e}")
+            return None
+
+    def _parse_session_summary(
+        self,
+        client_id: str,
+        session_dir: Path,
+        summary_file: Path
+    ) -> Optional[SessionHistoryRecord]:
+        """
+        Parse session_summary.json for completed sessions.
+
+        Args:
+            client_id: Client identifier
+            session_dir: Path to session directory
+            summary_file: Path to session_summary.json file
+
+        Returns:
+            SessionHistoryRecord or None if parsing fails
+        """
+        session_id = session_dir.name
+
+        try:
+            with open(summary_file, 'r', encoding='utf-8') as f:
+                summary = json.load(f)
+
+            # Parse timestamps
+            start_time = None
+            end_time = None
+            duration_seconds = None
+
+            if 'started_at' in summary:
+                try:
+                    start_time = datetime.fromisoformat(summary['started_at'])
+                except ValueError:
+                    pass
+
+            if 'completed_at' in summary:
+                try:
+                    end_time = datetime.fromisoformat(summary['completed_at'])
+                except ValueError:
+                    pass
+
+            if 'duration_seconds' in summary:
+                duration_seconds = summary['duration_seconds']
+            elif start_time and end_time:
+                duration_seconds = (end_time - start_time).total_seconds()
+
+            return SessionHistoryRecord(
+                session_id=session_id,
+                client_id=client_id,
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=duration_seconds,
+                total_orders=summary.get('total_orders', 0),
+                completed_orders=summary.get('completed_orders', 0),
+                in_progress_orders=summary.get('in_progress_orders', 0),
+                total_items_packed=summary.get('items_packed', 0),
+                pc_name=summary.get('pc_name'),
+                packing_list_path=summary.get('packing_list_path'),
+                session_path=str(session_dir)
+            )
+
+        except Exception as e:
+            logger.error(f"Error parsing session summary {session_id}: {e}", exc_info=True)
             return None
 
     def _load_session_info(self, session_dir: Path) -> Optional[Dict[str, Any]]:
