@@ -190,10 +190,10 @@ class SessionHistoryManager:
         """
         session_id = session_dir.name
 
-        # Check for packing_state.json
-        state_file = session_dir / "packing_state.json"
+        # Check for packing_state.json in barcodes subdirectory
+        state_file = session_dir / "barcodes" / "packing_state.json"
         if not state_file.exists():
-            logger.debug(f"No packing state found for session {session_id}")
+            logger.debug(f"No packing state found for session {session_id} at {state_file}")
             return None
 
         try:
