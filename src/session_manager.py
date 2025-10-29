@@ -85,6 +85,10 @@ class SessionManager:
             self.output_dir = Path(restore_dir)
             self.session_id = self.output_dir.name
 
+            # Ensure barcodes subdirectory exists
+            barcodes_dir = self.output_dir / "barcodes"
+            barcodes_dir.mkdir(exist_ok=True)
+
             # Check lock status
             is_locked, lock_info = self.lock_manager.is_locked(self.output_dir)
             if is_locked:

@@ -5,8 +5,9 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
     QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
-    QDialogButtonBox
+    QDialogButtonBox, QTabWidget
 )
+from PySide6.QtGui import QAction
 from PySide6.QtCore import QTimer, QUrl, Qt, QSettings
 from PySide6.QtMultimedia import QSoundEffect
 from datetime import datetime
@@ -29,6 +30,8 @@ from statistics_manager import StatisticsManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
+from dashboard_widget import DashboardWidget
+from session_history_widget import SessionHistoryWidget
 
 logger = get_logger(__name__)
 
@@ -121,7 +124,9 @@ class MainWindow(QMainWindow):
         self.current_client_id = None
         self.session_manager = None  # Will be instantiated per client
         self.logic = None  # Will be instantiated per session
-        self.stats_manager = StatisticsManager()
+
+        # Phase 1.3: StatisticsManager with centralized storage on file server
+        self.stats_manager = StatisticsManager(profile_manager=self.profile_manager)
 
         # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
         self.sku_manager = SKUMappingManager()
@@ -240,10 +245,70 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
 
+        # Phase 1.3: Dashboard and History widgets
+        self.dashboard_widget = DashboardWidget(self.profile_manager, self.stats_manager)
+        self.history_widget = SessionHistoryWidget(self.profile_manager)
+
+        # Create tab widget for main views
+        self.tab_widget = QTabWidget()
+        self.tab_widget.addTab(self.session_widget, "Session")
+        self.tab_widget.addTab(self.dashboard_widget, "Dashboard")
+        self.tab_widget.addTab(self.history_widget, "History")
+
+        # Stacked widget to switch between tabbed view and packer mode
         self.stacked_widget = QStackedWidget()
-        self.stacked_widget.addWidget(self.session_widget)
+        self.stacked_widget.addWidget(self.tab_widget)
         self.stacked_widget.addWidget(self.packer_mode_widget)
         self.setCentralWidget(self.stacked_widget)
+
+        # Create menu bar
+        self._init_menu_bar()
+
+    def _init_menu_bar(self):
+        """Initialize the menu bar with actions."""
+        menubar = self.menuBar()
+
+        # View menu
+        view_menu = menubar.addMenu("&View")
+
+        session_action = QAction("&Session", self)
+        session_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(0))
+        view_menu.addAction(session_action)
+
+        dashboard_action = QAction("&Dashboard", self)
+        dashboard_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(1))
+        view_menu.addAction(dashboard_action)
+
+        history_action = QAction("&History", self)
+        history_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(2))
+        view_menu.addAction(history_action)
+
+        view_menu.addSeparator()
+
+        refresh_action = QAction("&Refresh All", self)
+        refresh_action.triggered.connect(self._refresh_all_views)
+        view_menu.addAction(refresh_action)
+
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        sku_mapping_action = QAction("SKU &Mapping", self)
+        sku_mapping_action.triggered.connect(self.open_sku_mapping_dialog)
+        tools_menu.addAction(sku_mapping_action)
+
+        session_monitor_action = QAction("Session &Monitor", self)
+        session_monitor_action.triggered.connect(self.open_session_monitor)
+        tools_menu.addAction(session_monitor_action)
+
+    def _refresh_all_views(self):
+        """Refresh all dashboard and history views."""
+        try:
+            self.dashboard_widget.refresh()
+            self.history_widget.refresh()
+            QMessageBox.information(self, "Refresh Complete", "All views have been refreshed")
+        except Exception as e:
+            logger.error(f"Error refreshing views: {e}")
+            QMessageBox.warning(self, "Refresh Error", f"Failed to refresh views: {e}")
 
     def _update_dashboard(self):
         """Update the statistics dashboard with the latest data."""
@@ -293,6 +358,10 @@ class MainWindow(QMainWindow):
                     logger.info(f"Restored last selected client: {last_client}")
 
             logger.info(f"Loaded {len(clients)} clients")
+
+            # Phase 1.3: Load clients into dashboard and history widgets
+            self.dashboard_widget.load_clients(clients)
+            self.history_widget.load_clients(clients)
 
         except Exception as e:
             logger.error(f"Error loading clients: {e}", exc_info=True)
@@ -491,8 +560,8 @@ class MainWindow(QMainWindow):
         """
         Open SKU mapping dialog for current client.
 
-        Note: SKU mappings are now managed through ProfileManager and automatically
-        saved to the file server for cross-PC synchronization.
+        Phase 1.3: Uses ProfileManager for centralized storage on file server.
+        All changes are synchronized across all PCs with file locking.
         """
         if not self.current_client_id:
             logger.warning("Attempted to open SKU mapping without selecting client")
@@ -505,21 +574,28 @@ class MainWindow(QMainWindow):
 
         logger.info(f"Opening SKU mapping dialog for client {self.current_client_id}")
 
-        # Use legacy dialog with SKUMappingManager
-        # TODO: Could be refactored to use ProfileManager directly
-        dialog = SKUMappingDialog(self.sku_manager, self)
+        # Phase 1.3: Use ProfileManager directly for centralized storage
+        dialog = SKUMappingDialog(self.current_client_id, self.profile_manager, self)
 
         if dialog.exec():  # User clicked "Save & Close"
-            # If a session is active, update its logic instance with the new map
+            # Mappings are already saved by the dialog
+            logger.info("SKU mapping dialog closed with save")
+
+            # If a session is active, reload the SKU map into logic instance
             if self.logic:
                 try:
-                    new_map = self.sku_manager.get_map()
-                    self.logic.set_sku_map(new_map)  # This now saves to ProfileManager
-                    self.status_label.setText("SKU mapping updated and saved to server.")
-                    logger.info("SKU mapping updated successfully")
+                    new_map = self.profile_manager.load_sku_mapping(self.current_client_id)
+                    self.logic.set_sku_map(new_map)
+                    self.status_label.setText("SKU mapping updated and synchronized across all PCs.")
+                    logger.info("SKU mapping reloaded into active session")
                 except Exception as e:
-                    logger.error(f"Failed to update SKU mapping: {e}")
-                    QMessageBox.warning(self, "Error", f"Failed to save SKU mapping:\n\n{e}")
+                    logger.error(f"Failed to reload SKU mapping into session: {e}")
+                    QMessageBox.warning(
+                        self,
+                        "Reload Warning",
+                        f"Mappings saved successfully but failed to reload into current session:\n\n{e}\n\n"
+                        f"Please restart the session to use new mappings."
+                    )
 
     def end_session(self):
         """
@@ -558,9 +634,79 @@ class MainWindow(QMainWindow):
                             cell.fill = green_fill
 
             self.status_label.setText(f"Session ended. Report saved to {output_path}")
+
+            # Phase 1.3: Record session completion metrics and save session summary
+            try:
+                session_info = self.session_manager.get_session_info()
+                if session_info and 'started_at' in session_info:
+                    start_time = datetime.fromisoformat(session_info['started_at'])
+                    end_time = datetime.now()
+
+                    # Count completed orders and items
+                    completed_orders_list = self.logic.session_packing_state.get('completed_orders', [])
+                    completed_orders = len(completed_orders_list)
+
+                    in_progress_orders_dict = self.logic.session_packing_state.get('in_progress', {})
+                    in_progress_orders = len(in_progress_orders_dict)
+
+                    items_packed = sum(
+                        sum(
+                            sku_data.get('packed', 0)
+                            for sku_data in order_data.values()
+                            if isinstance(sku_data, dict)
+                        )
+                        for order_data in in_progress_orders_dict.values()
+                    )
+
+                    # Count total orders from processed_df
+                    total_orders = len(self.logic.processed_df['Order_Number'].unique()) if self.logic.processed_df is not None else 0
+                    total_items = int(self.logic.processed_df['Quantity'].sum()) if self.logic.processed_df is not None else 0
+
+                    # Record session completion in statistics
+                    self.stats_manager.record_session_completion(
+                        client_id=self.current_client_id,
+                        session_id=self.session_manager.session_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        orders_completed=completed_orders,
+                        items_packed=items_packed
+                    )
+                    logger.info(f"Recorded session completion: {completed_orders} orders, {items_packed} items")
+
+                    # Phase 1.3: Save session summary for History
+                    try:
+                        summary_path = os.path.join(output_dir, "session_summary.json")
+                        session_summary = {
+                            "version": "1.0",
+                            "session_id": self.session_manager.session_id,
+                            "client_id": self.current_client_id,
+                            "started_at": start_time.isoformat(),
+                            "completed_at": end_time.isoformat(),
+                            "duration_seconds": int((end_time - start_time).total_seconds()),
+                            "packing_list_path": self.session_manager.packing_list_path,
+                            "completed_file_path": output_path,
+                            "pc_name": session_info.get('pc_name', os.environ.get('COMPUTERNAME', 'Unknown')),
+                            "user_name": os.environ.get('USERNAME', 'Unknown'),
+                            "total_orders": total_orders,
+                            "completed_orders": completed_orders,
+                            "in_progress_orders": in_progress_orders,
+                            "total_items": total_items,
+                            "items_packed": items_packed
+                        }
+
+                        with open(summary_path, 'w', encoding='utf-8') as f:
+                            json.dump(session_summary, f, indent=2, ensure_ascii=False)
+
+                        logger.info(f"Saved session summary to {summary_path}")
+                    except Exception as e:
+                        logger.error(f"Error saving session summary: {e}", exc_info=True)
+
+            except Exception as e:
+                logger.error(f"Error recording session metrics: {e}")
+
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")
-            print(f"Error during end_session: {e}")
+            logger.error(f"Error during end_session: {e}")
 
         if self.logic:
             self.logic.end_session_cleanup()
@@ -678,10 +824,13 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.set_focus_to_scanner()
 
     def switch_to_session_view(self):
-        """Switches the view back to the main session widget."""
+        """Switches the view back to the main session widget (tabbed interface)."""
         self.logic.clear_current_order()
         self.packer_mode_widget.clear_screen()
-        self.stacked_widget.setCurrentWidget(self.session_widget)
+        # Phase 1.3: Return to tabbed widget (Session tab will be active)
+        self.stacked_widget.setCurrentWidget(self.tab_widget)
+        # Ensure Session tab is active
+        self.tab_widget.setCurrentIndex(0)
 
     def open_print_dialog(self):
         """Opens the dialog for printing order barcodes."""
