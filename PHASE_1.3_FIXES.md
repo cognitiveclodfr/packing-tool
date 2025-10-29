@@ -90,6 +90,89 @@ def __init__(self, profile_manager=None):
 
 ---
 
+### Fix #3: Централізоване зберігання SKU Mapping
+**Проблема:** SKU мапінги зберігались локально на кожному ПК
+
+**Причина:**
+```python
+# Було:
+class SKUMappingDialog:
+    def __init__(self, sku_mapping_manager, parent=None):
+        self.manager = sku_mapping_manager  # Локальний менеджер!
+        self.current_map = self.manager.get_map().copy()
+        # Зберігалось у: ~/.packers_assistant/sku_map.json
+```
+
+**Рішення:**
+```python
+# src/sku_mapping_dialog.py (повністю переписано)
+class SKUMappingDialog:
+    def __init__(self, client_id: str, profile_manager, parent=None):
+        self.client_id = client_id
+        self.profile_manager = profile_manager
+
+        # Завантажує з файлового сервера
+        self.current_map = self.profile_manager.load_sku_mapping(client_id).copy()
+        # → \\SERVER\...\CLIENTS\CLIENT_X\sku_mapping.json
+
+    def _save_and_close(self):
+        """Зберігає на файловий сервер з file locking"""
+        success = self.profile_manager.save_sku_mapping(self.client_id, self.current_map)
+        if success:
+            QMessageBox.information(self, "Saved",
+                f"Successfully saved {len(self.current_map)} mapping(s) to file server.\n\n"
+                f"Changes are now synchronized across all PCs.")
+```
+
+**Нові можливості:**
+- ✅ Кнопка "Reload from Server" - оновлення з сервера
+- ✅ Статус-бар показує стан синхронізації
+- ✅ Покращені повідомлення про збереження
+- ✅ Автоматичне перезавантаження в активну сесію
+
+**Файли змінено:**
+- `src/sku_mapping_dialog.py` - повністю переписано (334 рядки)
+- `src/main.py` - метод `open_sku_mapping_dialog()` оновлено
+
+**Оновлено в main.py:**
+```python
+# src/main.py:577-598
+def open_sku_mapping_dialog(self):
+    # СТАРЕ:
+    # dialog = SKUMappingDialog(self.sku_manager, self)
+
+    # НОВЕ - Phase 1.3:
+    dialog = SKUMappingDialog(self.current_client_id, self.profile_manager, self)
+
+    if dialog.exec():
+        # Мапінги вже збережені діалогом на файловому сервері
+        if self.logic:
+            # Перезавантажити в активну сесію
+            new_map = self.profile_manager.load_sku_mapping(self.current_client_id)
+            self.logic.set_sku_map(new_map)
+            self.status_label.setText("SKU mapping updated and synchronized across all PCs.")
+```
+
+**Переваги:**
+- ✅ Всі ПК бачать однакові мапінги
+- ✅ Зміни доступні миттєво
+- ✅ File locking запобігає конфліктам
+- ✅ Немає backward compatibility issues (чистий старт)
+
+**Тестування:**
+```bash
+# Тест синхронізації:
+1. ПК #1: Додати мапінг 7290123456789 → SKU-001
+2. ПК #1: Save & Close
+3. ПК #2: Відкрити SKU Mapping
+4. ПК #2: Має бачити новий мапінг ✅
+
+# Перевірка файлу:
+cat \\SERVER\...\CLIENTS\CLIENT_M\sku_mapping.json
+```
+
+---
+
 ## 📁 Створені файли
 
 ### Документація:
@@ -203,8 +286,10 @@ Resolves: Navigation issue after tabbed interface implementation
 
 ### Синхронізація:
 - ✅ Статистика на файловому сервері
+- ✅ SKU Mapping на файловому сервері (Phase 1.3 redesign)
 - ✅ File locking для concurrent access
 - ✅ Всі ПК бачать однакові дані
+- ✅ Reload from Server для оновлення мапінгів
 
 ---
 
@@ -212,15 +297,22 @@ Resolves: Navigation issue after tabbed interface implementation
 
 ### Для користувача:
 1. **Протестувати виправлення:**
-   - Навігація Back to Menu
-   - Restore Session з stale locks
+   - ✅ Навігація Back to Menu (Fix #1)
+   - ✅ Restore Session з stale locks (перевірено - працює)
+   - 🆕 SKU Mapping синхронізація (Fix #3)
 
 2. **Перевірити синхронізацію:**
    - Завершити сесію на ПК #1
    - Відкрити Dashboard на ПК #2
    - Дані мають співпадати
+   - 🆕 Додати SKU Mapping на ПК #1, перевірити на ПК #2
 
-3. **Повідомити про проблеми:**
+3. **Важливо для SKU Mapping:**
+   - Старі мапінги з `~/.packers_assistant/sku_map.json` НЕ переносяться автоматично
+   - Потрібно заново ввести мапінги через новий діалог
+   - Або вручну скопіювати на сервер в `CLIENTS/CLIENT_X/sku_mapping.json`
+
+4. **Повідомити про проблеми:**
    - Збирати логи з `~/.packers_assistant/logs/`
    - Описати кроки відтворення
 
