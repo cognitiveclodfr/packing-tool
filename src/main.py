@@ -560,8 +560,8 @@ class MainWindow(QMainWindow):
         """
         Open SKU mapping dialog for current client.
 
-        Note: SKU mappings are now managed through ProfileManager and automatically
-        saved to the file server for cross-PC synchronization.
+        Phase 1.3: Uses ProfileManager for centralized storage on file server.
+        All changes are synchronized across all PCs with file locking.
         """
         if not self.current_client_id:
             logger.warning("Attempted to open SKU mapping without selecting client")
@@ -574,21 +574,28 @@ class MainWindow(QMainWindow):
 
         logger.info(f"Opening SKU mapping dialog for client {self.current_client_id}")
 
-        # Use legacy dialog with SKUMappingManager
-        # TODO: Could be refactored to use ProfileManager directly
-        dialog = SKUMappingDialog(self.sku_manager, self)
+        # Phase 1.3: Use ProfileManager directly for centralized storage
+        dialog = SKUMappingDialog(self.current_client_id, self.profile_manager, self)
 
         if dialog.exec():  # User clicked "Save & Close"
-            # If a session is active, update its logic instance with the new map
+            # Mappings are already saved by the dialog
+            logger.info("SKU mapping dialog closed with save")
+
+            # If a session is active, reload the SKU map into logic instance
             if self.logic:
                 try:
-                    new_map = self.sku_manager.get_map()
-                    self.logic.set_sku_map(new_map)  # This now saves to ProfileManager
-                    self.status_label.setText("SKU mapping updated and saved to server.")
-                    logger.info("SKU mapping updated successfully")
+                    new_map = self.profile_manager.load_sku_mapping(self.current_client_id)
+                    self.logic.set_sku_map(new_map)
+                    self.status_label.setText("SKU mapping updated and synchronized across all PCs.")
+                    logger.info("SKU mapping reloaded into active session")
                 except Exception as e:
-                    logger.error(f"Failed to update SKU mapping: {e}")
-                    QMessageBox.warning(self, "Error", f"Failed to save SKU mapping:\n\n{e}")
+                    logger.error(f"Failed to reload SKU mapping into session: {e}")
+                    QMessageBox.warning(
+                        self,
+                        "Reload Warning",
+                        f"Mappings saved successfully but failed to reload into current session:\n\n{e}\n\n"
+                        f"Please restart the session to use new mappings."
+                    )
 
     def end_session(self):
         """
@@ -779,10 +786,13 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.set_focus_to_scanner()
 
     def switch_to_session_view(self):
-        """Switches the view back to the main session widget."""
+        """Switches the view back to the main session widget (tabbed interface)."""
         self.logic.clear_current_order()
         self.packer_mode_widget.clear_screen()
-        self.stacked_widget.setCurrentWidget(self.session_widget)
+        # Phase 1.3: Return to tabbed widget (Session tab will be active)
+        self.stacked_widget.setCurrentWidget(self.tab_widget)
+        # Ensure Session tab is active
+        self.tab_widget.setCurrentIndex(0)
 
     def open_print_dialog(self):
         """Opens the dialog for printing order barcodes."""
