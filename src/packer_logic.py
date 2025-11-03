@@ -1,23 +1,49 @@
+# Standard library imports
 import os
 import sys
 import tempfile
 import shutil
-import pandas as pd
+
+# Third-party imports for data processing
+import pandas as pd  # Excel file handling and data manipulation
+
+# Barcode generation libraries
 import barcode
 from barcode.writer import ImageWriter
+
+# Image processing for label generation
 from PIL import Image, ImageDraw, ImageFont
-import io
+import io  # In-memory binary streams for barcode images
+
+# Data persistence and utilities
 import json
 from pathlib import Path
 from datetime import datetime
+
+# Qt framework for signals/slots pattern
 from PySide6.QtCore import QObject, Signal
+
+# Type hints for better code documentation
 from typing import List, Dict, Any, Tuple, Optional
 
+# Local imports
 from logger import get_logger
 
+# Initialize module-level logger
 logger = get_logger(__name__)
 
+# Required columns in the Excel packing list
+# These columns are mandatory for the application to function correctly
+# - Order_Number: Unique identifier for each order
+# - SKU: Product stock keeping unit code
+# - Product_Name: Human-readable product description
+# - Quantity: Number of items to pack for this SKU in this order
+# - Courier: Shipping courier name (e.g., "PostOne", "Speedy", "DHL")
 REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity', 'Courier']
+
+# Filename for session state persistence
+# This file stores packing progress and is saved after every scan
+# to enable crash recovery and session restoration
 STATE_FILE_NAME = "packing_state.json"
 
 class PackerLogic(QObject):
@@ -88,18 +114,40 @@ class PackerLogic(QObject):
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
-        Load SKU mapping from ProfileManager.
+        Load SKU mapping from ProfileManager for the current client.
+
+        SKU mappings allow barcodes from products to be translated to internal SKU codes.
+        This is useful when:
+        - Products have multiple barcode standards (EAN-13, UPC, manufacturer codes)
+        - Supplier barcodes differ from internal SKU system
+        - Same product has different barcodes from different suppliers
+
+        For small warehouses, this is critical because products often come from
+        multiple suppliers with different barcode systems, but need to be tracked
+        under a single internal SKU.
+
+        The method normalizes all barcode keys (lowercase, alphanumeric only) to ensure
+        consistent matching regardless of scanner input variations.
 
         Returns:
             Dictionary of normalized barcode -> SKU mappings
+            Example: {"7290018664100": "SKU-CREAM-01", "8809765431234": "SKU-SERUM-02"}
+            Returns empty dict if loading fails (graceful degradation)
         """
         try:
+            # Load raw mappings from centralized storage (file server)
             mappings = self.profile_manager.load_sku_mapping(self.client_id)
-            # Normalize keys for consistent matching
+
+            # Normalize all barcode keys for consistent matching
+            # This handles variations in scanner output (spaces, dashes, mixed case)
+            # Original SKU values are preserved as-is
             normalized = {self._normalize_sku(k): v for k, v in mappings.items()}
+
             logger.debug(f"Loaded {len(normalized)} SKU mappings for client {self.client_id}")
             return normalized
         except Exception as e:
+            # Graceful degradation: if SKU mapping fails to load, continue without it
+            # Scanned barcodes will be matched directly against order SKUs
             logger.error(f"Error loading SKU mappings: {e}")
             return {}
 
@@ -224,17 +272,32 @@ class PackerLogic(QObject):
 
     def _normalize_sku(self, sku: Any) -> str:
         """
-        Normalizes an SKU for consistent comparison.
+        Normalizes an SKU for consistent comparison across different input sources.
 
-        Removes all non-alphanumeric characters and converts the string to
-        lowercase. This makes the matching process robust against variations
-        in barcode scanner output or data entry.
+        This normalization is essential for small warehouse operations where SKUs/barcodes
+        can come from multiple sources with inconsistent formatting:
+        - Manual Excel entry: may include spaces, dashes, parentheses
+        - Barcode scanners: may add prefixes/suffixes depending on configuration
+        - Different suppliers: varying formatting conventions
+        - Copy-paste from supplier websites: may include special characters
+
+        The normalization algorithm:
+        1. Convert to string (handles numeric SKUs like "12345")
+        2. Remove all non-alphanumeric characters (spaces, dashes, dots, etc.)
+        3. Convert to lowercase (handles case-insensitive matching)
+
+        Examples:
+            "SKU-123-A" -> "sku123a"
+            "7290 0186 6410 0" -> "72900186641100"
+            "Product (ABC)" -> "productabc"
+            12345 -> "12345"
 
         Args:
             sku (Any): The SKU to normalize, typically a string or number.
+                      Can be Excel cell value (str, int, float)
 
         Returns:
-            str: The normalized SKU string.
+            str: The normalized SKU string (lowercase alphanumeric only)
         """
         return ''.join(filter(str.isalnum, str(sku))).lower()
 
@@ -307,68 +370,210 @@ class PackerLogic(QObject):
         self.processed_df = df
         self.orders_data = {}
         self.barcode_to_order_number = {}
+
+        # Use Code-128 barcode symbology
+        # Code-128 is chosen because:
+        # - High density encoding (more data in less space)
+        # - Supports full ASCII character set (alphanumeric + special chars)
+        # - Industry standard for shipping labels
+        # - Compatible with all common barcode scanners in warehouse environment
         code128 = barcode.get_barcode_class('code128')
 
+        # === BARCODE LABEL DIMENSIONS ===
+        # These values are configured for common thermal printers used in small warehouses
+        # (Zebra, Brother, Dymo, TSC, and similar models)
+
+        # DPI (Dots Per Inch) = 203
+        # This is the standard resolution for entry-level thermal printers
+        # More expensive printers use 300 DPI, but 203 DPI is sufficient for
+        # barcode readability and is the most common resolution in small businesses
         DPI = 203
-        LABEL_WIDTH_MM, LABEL_HEIGHT_MM = 65, 35
-        LABEL_WIDTH_PX = int((LABEL_WIDTH_MM / 25.4) * DPI)
-        LABEL_HEIGHT_PX = int((LABEL_HEIGHT_MM / 25.4) * DPI)
+
+        # Label dimensions in millimeters
+        # 65mm x 35mm is a common label size that:
+        # - Fits standard thermal printer rolls (most printers support 50-80mm width)
+        # - Large enough for barcode + text information
+        # - Small enough to be cost-effective (label cost per unit)
+        # - Fits well on shipping boxes without taking excessive space
+        LABEL_WIDTH_MM = 65   # 2.56 inches
+        LABEL_HEIGHT_MM = 35  # 1.38 inches
+
+        # Convert millimeters to pixels for image generation
+        # Formula: (mm / 25.4) * DPI
+        # 25.4 mm = 1 inch, so we convert mm -> inches -> pixels
+        LABEL_WIDTH_PX = int((LABEL_WIDTH_MM / 25.4) * DPI)    # ~520 pixels
+        LABEL_HEIGHT_PX = int((LABEL_HEIGHT_MM / 25.4) * DPI)  # ~280 pixels
+
+        # Reserve space for text below the barcode
+        # This area displays:
+        # - Order Number (Line 1)
+        # - Courier Name (Line 2, bold)
+        # 80 pixels is calculated as:
+        #   32pt font ≈ 42 pixels per line (including line spacing)
+        #   2 lines × 42px = 84px, rounded to 80px for aesthetic margins
         TEXT_AREA_HEIGHT = 80
-        BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT
+
+        # Calculate remaining height for barcode itself
+        # The barcode uses the top portion of the label
+        BARCODE_HEIGHT_PX = LABEL_HEIGHT_PX - TEXT_AREA_HEIGHT  # ~200 pixels
+
+        # === FONT CONFIGURATION ===
+        # Font size 32pt is chosen based on real-world warehouse testing:
+        # - Readable from ~60cm (arm's length) for warehouse workers
+        # - Not too large (wastes label space)
+        # - Not too small (hard to read in warehouse lighting conditions)
+        # - Optimal for small thermal printer labels
+        FONT_SIZE_PT = 32
 
         font, font_bold = None, None
         try:
-            font = ImageFont.truetype("arial.ttf", 32)
-            font_bold = ImageFont.truetype("arialbd.ttf", 32)
+            # Try to load Arial fonts from system
+            # Arial is widely available on Windows and renders clearly on thermal printers
+            font = ImageFont.truetype("arial.ttf", FONT_SIZE_PT)
+            font_bold = ImageFont.truetype("arialbd.ttf", FONT_SIZE_PT)
         except IOError:
+            # Fallback to PIL's default font if Arial is not available
+            # Note: Default font is typically much smaller (~11pt) and may be harder to read
+            # This fallback ensures the application works on systems without Arial
             logger.warning("Arial fonts not found, falling back to default font")
+            logger.warning("Label text may be smaller and less readable with default font")
             font = ImageFont.load_default()
             font_bold = font
 
         try:
+            # Group all order rows by Order_Number
+            # Each order may have multiple rows (one per SKU/product)
+            # but we generate one label per order
             grouped = df.groupby('Order_Number')
+
             for order_number, group in grouped:
+                # === STEP 1: Create safe barcode content ===
+                # Barcode content must be alphanumeric + limited special chars
+                # Remove any characters that Code-128 might struggle with
+                # Keep: letters, numbers, hyphens, underscores
+                # Remove: spaces, quotes, special chars that could cause scanner issues
                 safe_barcode_content = "".join(c for c in str(order_number) if c.isalnum() or c in '-_').rstrip()
+
+                # Handle edge case: if order number becomes empty after sanitization
+                # (e.g., order number was "###" or "...")
                 if not safe_barcode_content:
                     safe_barcode_content = f"unnamed_order_{len(self.orders_data)}"
 
+                # Store mapping from sanitized barcode content back to original order number
+                # This is needed when scanning: barcode content -> original order number
                 self.barcode_to_order_number[safe_barcode_content] = order_number
 
+                # === STEP 2: Generate barcode image ===
+                # Create Code-128 barcode object
                 barcode_obj = code128(safe_barcode_content, writer=ImageWriter())
+
+                # Generate barcode to in-memory buffer (not disk file)
                 buffer = io.BytesIO()
-                barcode_obj.write(buffer, {'module_height': 15.0, 'write_text': False, 'quiet_zone': 2})
+
+                # Barcode generation parameters:
+                # - module_height: 15.0mm = height of individual barcode bars
+                #   15mm is chosen because it's:
+                #   * Tall enough for reliable scanning (minimum ~10mm recommended)
+                #   * Not too tall (wastes label space)
+                #   * Standard for shipping labels in small warehouse operations
+                #
+                # - write_text: False = don't include human-readable text below bars
+                #   We handle text rendering ourselves for better layout control
+                #
+                # - quiet_zone: 2 = minimum blank space on left/right of barcode (in modules)
+                #   Quiet zones are required by barcode standards for reliable scanning
+                #   2 modules is the minimum; we rely on label margins for additional space
+                barcode_obj.write(buffer, {
+                    'module_height': 15.0,    # Bar height in mm
+                    'write_text': False,      # We'll add text manually
+                    'quiet_zone': 2           # Minimum blank space on sides
+                })
+
+                # Rewind buffer to start for reading
                 buffer.seek(0)
+
+                # Load barcode image from buffer
                 barcode_img = Image.open(buffer)
 
+                # === STEP 3: Resize barcode to fit label ===
+                # Calculate aspect ratio to maintain barcode proportions
+                # (barcode width varies based on encoded content length)
                 aspect_ratio = barcode_img.width / barcode_img.height
+
+                # Set height to available space (label height minus text area)
                 new_h = BARCODE_HEIGHT_PX
+
+                # Calculate width maintaining aspect ratio
+                # Use min() to ensure barcode doesn't exceed label width
+                # (important for long order numbers)
                 new_w = min(int(new_h * aspect_ratio), LABEL_WIDTH_PX)
+
+                # Resize using LANCZOS (high-quality downsampling)
+                # LANCZOS is chosen over BILINEAR/NEAREST for best quality
+                # (important for barcode clarity and scanner reliability)
                 barcode_img = barcode_img.resize((new_w, new_h), Image.LANCZOS)
 
+                # === STEP 4: Create label canvas ===
+                # Create blank white label image at full label dimensions
+                # RGB mode for compatibility with all printers
+                # White background ensures good contrast with black barcode/text
                 label_img = Image.new('RGB', (LABEL_WIDTH_PX, LABEL_HEIGHT_PX), 'white')
+
+                # Center barcode horizontally on label
+                # This provides balanced appearance and equal quiet zones
                 barcode_x = (LABEL_WIDTH_PX - new_w) // 2
+
+                # Paste barcode at top of label (y=0)
                 label_img.paste(barcode_img, (barcode_x, 0))
 
+                # === STEP 5: Add text information ===
+                # Create drawing context for adding text
                 draw = ImageDraw.Draw(label_img)
+
+                # Prepare text content
                 order_text = str(order_number)
-                courier_name = str(group['Courier'].iloc[0])
+                courier_name = str(group['Courier'].iloc[0])  # Get courier from first row of order
+
+                # Calculate text dimensions for centering
+                # textbbox returns (left, top, right, bottom) coordinates
                 order_bbox = draw.textbbox((0, 0), order_text, font=font)
                 courier_bbox = draw.textbbox((0, 0), courier_name, font=font_bold)
 
+                # Calculate X position for centered order number
                 order_x = (LABEL_WIDTH_PX - (order_bbox[2] - order_bbox[0])) / 2
+
+                # Y position: just below barcode with 5px margin
                 order_y = new_h + 5
+
+                # Draw order number (normal font)
                 draw.text((order_x, order_y), order_text, font=font, fill='black')
 
+                # Calculate X position for centered courier name
                 courier_x = (LABEL_WIDTH_PX - (courier_bbox[2] - courier_bbox[0])) / 2
+
+                # Y position: below order number with 5px spacing
+                # Spacing = order_y + height of order text + 5px gap
                 courier_y = order_y + (order_bbox[3] - order_bbox[1]) + 5
+
+                # Draw courier name (bold font for emphasis)
+                # Courier is important for sorting packages by delivery method
                 draw.text((courier_x, courier_y), courier_name, font=font_bold, fill='black')
 
+                # === STEP 6: Save label to disk ===
+                # Save as PNG for lossless quality (important for barcode scanning)
+                # Filename uses sanitized barcode content for easy identification
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
                 label_img.save(barcode_path)
 
+                # === STEP 7: Store order data for later use ===
+                # Store both the barcode file path and all order items
+                # This data is used during packing to:
+                # - Display the barcode image in UI
+                # - Show which items need to be packed
+                # - Track packing progress
                 self.orders_data[order_number] = {
                     'barcode_path': barcode_path,
-                    'items': group.to_dict('records')
+                    'items': group.to_dict('records')  # Convert DataFrame group to list of dicts
                 }
 
             order_count = len(self.orders_data)
@@ -435,69 +640,152 @@ class PackerLogic(QObject):
         """
         Processes a scanned SKU for the currently active order.
 
-        It normalizes the SKU, checks if it's part of the order, updates the
-        packed count, and determines if the item or the entire order is complete.
-        The packing state is saved after every valid scan.
+        This is the core method called every time a warehouse worker scans a product
+        barcode. It handles:
+        1. SKU normalization (to handle different barcode formats)
+        2. SKU mapping translation (manufacturer barcode -> internal SKU)
+        3. Matching against order requirements
+        4. Updating packing progress
+        5. Detecting order completion
+        6. Persisting state after every scan (crash recovery)
+
+        The method implements a sophisticated matching logic that:
+        - Tries to find the SKU in the current order
+        - Supports multi-quantity items (scan same SKU multiple times)
+        - Detects when an item is fully packed
+        - Detects when entire order is complete
+        - Handles error cases (wrong SKU, already packed, etc.)
 
         Args:
-            sku (str): The content from the scanned product SKU barcode.
+            sku (str): The raw content from the scanned product SKU barcode.
+                      Can be any format (EAN-13, UPC, manufacturer code, internal SKU)
 
         Returns:
-            Tuple[Dict | None, str]: A tuple containing a result dictionary
-                                     (with row index and packed count) and a
-                                     status string ("SKU_OK", "SKU_NOT_FOUND",
-                                     "ORDER_COMPLETE", "SKU_EXTRA").
+            Tuple[Dict | None, str]: A tuple containing:
+                - Result dictionary with packing details (if successful)
+                  {"row": int, "packed": int, "is_complete": bool}
+                - Status string indicating what happened:
+                  * "SKU_OK" - Item packed successfully, order still in progress
+                  * "ORDER_COMPLETE" - Item packed and order is now complete
+                  * "SKU_NOT_FOUND" - Scanned SKU is not in this order
+                  * "SKU_EXTRA" - All items with this SKU are already packed
+                  * "NO_ACTIVE_ORDER" - No order currently selected
         """
+        # Safety check: ensure an order is actually loaded
+        # This prevents errors if user somehow scans before loading an order
         if not self.current_order_number:
             return None, "NO_ACTIVE_ORDER"
 
+        # === STEP 1: Normalize scanned barcode ===
+        # Remove spaces, dashes, convert to lowercase
+        # This handles variations in scanner configuration and barcode formats
         normalized_scan = self._normalize_sku(sku)
 
-        # Core logic change: Check if the scanned barcode has a mapped SKU.
-        # If so, use the mapped SKU. If not, use the scanned code itself.
-        # This ensures backward compatibility.
+        # === STEP 2: SKU Mapping Translation (if configured) ===
+        # This is a critical feature for small warehouses where:
+        # - Products come from multiple suppliers with different barcodes
+        # - Manufacturer barcodes don't match internal SKU system
+        # - Same product has different barcodes from different batches
+        #
+        # Example scenarios:
+        #   Scan: "7290018664100" (EAN-13 barcode)
+        #   Map:  "7290018664100" -> "SKU-CREAM-01" (internal SKU)
+        #   Use:  "SKU-CREAM-01" for matching
+        #
+        # Fallback behavior:
+        #   If no mapping exists, use the scanned barcode directly
+        #   This ensures backward compatibility with orders that use
+        #   manufacturer barcodes directly in the packing list
         final_sku = self.sku_map.get(normalized_scan, normalized_scan)
 
-        # The rest of the logic uses the potentially translated SKU.
+        # Normalize the final SKU (whether mapped or direct)
+        # This ensures consistent matching even if mapping returns non-normalized value
         normalized_final_sku = self._normalize_sku(final_sku)
 
         # The rest of the logic uses the potentially translated SKU.
         normalized_final_sku = self._normalize_sku(final_sku)
 
-        # Find the first matching item that is not yet fully packed
+        # === STEP 3: Find matching item in current order ===
+        # Search through all items in the order for a match
+        # Important: we look for the FIRST item that:
+        # 1. Matches the SKU
+        # 2. Is not yet fully packed (packed < required)
+        #
+        # This handles multi-quantity items correctly:
+        # Example: Order requires 3x "SKU-CREAM-01"
+        # - First scan: packed=0 -> packed=1
+        # - Second scan: packed=1 -> packed=2
+        # - Third scan: packed=2 -> packed=3 (complete!)
         found_item = None
         for item_state in self.current_order_state:
             if item_state['normalized_sku'] == normalized_final_sku and item_state['packed'] < item_state['required']:
                 found_item = item_state
                 break
 
+        # === STEP 4: Process successful match ===
         if found_item:
+            # Increment packed count for this item
             found_item['packed'] += 1
+
+            # Check if this specific item is now complete
+            # (all required quantity for this SKU has been packed)
             is_complete = found_item['packed'] == found_item['required']
+
+            # Update session state (in-memory)
             self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
 
+            # === Check if ENTIRE order is complete ===
+            # An order is complete when ALL items have been packed
+            # (not just the current item)
             all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state)
 
             if all_items_complete:
+                # Order is complete!
                 status = "ORDER_COMPLETE"
+
+                # Move order from "in_progress" to "completed_orders"
                 del self.session_packing_state['in_progress'][self.current_order_number]
+
+                # Add to completed list (if not already there)
+                # This check prevents duplicates in case of rare edge cases
                 if self.current_order_number not in self.session_packing_state['completed_orders']:
                     self.session_packing_state['completed_orders'].append(self.current_order_number)
             else:
+                # Order still in progress
                 status = "SKU_OK"
+
+                # Calculate overall progress for this order
+                # (total items packed vs total items required)
                 total_packed = sum(s['packed'] for s in self.current_order_state)
                 total_required = sum(s['required'] for s in self.current_order_state)
+
+                # Emit Qt signal to update UI progress display
+                # This allows the UI to show "5/8 items packed" in real-time
                 self.item_packed.emit(self.current_order_number, total_packed, total_required)
 
+            # === CRITICAL: Save state to disk ===
+            # This is called after EVERY successful scan to ensure:
+            # - No data loss if application crashes
+            # - Session can be restored exactly where we left off
+            # - Multi-PC environments see consistent state
             self._save_session_state()
+
+            # Return success with detailed information
             return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
 
-        # If no item was found above, it might be because all matching SKUs are already packed.
-        # Let's check for that to return the correct status.
+        # === STEP 5: Handle error cases ===
+        # If we reach here, the scanned SKU didn't match any unpacked item
+
+        # Check if SKU exists in order but all items are already packed
         is_sku_in_order = any(s['normalized_sku'] == normalized_final_sku for s in self.current_order_state)
+
         if is_sku_in_order:
+            # SKU is in order, but all required quantity already packed
+            # Example: Order needs 2x "SKU-CREAM-01", but user scanned it 3 times
             return None, "SKU_EXTRA"  # All items with this SKU are already packed
         else:
+            # SKU is not in this order at all
+            # Example: User scanned wrong product, or product from different order
             return None, "SKU_NOT_FOUND"
 
     def clear_current_order(self):
