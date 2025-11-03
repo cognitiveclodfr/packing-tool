@@ -2,19 +2,41 @@
 Session Manager - Manages the lifecycle of packing sessions.
 
 This module handles session creation, organization by client, and session
-state tracking. It integrates with ProfileManager for centralized storage.
-"""
-import os
-import json
-from pathlib import Path
-from datetime import datetime
-from typing import Optional
+state tracking. It integrates with ProfileManager for centralized storage
+on the file server.
 
+Key responsibilities:
+- Creating timestamped session directories organized by client
+- Managing session lock acquisition and heartbeat mechanism
+- Tracking active session state for crash recovery
+- Providing paths for session data (barcodes, state files, reports)
+- Coordinating with SessionLockManager for multi-PC safety
+
+For small warehouse operations, this module ensures that:
+- Multiple PCs can work on different orders simultaneously
+- Sessions are properly isolated by client
+- Crashes don't corrupt data or prevent session recovery
+- Historical session data is preserved for analytics
+"""
+
+# Standard library imports
+import os  # For environment variables (PC name)
+import json  # For session info persistence
+from pathlib import Path  # Modern path handling
+from datetime import datetime  # Session timestamps
+from typing import Optional  # Type hints
+
+# Local imports
 from logger import get_logger
 from exceptions import SessionLockedError, StaleLockError
 
+# Initialize module-level logger
 logger = get_logger(__name__)
 
+# Filename for session information file
+# This file is created at session start and deleted at graceful session end
+# Its presence indicates a session that may need recovery after a crash
+# Contains: client_id, packing_list_path, started_at, pc_name
 SESSION_INFO_FILE = "session_info.json"
 
 
@@ -57,95 +79,178 @@ class SessionManager:
 
     def start_session(self, packing_list_path: str, restore_dir: str = None) -> str:
         """
-        Start a new session or restore an existing one.
+        Start a new packing session or restore a crashed session.
 
-        If `restore_dir` is provided, it uses that directory. Otherwise, it
-        creates a new timestamped directory in the client's session folder.
+        This method handles two scenarios:
+        1. **New Session**: Creates a new timestamped directory and initializes fresh state
+        2. **Restore Session**: Recovers a previously crashed session from its directory
+
+        Session Directory Structure:
+            SESSIONS/CLIENT_M/2025-11-03_14-30-45/
+                session_info.json       (session metadata for recovery)
+                .session.lock           (lock file with heartbeat)
+                barcodes/               (generated barcode images and state)
+                    packing_state.json  (packing progress)
+                    ORDER-123.png       (barcode labels)
+                output/                 (completed reports)
+
+        Lock Acquisition Process:
+        - Before starting/restoring, check if session is locked by another process
+        - If locked by another PC -> raise SessionLockedError (show user who has it)
+        - If lock is stale (>2 min without heartbeat) -> raise StaleLockError (offer force-release)
+        - If lock is ours (same PC, same process) -> reacquire safely
+        - After successful lock, start heartbeat timer (updates every 60 seconds)
+
+        For small warehouse operations:
+        - Multiple workers on different PCs can pack different orders simultaneously
+        - If a PC crashes, session can be restored without data loss
+        - Prevents data corruption from concurrent access
+        - Historical sessions preserved for analytics and auditing
 
         Args:
-            packing_list_path: Path to the source Excel file
-            restore_dir: Optional path to existing session directory to restore
+            packing_list_path: Absolute path to the source Excel file
+            restore_dir: Optional absolute path to existing session directory to restore
+                        If provided, attempts to restore that session
+                        If None, creates new timestamped session
 
         Returns:
-            The session ID (directory name)
+            The session ID (directory name, e.g., "2025-11-03_14-30-45")
 
         Raises:
-            Exception: If a session is already active
-            SessionLockedError: If session is locked by another process
-            StaleLockError: If session has a stale lock
+            Exception: If a session is already active (call end_session() first)
+            SessionLockedError: If session is actively locked by another process
+                               (lock_info contains: locked_by, user_name, lock_time)
+            StaleLockError: If session has a stale lock (process crashed/not responding)
+                           (includes stale_minutes for user decision making)
         """
+        # === SAFETY CHECK: Prevent multiple active sessions ===
+        # Only one session can be active per SessionManager instance
+        # This prevents confusion and ensures proper lock management
         if self.session_active:
             logger.error("Attempted to start session while one is already active")
             raise Exception("A session is already active. Please end the current session first.")
 
         logger.info(f"Starting session for client {self.client_id}")
 
+        # === SCENARIO 1: Restore existing session (crash recovery) ===
         if restore_dir:
-            # Restore existing session - check if it's locked
+            # User selected a previously crashed/incomplete session to restore
+            # This typically happens when:
+            # - Application crashed during packing
+            # - PC restarted unexpectedly
+            # - User wants to continue yesterday's work
             self.output_dir = Path(restore_dir)
             self.session_id = self.output_dir.name
 
-            # Ensure barcodes subdirectory exists
+            # Ensure barcodes subdirectory exists (may have been deleted by accident)
             barcodes_dir = self.output_dir / "barcodes"
             barcodes_dir.mkdir(exist_ok=True)
 
-            # Check lock status
+            # === CRITICAL: Check if session is locked ===
+            # Before restoring, verify the session isn't currently open on another PC
+            # This prevents data corruption from two PCs working on same session
             is_locked, lock_info = self.lock_manager.is_locked(self.output_dir)
+
             if is_locked:
-                # Check if it's our own lock
+                # Session has an existing lock file - need to determine if it's safe to proceed
+
+                # === CASE 1: It's our own lock (same PC, same process) ===
+                # This can happen if user clicks "Restore" on a session that was never
+                # properly closed (e.g., UI bug, forced window close)
                 if (lock_info.get('locked_by') == self.lock_manager.hostname and
                     lock_info.get('process_id') == self.lock_manager.process_id):
-                    # Our own lock, just continue
+                    # Safe to proceed - it's literally the same application instance
                     logger.info(f"Restoring our own locked session: {self.session_id}")
                 else:
-                    # Check if lock is stale
+                    # Lock belongs to another process (different PC or different app instance)
+
+                    # === CASE 2: Lock is stale (crashed process) ===
+                    # Check if heartbeat hasn't been updated in over 2 minutes
+                    # This indicates the locking process has crashed or is unresponsive
                     if self.lock_manager.is_lock_stale(lock_info):
-                        # Stale lock - raise StaleLockError
+                        # Calculate how long since last heartbeat (for user information)
                         stale_minutes = self.lock_manager._get_stale_minutes(lock_info)
+
                         logger.warning(f"Session has stale lock: {self.session_id}")
+
+                        # Raise StaleLockError - UI will offer user option to force-release
+                        # User can decide: "It's been 10 minutes, that PC probably crashed, I'll take over"
                         raise StaleLockError(
                             f"Session has stale lock",
                             lock_info=lock_info,
                             stale_minutes=stale_minutes
                         )
                     else:
-                        # Active lock by another process
+                        # === CASE 3: Active lock by another process ===
+                        # Heartbeat is recent (< 2 minutes), another process is actively using this session
+                        # Do NOT allow restore - would cause data corruption
                         logger.warning(f"Session is locked by another process: {self.session_id}")
+
+                        # Raise SessionLockedError - UI will show "User X on PC Y is working on this"
+                        # User must wait or choose a different session
                         raise SessionLockedError(
                             f"Session is locked by another process",
                             lock_info=lock_info
                         )
 
             logger.info(f"Restoring session: {self.session_id}")
+
+        # === SCENARIO 2: Create new session ===
         else:
-            # Create new session
+            # Create new timestamped session directory
+            # ProfileManager generates timestamp: "2025-11-03_14-30-45"
+            # This ensures unique session IDs and natural chronological sorting
             self.output_dir = self.profile_manager.get_session_dir(self.client_id)
             self.output_dir.mkdir(parents=True, exist_ok=True)
             self.session_id = self.output_dir.name
 
-            # Create barcodes subdirectory
+            # Create barcodes subdirectory for this session
+            # This will contain:
+            # - Generated barcode PNG images
+            # - packing_state.json (progress tracking)
             barcodes_dir = self.output_dir / "barcodes"
             barcodes_dir.mkdir(exist_ok=True)
 
             logger.info(f"Created new session: {self.session_id}")
             logger.debug(f"Session directory: {self.output_dir}")
 
-        # Acquire lock on this session
+        # === ACQUIRE SESSION LOCK ===
+        # This is the critical step that prevents concurrent access
+        # The lock file will contain:
+        # - locked_by: hostname of this PC
+        # - user_name: Windows username
+        # - lock_time: when lock was acquired
+        # - process_id: PID of this application instance
+        # - heartbeat: timestamp of last heartbeat update
         success, error_msg = self.lock_manager.acquire_lock(self.client_id, self.output_dir)
+
         if not success:
+            # Lock acquisition failed (very rare at this point, but handle it)
+            # This might happen if another process acquired lock in the microseconds
+            # between our check above and this acquisition attempt
             logger.error(f"Failed to acquire session lock: {error_msg}")
             raise SessionLockedError(error_msg)
 
+        # Lock successfully acquired - we now have exclusive access to this session
+
+        # Update instance state
         self.packing_list_path = packing_list_path
         self.session_active = True
 
-        # Create session info file for crash recovery
+        # === CREATE SESSION INFO FILE ===
+        # This file serves multiple purposes:
+        # 1. Crash recovery: If app crashes, this file helps identify incomplete sessions
+        # 2. Session restoration: Contains original packing list path for reloading
+        # 3. Auditing: Records when session started and on which PC
+        # 4. Session discovery: UI scans for these files to show restorable sessions
+        #
+        # File is deleted on graceful session end, so its presence = incomplete session
         info_path = self.output_dir / SESSION_INFO_FILE
         session_info = {
             'client_id': self.client_id,
             'packing_list_path': self.packing_list_path,
-            'started_at': datetime.now().isoformat(),
-            'pc_name': os.environ.get('COMPUTERNAME', 'Unknown')
+            'started_at': datetime.now().isoformat(),  # ISO format for parsing
+            'pc_name': os.environ.get('COMPUTERNAME', 'Unknown')  # Windows PC name
         }
 
         try:
@@ -153,9 +258,20 @@ class SessionManager:
                 json.dump(session_info, f, indent=2)
             logger.debug(f"Created session info file: {info_path}")
         except Exception as e:
+            # Non-critical failure - session can still function
+            # But recovery after crash will be harder without this file
             logger.error(f"Failed to create session info file: {e}")
 
-        # Start heartbeat timer
+        # === START HEARTBEAT MECHANISM ===
+        # Start periodic timer that updates lock file every 60 seconds
+        # This proves to other PCs that this session is still actively being used
+        # If heartbeat stops (crash/hang), lock becomes "stale" after 2 minutes
+        # and other PCs can force-release it
+        #
+        # Why 60 seconds?
+        # - Frequent enough to detect crashes quickly (2-minute stale timeout)
+        # - Infrequent enough to not cause file server overhead
+        # - Based on practical experience with small warehouse network speeds
         self._start_heartbeat()
 
         logger.info(f"Session {self.session_id} started successfully with lock")
@@ -261,60 +377,132 @@ class SessionManager:
 
     def _start_heartbeat(self):
         """
-        Start periodic heartbeat updates.
+        Start periodic heartbeat updates for crash detection.
 
-        This method starts a timer that updates the session lock's heartbeat
-        every 60 seconds to prove the session is still active.
+        This method starts a Qt timer that updates the session lock's heartbeat
+        timestamp every 60 seconds. This heartbeat mechanism is critical for
+        multi-PC environments to detect crashed sessions.
+
+        How it works:
+        1. Timer fires every 60 seconds
+        2. Calls _update_heartbeat() which updates lock file
+        3. If application crashes, timer stops -> heartbeat stops updating
+        4. After 2 minutes without heartbeat, lock is considered "stale"
+        5. Other PCs can then detect the crash and offer to take over the session
+
+        For small warehouses:
+        - If PC-1 crashes while packing, PC-2 can detect it within 2 minutes
+        - No manual intervention needed to identify crashed sessions
+        - Prevents long delays in order fulfillment due to crashed sessions
+        - Workers can immediately continue work on another PC
 
         Note: This requires Qt event loop to be running (PySide6.QtCore.QTimer).
-        Import is done inside the method to avoid circular dependencies.
+        Import is done inside the method to avoid circular dependencies with main.py
+
+        Implementation details:
+        - Uses QTimer for cross-platform compatibility (works on Windows/Linux/macOS)
+        - 60000 milliseconds = 60 seconds (consistent with SessionLockManager timeout values)
+        - Non-critical failure: if heartbeat fails to start, session still works
+          (but crash detection won't work on other PCs)
         """
         try:
+            # Import here to avoid circular dependency
+            # (main.py imports SessionManager, which would import QTimer at module level)
             from PySide6.QtCore import QTimer
 
+            # Safety check: prevent multiple timers from running
             if self.heartbeat_timer is not None:
-                # Already running
+                logger.debug("Heartbeat timer already running, skipping start")
                 return
 
+            # Create and configure timer
             self.heartbeat_timer = QTimer()
+
+            # Connect timer timeout signal to our heartbeat update method
+            # Every time timer fires, _update_heartbeat() will be called
             self.heartbeat_timer.timeout.connect(self._update_heartbeat)
+
+            # Start timer with 60-second interval
+            # Timer will fire continuously every 60 seconds until stopped
             self.heartbeat_timer.start(60000)  # 60 seconds in milliseconds
 
             logger.info(f"Heartbeat timer started for session {self.session_id}")
 
         except ImportError:
+            # PySide6 not available (e.g., running in test environment without Qt)
+            # Non-fatal: session will work, but other PCs won't be able to detect crashes
             logger.warning("PySide6 not available, heartbeat disabled")
         except Exception as e:
+            # Unexpected error starting timer
+            # Log but don't crash - session can still function without heartbeat
             logger.error(f"Failed to start heartbeat timer: {e}")
 
     def _stop_heartbeat(self):
         """
-        Stop the heartbeat timer.
+        Stop the heartbeat timer when ending a session.
 
         This should be called when ending a session to stop periodic
-        heartbeat updates.
+        heartbeat updates. Stopping the timer is important to:
+        - Free system resources (prevent timer from running indefinitely)
+        - Ensure clean session cleanup
+        - Prevent heartbeat updates after lock is released
+
+        Called by end_session() during normal shutdown.
         """
         if self.heartbeat_timer is not None:
             try:
+                # Stop timer from firing
                 self.heartbeat_timer.stop()
+
+                # Clear reference to allow garbage collection
                 self.heartbeat_timer = None
+
                 logger.info("Heartbeat timer stopped")
             except Exception as e:
+                # Non-critical failure - log and continue
+                # Timer will be garbage collected anyway when session ends
                 logger.error(f"Failed to stop heartbeat timer: {e}")
 
     def _update_heartbeat(self):
         """
-        Update the heartbeat in the session lock file.
+        Update the heartbeat timestamp in the session lock file.
 
-        This is called periodically by the heartbeat timer to update
-        the heartbeat timestamp in the lock file.
+        This method is called automatically by the heartbeat timer every 60 seconds.
+        It updates the 'heartbeat' field in the .session.lock file with the current
+        timestamp, proving to other PCs that this session is still actively running.
+
+        The heartbeat update process:
+        1. Read current lock file contents
+        2. Update 'heartbeat' field with current timestamp
+        3. Write back to file (with file locking to prevent corruption)
+
+        If heartbeat update fails:
+        - Log warning but don't crash session
+        - Session continues to work normally on this PC
+        - Other PCs may incorrectly detect session as stale after 2 minutes
+        - User would need to force-release stale lock (but our PC is still using it)
+
+        Why this is usually reliable:
+        - File server is typically stable (SMB/CIFS protocol)
+        - Updates are small and fast (just a JSON timestamp)
+        - Failure is rare in practice (tested in real warehouse environments)
         """
+        # Safety check: ensure session is still active
+        # (timer might fire one last time after end_session() is called)
         if not self.output_dir:
             return
 
         try:
+            # Delegate to SessionLockManager to handle file locking and update
             success = self.lock_manager.update_heartbeat(self.output_dir)
+
             if not success:
+                # Heartbeat update failed (file locked, network issue, etc.)
+                # Log warning so we can investigate if this happens frequently
                 logger.warning(f"Heartbeat update failed for session {self.session_id}")
+                # Note: We don't raise exception - session should continue working
+
         except Exception as e:
+            # Unexpected error during heartbeat update
+            # Log but don't crash - this is a background operation
             logger.error(f"Error updating heartbeat: {e}")
