@@ -35,6 +35,29 @@ Packer's Assistant is a desktop application designed to streamline the order ful
     - **Integrated Printing:** A simple dialog allows for printing all generated barcodes to a selected thermal printer.
 
 
+## Documentation
+
+**For Developers:** Comprehensive technical documentation is available in the `docs/` directory:
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Complete system architecture overview
+  - High-level architecture diagrams and component breakdown
+  - Data flow patterns and storage architecture
+  - Multi-PC coordination and session lifecycle
+  - Technology stack and design patterns
+
+- **[docs/API.md](docs/API.md)** - Complete API reference for all modules
+  - Detailed documentation for all 27 classes and 160+ functions
+  - Google Style docstrings with Args, Returns, and Raises sections
+  - Code examples and usage patterns
+  - Signal/slot documentation for Qt components
+
+- **[docs/FUNCTIONS.md](docs/FUNCTIONS.md)** - Complete function catalog
+  - All functions organized by module and category
+  - Alphabetical index for quick reference
+  - Statistics: 19 modules, 27 classes, ~5900 lines of code
+
+**Documentation Standards:** All code follows Google Style docstring conventions for consistency and clarity.
+
 ## Workflow
 
 1.  **Launch the Application:** Run the `main.py` script.
@@ -56,7 +79,11 @@ This is a Python application built with the **PySide6** GUI framework.
 
 ### Architecture
 
-The application is designed to be modular and stateful, separating core business logic from the user interface. Key components include:
+The application follows a **4-layer architecture** (Presentation, Business Logic, Data Access, Storage) with modular design that separates core business logic from the user interface.
+
+**For detailed architecture information, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
+#### Key Components Overview
 
 -   **`src/main.py` - `MainWindow`:** The main application window and central orchestrator. It initializes all UI components and backend managers, connects UI events to logic, and manages the application's different views.
 
@@ -64,9 +91,23 @@ The application is designed to be modular and stateful, separating core business
 
 -   **`src/session_manager.py` - `SessionManager`:** Manages the lifecycle of a packing session, including creating unique, timestamped session directories and handling the logic for the crash recovery feature.
 
+-   **`src/profile_manager.py` - `ProfileManager`:** Manages centralized client profiles and file server storage, enabling multi-PC coordination and shared configuration.
+
+-   **`src/session_lock_manager.py` - `SessionLockManager`:** Provides file-based locking mechanism for multi-PC coordination with heartbeat monitoring (60s interval, 120s stale timeout).
+
 -   **`src/statistics_manager.py` - `StatisticsManager`:** Handles persistent, cross-session application statistics, tracking metrics like total unique orders processed and completed over time.
 
+-   **`src/session_history_manager.py` - `SessionHistoryManager`:** Manages historical session data queries and analytics for reporting.
+
+-   **`src/sku_mapping_manager.py` - `SKUMappingManager`:** Handles barcode-to-SKU mapping for product identification.
+
 -   **`src/packer_mode_widget.py` - `PackerModeWidget`:** The dedicated UI widget for the "Packer Mode" screen. It displays the items for the active order and captures barcode scanner input.
+
+-   **`src/dashboard_widget.py` - `DashboardWidget`:** Performance metrics dashboard with client analytics and time-period filtering.
+
+-   **`src/session_history_widget.py` - `SessionHistoryWidget`:** Historical session viewer with search, filtering, and export capabilities.
+
+-   **`src/session_monitor_widget.py` - `SessionMonitorWidget`:** Real-time monitoring of active sessions across all PCs.
 
 -   **`src/order_table_model.py` - `OrderTableModel`:** A `QAbstractTableModel` that serves as the bridge between the pandas DataFrame of order data and the `QTableView` in the UI.
 
@@ -74,9 +115,19 @@ The application is designed to be modular and stateful, separating core business
 
 -   **`src/mapping_dialog.py` - `ColumnMappingDialog`:** A dialog that allows users to map the columns in their Excel file to the required data fields if the headers don't match the standard format.
 
+-   **`src/sku_mapping_dialog.py` - `SKUMappingDialog`:** Dialog for managing barcode-to-SKU mappings with centralized storage.
+
 -   **`src/print_dialog.py` - `PrintDialog`:** A dialog for previewing all generated barcodes and sending them to a printer.
 
+-   **`src/restore_session_dialog.py` - `RestoreSessionDialog`:** Dialog for selecting and restoring incomplete sessions from file server.
+
+-   **`src/logger.py` - `AppLogger`:** Centralized logging system with file and console output.
+
+-   **`src/exceptions.py`:** Custom exception classes for application-specific error handling.
+
 -   **`src/styles.qss`:** A global Qt Stylesheet (QSS) file that defines the application's modern dark theme.
+
+**For complete API documentation of all classes and functions, see [docs/API.md](docs/API.md)**
 
 ### State Management and Crash Recovery
 
@@ -116,7 +167,22 @@ The application's resilience is built around a JSON-based state file.
     ```
 
 ### Testing
-The project uses Python's built-in `unittest` framework for backend testing. To run the tests:
+
+The project uses **pytest** as the primary testing framework with fallback to Python's built-in `unittest` for compatibility.
+
+**Run tests locally:**
 ```bash
+# Using pytest (recommended)
+pytest tests/ -v
+
+# Using unittest (fallback)
 python -m unittest tests/test_packer_logic.py
 ```
+
+**Automated Testing:**
+The GitHub Actions workflow (`.github/workflows/build-release.yml`) automatically runs all tests:
+- On every pull request to main/master/develop branches
+- Before each release build
+- Tests are non-blocking (builds continue even if tests fail for visibility)
+
+For detailed test coverage and testing guidelines, see the Testing section in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
