@@ -88,8 +88,11 @@ class ProfileManager:
             raise ProfileManagerError("FileServerPath not configured in config.ini")
 
         self.base_path = Path(file_server_path)
-        self.clients_dir = self.base_path / "CLIENTS"
-        self.sessions_dir = self.base_path / "SESSIONS"
+        self.clients_dir = self.base_path / "Clients"
+        self.sessions_dir = self.base_path / "Sessions"
+        self.workers_dir = self.base_path / "Workers"
+        self.stats_dir = self.base_path / "Stats"
+        self.logs_dir = self.base_path / "Logs"
 
         # Local cache directory
         cache_path = self.config.get('Network', 'LocalCachePath', fallback='')
@@ -170,6 +173,9 @@ class ProfileManager:
         try:
             self.clients_dir.mkdir(parents=True, exist_ok=True)
             self.sessions_dir.mkdir(parents=True, exist_ok=True)
+            self.workers_dir.mkdir(parents=True, exist_ok=True)
+            self.stats_dir.mkdir(parents=True, exist_ok=True)
+            self.logs_dir.mkdir(parents=True, exist_ok=True)
             logger.debug("Directory structure verified")
         except Exception as e:
             logger.error(f"Cannot create directories: {e}")
@@ -286,8 +292,8 @@ class ProfileManager:
             client_dir.mkdir(parents=True)
             logger.debug(f"Created client directory: {client_dir}")
 
-            # Create default config
-            default_config = {
+            # Create default packer_config with SKU mapping integrated
+            default_packer_config = {
                 "client_id": client_id,
                 "client_name": client_name,
                 "created_at": datetime.now().isoformat(),
@@ -310,27 +316,35 @@ class ProfileManager:
                     "product_name": "Product_Name",
                     "quantity": "Quantity",
                     "courier": "Courier"
-                }
-            }
-
-            config_path = client_dir / "config.json"
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(default_config, f, indent=2, ensure_ascii=False)
-
-            logger.debug(f"Created config: {config_path}")
-
-            # Create empty SKU mapping
-            sku_mapping = {
-                "mappings": {},
+                },
+                "sku_mapping": {},
+                "barcode_settings": {
+                    "auto_generate": True,
+                    "format": "CODE128"
+                },
+                "packing_rules": {},
                 "last_updated": datetime.now().isoformat(),
                 "updated_by": os.environ.get('COMPUTERNAME', 'Unknown')
             }
 
-            mapping_path = client_dir / "sku_mapping.json"
-            with open(mapping_path, 'w', encoding='utf-8') as f:
-                json.dump(sku_mapping, f, indent=2)
+            packer_config_path = client_dir / "packer_config.json"
+            with open(packer_config_path, 'w', encoding='utf-8') as f:
+                json.dump(default_packer_config, f, indent=2, ensure_ascii=False)
 
-            logger.debug(f"Created SKU mapping: {mapping_path}")
+            logger.debug(f"Created packer_config: {packer_config_path}")
+
+            # Also create client_config.json for compatibility with Shopify Tool
+            client_config = {
+                "client_id": client_id,
+                "client_name": client_name,
+                "created_at": datetime.now().isoformat()
+            }
+
+            client_config_path = client_dir / "client_config.json"
+            with open(client_config_path, 'w', encoding='utf-8') as f:
+                json.dump(client_config, f, indent=2, ensure_ascii=False)
+
+            logger.debug(f"Created client_config: {client_config_path}")
 
             # Create backups directory
             (client_dir / "backups").mkdir(exist_ok=True)
@@ -351,7 +365,7 @@ class ProfileManager:
 
     def load_client_config(self, client_id: str) -> Optional[Dict]:
         """
-        Load configuration for a specific client with caching.
+        Load packer configuration for a specific client with caching.
 
         Args:
             client_id: Client identifier
@@ -369,21 +383,24 @@ class ProfileManager:
                 logger.debug(f"Using cached config for {client_id}")
                 return cached_data
 
-        # Load from disk
+        # Load from disk - try packer_config.json first, then fall back to config.json
+        packer_config_path = self.clients_dir / f"CLIENT_{client_id}" / "packer_config.json"
         config_path = self.clients_dir / f"CLIENT_{client_id}" / "config.json"
 
-        if not config_path.exists():
+        path_to_use = packer_config_path if packer_config_path.exists() else config_path
+
+        if not path_to_use.exists():
             logger.warning(f"Config not found for client {client_id}")
             return None
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(path_to_use, 'r', encoding='utf-8') as f:
                 config = json.load(f)
 
             # Update cache
             self._config_cache[cache_key] = (config, datetime.now())
 
-            logger.debug(f"Loaded config for client {client_id}")
+            logger.debug(f"Loaded config for client {client_id} from {path_to_use.name}")
             return config
 
         except Exception as e:
@@ -392,7 +409,7 @@ class ProfileManager:
 
     def save_client_config(self, client_id: str, config: Dict) -> bool:
         """
-        Save configuration for a specific client with backup.
+        Save packer configuration for a specific client with backup.
 
         Args:
             client_id: Client identifier
@@ -401,22 +418,26 @@ class ProfileManager:
         Returns:
             True if saved successfully
         """
-        config_path = self.clients_dir / f"CLIENT_{client_id}" / "config.json"
+        packer_config_path = self.clients_dir / f"CLIENT_{client_id}" / "packer_config.json"
 
         try:
             # Create backup before overwriting
-            if config_path.exists():
-                self._create_backup(client_id, config_path, "config")
+            if packer_config_path.exists():
+                self._create_backup(client_id, packer_config_path, "packer_config")
+
+            # Update timestamp
+            config['last_updated'] = datetime.now().isoformat()
+            config['updated_by'] = os.environ.get('COMPUTERNAME', 'Unknown')
 
             # Save new config
-            with open(config_path, 'w', encoding='utf-8') as f:
+            with open(packer_config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
 
             # Invalidate cache
             cache_key = f"config_{client_id}"
             self._config_cache.pop(cache_key, None)
 
-            logger.info(f"Saved config for client {client_id}")
+            logger.info(f"Saved packer_config for client {client_id}")
             return True
 
         except Exception as e:
@@ -451,6 +472,7 @@ class ProfileManager:
     def load_sku_mapping(self, client_id: str) -> Dict[str, str]:
         """
         Load SKU mapping for a specific client with caching.
+        Now reads from packer_config.json instead of separate sku_mapping.json
 
         Args:
             client_id: Client identifier
@@ -468,34 +490,43 @@ class ProfileManager:
                 logger.debug(f"Using cached SKU mapping for {client_id}")
                 return cached_data.copy()
 
-        # Load from disk
+        # Load from packer_config.json first, fall back to sku_mapping.json
+        packer_config_path = self.clients_dir / f"CLIENT_{client_id}" / "packer_config.json"
         mapping_path = self.clients_dir / f"CLIENT_{client_id}" / "sku_mapping.json"
 
-        if not mapping_path.exists():
-            logger.warning(f"SKU mapping not found for client {client_id}")
-            return {}
+        mappings = {}
 
-        try:
-            with open(mapping_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                mappings = data.get("mappings", {})
+        # Try packer_config.json first
+        if packer_config_path.exists():
+            try:
+                with open(packer_config_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    mappings = data.get("sku_mapping", {})
+                logger.debug(f"Loaded {len(mappings)} SKU mappings from packer_config for {client_id}")
+            except Exception as e:
+                logger.error(f"Error loading SKU mapping from packer_config for {client_id}: {e}")
 
-            # Update cache
-            self._sku_cache[cache_key] = (mappings, datetime.now())
+        # Fall back to old sku_mapping.json if packer_config doesn't have mappings
+        if not mappings and mapping_path.exists():
+            try:
+                with open(mapping_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    mappings = data.get("mappings", {})
+                logger.debug(f"Loaded {len(mappings)} SKU mappings from sku_mapping.json for {client_id}")
+            except Exception as e:
+                logger.error(f"Error loading SKU mapping from sku_mapping.json for {client_id}: {e}")
 
-            logger.debug(f"Loaded {len(mappings)} SKU mappings for {client_id}")
-            return mappings.copy()
+        # Update cache
+        self._sku_cache[cache_key] = (mappings, datetime.now())
 
-        except Exception as e:
-            logger.error(f"Error loading SKU mapping for {client_id}: {e}")
-            return {}
+        return mappings.copy()
 
     def save_sku_mapping(self, client_id: str, mappings: Dict[str, str]) -> bool:
         """
-        Save SKU mapping with file locking and merge support.
+        Save SKU mapping to packer_config.json with file locking and merge support.
 
         This method uses Windows file locking to prevent concurrent write conflicts.
-        It reads the current mappings, merges with new data, and writes atomically.
+        It reads the current packer_config, merges with new SKU mappings, and writes atomically.
 
         Args:
             client_id: Client identifier
@@ -507,7 +538,7 @@ class ProfileManager:
         Raises:
             ProfileManagerError: If save fails after retries
         """
-        mapping_path = self.clients_dir / f"CLIENT_{client_id}" / "sku_mapping.json"
+        packer_config_path = self.clients_dir / f"CLIENT_{client_id}" / "packer_config.json"
 
         logger.info(f"Saving SKU mapping for client {client_id}: {len(mappings)} entries")
 
@@ -520,14 +551,19 @@ class ProfileManager:
 
         for attempt in range(max_retries):
             try:
-                # Open file for read+write
-                # Create if doesn't exist
-                if not mapping_path.exists():
-                    mapping_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(mapping_path, 'w', encoding='utf-8') as f:
-                        json.dump({"mappings": {}, "last_updated": "", "updated_by": ""}, f)
+                # Create packer_config if doesn't exist
+                if not packer_config_path.exists():
+                    packer_config_path.parent.mkdir(parents=True, exist_ok=True)
+                    default_config = {
+                        "client_id": client_id,
+                        "sku_mapping": {},
+                        "last_updated": "",
+                        "updated_by": ""
+                    }
+                    with open(packer_config_path, 'w', encoding='utf-8') as f:
+                        json.dump(default_config, f)
 
-                with open(mapping_path, 'r+', encoding='utf-8') as f:
+                with open(packer_config_path, 'r+', encoding='utf-8') as f:
                     # Acquire exclusive lock (non-blocking)
                     msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
 
@@ -535,44 +571,44 @@ class ProfileManager:
                         # Read current data
                         f.seek(0)
                         current_data = json.load(f)
-                        current_mappings = current_data.get('mappings', {})
+                        current_mappings = current_data.get('sku_mapping', {})
 
                         # Merge: new mappings override existing
                         current_mappings.update(mappings)
 
-                        # Prepare new data
-                        new_data = {
-                            'mappings': current_mappings,
-                            'last_updated': datetime.now().isoformat(),
-                            'updated_by': os.environ.get('COMPUTERNAME', 'Unknown')
-                        }
+                        # Update config with new mappings
+                        current_data['sku_mapping'] = current_mappings
+                        current_data['last_updated'] = datetime.now().isoformat()
+                        current_data['updated_by'] = os.environ.get('COMPUTERNAME', 'Unknown')
 
                         # Write back (truncate and write)
                         f.seek(0)
                         f.truncate()
-                        json.dump(new_data, f, indent=2)
+                        json.dump(current_data, f, indent=2, ensure_ascii=False)
 
-                        logger.info(f"Successfully saved SKU mapping for {client_id}")
+                        logger.info(f"Successfully saved SKU mapping to packer_config for {client_id}")
 
                     finally:
                         # Release lock
                         msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
 
-                # Invalidate cache
+                # Invalidate caches
                 cache_key = f"sku_{client_id}"
                 self._sku_cache.pop(cache_key, None)
+                config_cache_key = f"config_{client_id}"
+                self._config_cache.pop(config_cache_key, None)
 
                 return True
 
             except IOError as e:
                 # File is locked by another process
                 if attempt < max_retries - 1:
-                    logger.warning(f"SKU mapping locked, retry {attempt + 1}/{max_retries}")
+                    logger.warning(f"packer_config locked, retry {attempt + 1}/{max_retries}")
                     time.sleep(retry_delay)
                 else:
-                    logger.error(f"Could not acquire lock on SKU mapping after {max_retries} attempts")
+                    logger.error(f"Could not acquire lock on packer_config after {max_retries} attempts")
                     raise ProfileManagerError(
-                        f"SKU mapping is locked by another user. Please try again in a moment."
+                        f"Configuration is locked by another user. Please try again in a moment."
                     )
 
             except Exception as e:
@@ -584,6 +620,7 @@ class ProfileManager:
     def _save_sku_mapping_simple(self, client_id: str, mappings: Dict[str, str]) -> bool:
         """
         Simple save without file locking (fallback).
+        Saves to packer_config.json
 
         Args:
             client_id: Client identifier
@@ -592,36 +629,39 @@ class ProfileManager:
         Returns:
             True if saved successfully
         """
-        mapping_path = self.clients_dir / f"CLIENT_{client_id}" / "sku_mapping.json"
+        packer_config_path = self.clients_dir / f"CLIENT_{client_id}" / "packer_config.json"
 
         try:
             # Create backup
-            if mapping_path.exists():
-                self._create_backup(client_id, mapping_path, "sku_mapping")
+            if packer_config_path.exists():
+                self._create_backup(client_id, packer_config_path, "packer_config")
 
-            # Load current and merge
-            current_mappings = {}
-            if mapping_path.exists():
-                with open(mapping_path, 'r', encoding='utf-8') as f:
-                    current_mappings = json.load(f).get('mappings', {})
+            # Load current config and merge mappings
+            current_config = {}
+            if packer_config_path.exists():
+                with open(packer_config_path, 'r', encoding='utf-8') as f:
+                    current_config = json.load(f)
 
+            # Get current mappings and merge
+            current_mappings = current_config.get('sku_mapping', {})
             current_mappings.update(mappings)
 
+            # Update config
+            current_config['sku_mapping'] = current_mappings
+            current_config['last_updated'] = datetime.now().isoformat()
+            current_config['updated_by'] = os.environ.get('COMPUTERNAME', 'Unknown')
+
             # Save
-            mapping_data = {
-                "mappings": current_mappings,
-                "last_updated": datetime.now().isoformat(),
-                "updated_by": os.environ.get('COMPUTERNAME', 'Unknown')
-            }
+            with open(packer_config_path, 'w', encoding='utf-8') as f:
+                json.dump(current_config, f, indent=2, ensure_ascii=False)
 
-            with open(mapping_path, 'w', encoding='utf-8') as f:
-                json.dump(mapping_data, f, indent=2)
-
-            # Invalidate cache
+            # Invalidate caches
             cache_key = f"sku_{client_id}"
             self._sku_cache.pop(cache_key, None)
+            config_cache_key = f"config_{client_id}"
+            self._config_cache.pop(config_cache_key, None)
 
-            logger.info(f"Saved SKU mapping for {client_id} (simple mode)")
+            logger.info(f"Saved SKU mapping to packer_config for {client_id} (simple mode)")
             return True
 
         except Exception as e:
@@ -815,6 +855,32 @@ class ProfileManager:
         Returns:
             Path to stats.json on file server
         """
-        stats_dir = self.base_path / "STATS"
-        stats_dir.mkdir(exist_ok=True, parents=True)
-        return stats_dir / "stats.json"
+        self.stats_dir.mkdir(exist_ok=True, parents=True)
+        return self.stats_dir / "stats.json"
+
+    def get_workers_root(self) -> Path:
+        """
+        Get the root directory for all workers.
+
+        Returns:
+            Path to Workers directory on file server
+        """
+        return self.workers_dir
+
+    def get_stats_root(self) -> Path:
+        """
+        Get the root directory for statistics.
+
+        Returns:
+            Path to Stats directory on file server
+        """
+        return self.stats_dir
+
+    def get_logs_root(self) -> Path:
+        """
+        Get the root directory for logs.
+
+        Returns:
+            Path to Logs directory on file server
+        """
+        return self.logs_dir
