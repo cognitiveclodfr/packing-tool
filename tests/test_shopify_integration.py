@@ -10,10 +10,15 @@ Tests cover:
 
 import pytest
 import json
+import sys
+import os
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.packer_logic import PackerLogic
+# Add src to path to be able to import modules from there
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+
+from packer_logic import PackerLogic
 
 
 @pytest.fixture

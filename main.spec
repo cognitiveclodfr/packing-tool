@@ -6,7 +6,6 @@ a = Analysis(
     pathex=['src'],
     binaries=[],
     datas=[
-        ('sounds', 'sounds'),
         ('src/styles.qss', 'src'),
         ('config.ini.example', '.'),
     ],

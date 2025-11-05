@@ -10,13 +10,18 @@ Tests cover:
 
 import pytest
 import json
+import sys
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 from unittest.mock import Mock, MagicMock, patch
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QDate
 
-from src.session_selector import SessionSelectorDialog
+# Add src to path to be able to import modules from there
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+
+from session_selector import SessionSelectorDialog
 
 
 @pytest.fixture

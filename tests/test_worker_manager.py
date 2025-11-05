@@ -3,10 +3,15 @@ Tests for WorkerManager module.
 """
 import json
 import pytest
+import sys
+import os
 from pathlib import Path
 from datetime import datetime
 
-from src.worker_manager import WorkerManager, WorkerManagerError
+# Add src to path to be able to import modules from there
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+
+from worker_manager import WorkerManager, WorkerManagerError
 
 
 @pytest.fixture

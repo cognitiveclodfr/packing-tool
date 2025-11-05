@@ -8,8 +8,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QTabWidget
 )
 from PySide6.QtGui import QAction
-from PySide6.QtCore import QTimer, QUrl, Qt, QSettings
-from PySide6.QtMultimedia import QSoundEffect
+from PySide6.QtCore import QTimer, Qt, QSettings
 from datetime import datetime
 from openpyxl.styles import PatternFill
 import pandas as pd
@@ -135,11 +134,7 @@ class MainWindow(QMainWindow):
         # Settings for remembering last client
         self.settings = QSettings("PackingTool", "ClientSelection")
 
-        self._init_sounds()
         self._init_ui()
-
-        if self.sounds_missing:
-            self.status_label.setText(self.status_label.text() + "\nWarning: Sound files not found.")
 
         self._update_dashboard()
 
@@ -447,22 +442,6 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
         QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table_frame.setStyleSheet(""))
 
-    def _init_sounds(self):
-        """Initializes QSoundEffect objects for audio feedback."""
-        self.sounds_missing = False
-        sound_files = {"success": "sounds/success.wav", "error": "sounds/error.wav", "victory": "sounds/victory.wav"}
-
-        self.success_sound = QSoundEffect()
-        if os.path.exists(sound_files["success"]): self.success_sound.setSource(QUrl.fromLocalFile(sound_files["success"]))
-        else: self.sounds_missing = True
-
-        self.error_sound = QSoundEffect()
-        if os.path.exists(sound_files["error"]): self.error_sound.setSource(QUrl.fromLocalFile(sound_files["error"]))
-        else: self.sounds_missing = True
-
-        self.victory_sound = QSoundEffect()
-        if os.path.exists(sound_files["victory"]): self.victory_sound.setSource(QUrl.fromLocalFile(sound_files["victory"]))
-        else: self.sounds_missing = True
 
     def start_session(self, file_path: str = None, restore_dir: str = None):
         """
@@ -923,13 +902,11 @@ class MainWindow(QMainWindow):
             if not order_number_from_scan:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
                 self.flash_border("red")
-                self.error_sound.play()
                 return
 
             if order_number_from_scan in self.logic.session_packing_state.get('completed_orders', []):
                 self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
                 self.flash_border("orange")
-                self.error_sound.play()
                 return
 
             items, status = self.logic.start_order_packing(text)
@@ -940,17 +917,14 @@ class MainWindow(QMainWindow):
             else:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
                 self.flash_border("red")
-                self.error_sound.play()
         else:
             result, status = self.logic.process_sku_scan(text)
             if status == "SKU_OK":
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
                 self.flash_border("green")
-                self.success_sound.play()
             elif status == "SKU_NOT_FOUND":
                 self.packer_mode_widget.show_notification("INCORRECT ITEM!", "red")
                 self.flash_border("red")
-                self.error_sound.play()
             elif status == "ORDER_COMPLETE":
                 current_order_num = self.logic.current_order_number
                 self.stats_manager.record_order_completion(current_order_num)
@@ -960,7 +934,6 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "green")
                 self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
-                self.victory_sound.play()
                 self.packer_mode_widget.scanner_input.setEnabled(False)
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
