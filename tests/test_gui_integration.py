@@ -48,25 +48,27 @@ def test_excel_file_duplicates(tmp_path_factory):
     return str(fn)
 
 @pytest.fixture
-def app_basic(qtbot, test_excel_file_basic, tmp_path):
+@patch('main.ProfileManager')
+@patch('main.SessionLockManager')
+def app_basic(mock_lock_mgr, mock_profile_mgr, qtbot, test_excel_file_basic, tmp_path):
     """App fixture using the basic test file."""
-    # Create mock ProfileManager
-    mock_profile_manager = Mock()
-    mock_profile_manager.base_path = tmp_path / "fileserver"
-    mock_profile_manager.base_path.mkdir(parents=True, exist_ok=True)
-    mock_profile_manager.get_global_stats_path.return_value = tmp_path / "stats.json"
-    mock_profile_manager.get_available_clients.return_value = []
+    # Import MainWindow here - patches are already active via decorators
+    from main import MainWindow
 
-    # Mock SessionLockManager
-    mock_lock_manager = Mock()
+    # Configure mock ProfileManager
+    mock_pm = Mock()
+    mock_pm.base_path = tmp_path / "fileserver"
+    mock_pm.base_path.mkdir(parents=True, exist_ok=True)
+    mock_pm.get_global_stats_path.return_value = tmp_path / "stats.json"
+    mock_pm.get_available_clients.return_value = []
+    mock_profile_mgr.return_value = mock_pm
 
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
-         patch('profile_manager.ProfileManager', return_value=mock_profile_manager), \
-         patch('session_lock_manager.SessionLockManager', return_value=mock_lock_manager):
+    # Configure mock SessionLockManager
+    mock_lm = Mock()
+    mock_lock_mgr.return_value = mock_lm
+
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
         mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
-
-        # Import MainWindow AFTER patching to ensure mocks are in place
-        from main import MainWindow
 
         window = MainWindow()
         qtbot.addWidget(window)
@@ -83,25 +85,27 @@ def app_basic(qtbot, test_excel_file_basic, tmp_path):
         qtbot.wait(10)  # Wait for deleteLater to process
 
 @pytest.fixture
-def app_duplicates(qtbot, test_excel_file_duplicates, tmp_path):
+@patch('main.ProfileManager')
+@patch('main.SessionLockManager')
+def app_duplicates(mock_lock_mgr, mock_profile_mgr, qtbot, test_excel_file_duplicates, tmp_path):
     """App fixture using the test file with duplicate SKUs."""
-    # Create mock ProfileManager
-    mock_profile_manager = Mock()
-    mock_profile_manager.base_path = tmp_path / "fileserver"
-    mock_profile_manager.base_path.mkdir(parents=True, exist_ok=True)
-    mock_profile_manager.get_global_stats_path.return_value = tmp_path / "stats.json"
-    mock_profile_manager.get_available_clients.return_value = []
+    # Import MainWindow here - patches are already active via decorators
+    from main import MainWindow
 
-    # Mock SessionLockManager
-    mock_lock_manager = Mock()
+    # Configure mock ProfileManager
+    mock_pm = Mock()
+    mock_pm.base_path = tmp_path / "fileserver"
+    mock_pm.base_path.mkdir(parents=True, exist_ok=True)
+    mock_pm.get_global_stats_path.return_value = tmp_path / "stats.json"
+    mock_pm.get_available_clients.return_value = []
+    mock_profile_mgr.return_value = mock_pm
 
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
-         patch('profile_manager.ProfileManager', return_value=mock_profile_manager), \
-         patch('session_lock_manager.SessionLockManager', return_value=mock_lock_manager):
+    # Configure mock SessionLockManager
+    mock_lm = Mock()
+    mock_lock_mgr.return_value = mock_lm
+
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
         mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
-
-        # Import MainWindow AFTER patching to ensure mocks are in place
-        from main import MainWindow
 
         window = MainWindow()
         qtbot.addWidget(window)
