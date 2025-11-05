@@ -11,8 +11,8 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Network paths (created during tests)
-\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\0UFulfilment/
+# Network paths (created during tests - escape backslashes properly)
+\\\\192.168.88.101/
 
 # Pytest cache
 .pytest_cache/
