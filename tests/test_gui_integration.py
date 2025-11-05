@@ -11,7 +11,8 @@ from PySide6.QtWidgets import QFileDialog
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-from main import MainWindow
+# NOTE: MainWindow is imported inside fixtures AFTER mocking to prevent
+# ProfileManager from being instantiated during module import
 
 # Define the required columns for the test data
 REQUIRED_COLUMNS = ["Order_Number", "Product_Name", "SKU", "Quantity"]
@@ -63,6 +64,10 @@ def app_basic(qtbot, test_excel_file_basic, tmp_path):
          patch('profile_manager.ProfileManager', return_value=mock_profile_manager), \
          patch('session_lock_manager.SessionLockManager', return_value=mock_lock_manager):
         mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
+
+        # Import MainWindow AFTER patching to ensure mocks are in place
+        from main import MainWindow
+
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
@@ -94,6 +99,10 @@ def app_duplicates(qtbot, test_excel_file_duplicates, tmp_path):
          patch('profile_manager.ProfileManager', return_value=mock_profile_manager), \
          patch('session_lock_manager.SessionLockManager', return_value=mock_lock_manager):
         mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
+
+        # Import MainWindow AFTER patching to ensure mocks are in place
+        from main import MainWindow
+
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
