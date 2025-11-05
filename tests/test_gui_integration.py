@@ -60,8 +60,8 @@ def app_basic(qtbot, test_excel_file_basic, tmp_path):
     mock_lock_manager = Mock()
 
     with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
-         patch('main.ProfileManager', return_value=mock_profile_manager), \
-         patch('main.SessionLockManager', return_value=mock_lock_manager):
+         patch('profile_manager.ProfileManager', return_value=mock_profile_manager), \
+         patch('session_lock_manager.SessionLockManager', return_value=mock_lock_manager):
         mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
         window = MainWindow()
         qtbot.addWidget(window)
@@ -91,8 +91,8 @@ def app_duplicates(qtbot, test_excel_file_duplicates, tmp_path):
     mock_lock_manager = Mock()
 
     with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
-         patch('main.ProfileManager', return_value=mock_profile_manager), \
-         patch('main.SessionLockManager', return_value=mock_lock_manager):
+         patch('profile_manager.ProfileManager', return_value=mock_profile_manager), \
+         patch('session_lock_manager.SessionLockManager', return_value=mock_lock_manager):
         mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
         window = MainWindow()
         qtbot.addWidget(window)
