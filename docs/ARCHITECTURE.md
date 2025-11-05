@@ -568,6 +568,180 @@ Files Remaining:
 └─ output/session_summary.json (for history)
 ```
 
+## Server Structure and Profile System
+
+### Centralized File Server Architecture
+
+The Packing Tool uses a **centralized file server** approach for data storage, enabling multi-PC coordination and data sharing across the warehouse. All application data is stored on a network share configured in `config.ini`.
+
+#### Server Directory Structure
+
+```
+\\FileServer\Warehouse\
+├── Clients/                          # Client profile configurations
+│   ├── CLIENT_M/
+│   │   ├── packer_config.json       # Unified configuration + SKU mapping
+│   │   ├── client_config.json       # Basic client info (compatibility)
+│   │   └── backups/                 # Configuration backups (last 10)
+│   │       ├── packer_config_20251103_143000.json
+│   │       └── ...
+│   └── CLIENT_R/
+│       └── ...
+│
+├── Sessions/                         # Session data by client
+│   ├── CLIENT_M/
+│   │   ├── 2025-11-03_14-30/       # Timestamped session
+│   │   │   ├── session_info.json   # Session metadata (removed on completion)
+│   │   │   ├── .session.lock       # Lock file with heartbeat
+│   │   │   ├── barcodes/           # Generated barcodes + state
+│   │   │   │   ├── ORDER-123.png
+│   │   │   │   └── packing_state.json
+│   │   │   └── output/             # Completion report (created on end)
+│   │   │       ├── packing_list_completed.xlsx
+│   │   │       └── session_summary.json
+│   │   └── ...
+│   └── CLIENT_R/
+│       └── ...
+│
+├── Stats/                            # Global statistics
+│   └── stats.json                   # Centralized metrics across all clients
+│
+└── Logs/                             # Centralized logging (optional)
+    └── ...
+```
+
+### Profile System
+
+#### Client Profiles
+
+Each client has a dedicated profile directory under `Clients/CLIENT_{ID}/` containing:
+
+**1. packer_config.json** - Unified configuration file:
+```json
+{
+  "client_id": "M",
+  "client_name": "M Cosmetics",
+  "created_at": "2025-11-03T14:30:00",
+  "barcode_label": {
+    "width_mm": 65,
+    "height_mm": 35,
+    "dpi": 203,
+    "show_quantity": false,
+    "show_client_name": false,
+    "font_size": 10
+  },
+  "courier_deadlines": {
+    "PostOne": "15:00",
+    "Speedy": "16:00",
+    "DHL": "17:00"
+  },
+  "required_columns": {
+    "order_number": "Order_Number",
+    "sku": "SKU",
+    "product_name": "Product_Name",
+    "quantity": "Quantity",
+    "courier": "Courier"
+  },
+  "sku_mapping": {
+    "barcode_12345": "SKU-001",
+    "barcode_67890": "SKU-002"
+  },
+  "barcode_settings": {
+    "auto_generate": true,
+    "format": "CODE128"
+  },
+  "packing_rules": {},
+  "last_updated": "2025-11-03T15:00:00",
+  "updated_by": "PC-WAREHOUSE-1"
+}
+```
+
+**Key Features:**
+- **Unified Config**: Combines packer settings and SKU mappings in one file
+- **File Locking**: Uses Windows `msvcrt.locking()` for concurrent access safety
+- **Automatic Backups**: Last 10 versions kept in `backups/` directory
+- **Cache Layer**: 60-second TTL cache in ProfileManager reduces file I/O
+- **Merge Support**: SKU mappings are merged, not replaced, on save
+
+#### Profile Manager Responsibilities
+
+The `ProfileManager` class provides centralized profile management:
+
+- **CRUD Operations**: Create, read, update client profiles
+- **SKU Mapping**: Load/save SKU mappings with file locking
+- **Session Organization**: Manage session directories per client
+- **Network Testing**: Verify file server connectivity
+- **Validation**: Ensure client IDs meet requirements
+- **Caching**: Cache configs and SKU mappings (60s TTL)
+
+### Integration Between Applications
+
+The Packing Tool is designed to work in a unified ecosystem with the Shopify Tool:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Shopify Export Tool                          │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  • Exports packing lists from Shopify                    │   │
+│  │  • Generates analysis_data.json (optional metadata)      │   │
+│  │  │  - Order statistics                                   │   │
+│  │  │  - Product information                                │   │
+│  │  │  - Courier breakdown                                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │
+                                 ▼ (Excel file)
+                     packing_list_YYYYMMDD_HHMMSS.xlsx
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Packing Tool                               │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  1. User imports Excel packing list                      │   │
+│  │  2. PackerLogic generates barcodes for orders            │   │
+│  │  3. Worker scans order barcode → displays items          │   │
+│  │  4. Worker scans SKU barcodes → tracks progress          │   │
+│  │  5. Order complete → next order                          │   │
+│  │  6. Session end → generates completion report            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Session Output:                                         │   │
+│  │  • packing_list_completed.xlsx                           │   │
+│  │  • session_summary.json                                  │   │
+│  │  • Updated global stats.json                             │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Centralized File Server                       │
+│  • Stores all client profiles                                   │
+│  • Stores all session data                                      │
+│  • Stores global statistics                                     │
+│  • Enables multi-PC collaboration                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Integration Points:**
+
+1. **Excel Format Compatibility**: Both tools use the same Excel column structure
+2. **Client Profiles**: Shared client configuration on file server
+3. **SKU Mappings**: Centralized barcode-to-SKU mappings
+4. **Statistics**: Unified stats.json tracks performance across both tools
+5. **Session History**: Complete audit trail of all packing sessions
+
+**Data Flow:**
+
+```
+Shopify → Shopify Tool → Excel File → Packing Tool → Session Output → File Server
+                                          ↓
+                                   Worker Scans
+                                          ↓
+                                  Realtime Updates
+                                          ↓
+                                  Statistics Manager
+```
+
 ## Technology Stack
 
 ### Core Technologies
