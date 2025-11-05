@@ -793,6 +793,140 @@ class PackerLogic(QObject):
         self.current_order_number = None
         self.current_order_state = {}
 
+    def load_from_shopify_analysis(self, session_path: Path) -> Tuple[int, str]:
+        """
+        Load orders data from Shopify Tool's analysis_data.json.
+
+        This method enables integration with Shopify Tool (Phase 1.3.2).
+        It reads analysis_data.json from a Shopify session and converts it
+        into the packing_list format expected by PackerLogic.
+
+        Workflow:
+        1. Read analysis_data.json from session/analysis/
+        2. Convert Shopify order format to packing list DataFrame
+        3. Generate barcodes for all orders
+        4. Initialize orders_data structure
+
+        Analysis data format (from Shopify Tool):
+        {
+          "analyzed_at": "2025-11-04T11:00:00",
+          "total_orders": 150,
+          "fulfillable_orders": 142,
+          "orders": [
+            {
+              "order_number": "ORDER-001",
+              "courier": "DHL",
+              "status": "Fulfillable",
+              "items": [
+                {"sku": "SKU-123", "quantity": 2, "product_name": "Product A"}
+              ]
+            }
+          ]
+        }
+
+        Args:
+            session_path: Path to Shopify session directory
+                         (e.g., Sessions/CLIENT_M/2025-11-04_1/)
+
+        Returns:
+            Tuple of (order_count, analysis_timestamp)
+
+        Raises:
+            ValueError: If analysis_data.json not found or invalid format
+            RuntimeError: If barcode generation fails
+        """
+        logger.info(f"Loading data from Shopify session: {session_path}")
+
+        # Locate analysis_data.json
+        analysis_file = Path(session_path) / "analysis" / "analysis_data.json"
+
+        if not analysis_file.exists():
+            error_msg = f"analysis_data.json not found in {session_path}/analysis/"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Load analysis data
+        try:
+            with open(analysis_file, 'r', encoding='utf-8') as f:
+                analysis_data = json.load(f)
+
+            logger.debug(f"Loaded analysis data: {analysis_data.get('total_orders', 0)} orders")
+
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in analysis_data.json: {e}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        except Exception as e:
+            error_msg = f"Error reading analysis_data.json: {e}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Extract orders list
+        orders_list = analysis_data.get('orders', [])
+        if not orders_list:
+            logger.warning("No orders found in analysis_data.json")
+            return 0, analysis_data.get('analyzed_at', 'Unknown')
+
+        # Convert to DataFrame (packing list format)
+        # Each order may have multiple items, need to flatten
+        rows = []
+
+        for order in orders_list:
+            order_number = order.get('order_number', 'UNKNOWN')
+            courier = order.get('courier', 'Unknown')
+            items = order.get('items', [])
+
+            for item in items:
+                row = {
+                    'Order_Number': order_number,
+                    'SKU': item.get('sku', ''),
+                    'Product_Name': item.get('product_name', ''),
+                    'Quantity': str(item.get('quantity', 1)),  # Convert to string for consistency
+                    'Courier': courier
+                }
+
+                # Add any extra fields from Shopify analysis
+                # (e.g., customer name, address, etc.)
+                for key, value in order.items():
+                    if key not in ['order_number', 'courier', 'items', 'status']:
+                        # Capitalize key to match packing list style
+                        formatted_key = key.replace('_', ' ').title().replace(' ', '_')
+                        row[formatted_key] = str(value)
+
+                rows.append(row)
+
+        # Create DataFrame
+        df = pd.DataFrame(rows)
+
+        if df.empty:
+            logger.warning("No order items to process")
+            return 0, analysis_data.get('analyzed_at', 'Unknown')
+
+        # Validate required columns
+        missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_cols:
+            error_msg = f"Missing required columns in analysis data: {missing_cols}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Store as packing_list_df and processed_df
+        self.packing_list_df = df
+        self.processed_df = df.copy()
+
+        logger.info(f"Converted {len(df)} items from {len(orders_list)} orders to DataFrame")
+
+        # Generate barcodes
+        try:
+            order_count = self.process_data_and_generate_barcodes(column_mapping=None)
+            logger.info(f"Successfully loaded Shopify session: {order_count} orders")
+
+            return order_count, analysis_data.get('analyzed_at', 'Unknown')
+
+        except Exception as e:
+            error_msg = f"Error generating barcodes from Shopify data: {e}"
+            logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg)
+
     def end_session_cleanup(self):
         """Removes the session state file upon graceful session termination."""
         state_file = self._get_state_file_path()
