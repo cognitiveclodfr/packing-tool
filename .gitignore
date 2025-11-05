@@ -13,6 +13,8 @@ __pycache__/
 
 # Network paths (created during tests)
 \\192.168.88.101\Z_GreenDelivery\WAREHOUSE\0UFulfilment/
+\\\\192.168.88.101\\Z_GreenDelivery\\WAREHOUSE\\0UFulfilment/
+*192.168.88.101*
 
 # Pytest cache
 .pytest_cache/
