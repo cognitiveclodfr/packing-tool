@@ -1,7 +1,9 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import pandas as pd
 import os
+import tempfile
+from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog
 
@@ -45,33 +47,63 @@ def test_excel_file_duplicates(tmp_path_factory):
     return str(fn)
 
 @pytest.fixture
-def app_basic(qtbot, test_excel_file_basic):
+def app_basic(qtbot, test_excel_file_basic, tmp_path):
     """App fixture using the basic test file."""
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+    # Create mock ProfileManager
+    mock_profile_manager = Mock()
+    mock_profile_manager.base_path = tmp_path / "fileserver"
+    mock_profile_manager.base_path.mkdir(parents=True, exist_ok=True)
+    mock_profile_manager.get_global_stats_path.return_value = tmp_path / "stats.json"
+    mock_profile_manager.get_available_clients.return_value = []
+
+    # Mock SessionLockManager
+    mock_lock_manager = Mock()
+
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
+         patch('main.ProfileManager', return_value=mock_profile_manager), \
+         patch('main.SessionLockManager', return_value=mock_lock_manager):
         mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
         yield window, qtbot
         # Cleanup
-        if window.session_manager.is_active():
-            window.end_session()
+        try:
+            if window.session_manager and window.session_manager.is_active():
+                window.end_session()
+        except:
+            pass
         window.close()
         window.deleteLater()
         qtbot.wait(10)  # Wait for deleteLater to process
 
 @pytest.fixture
-def app_duplicates(qtbot, test_excel_file_duplicates):
+def app_duplicates(qtbot, test_excel_file_duplicates, tmp_path):
     """App fixture using the test file with duplicate SKUs."""
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+    # Create mock ProfileManager
+    mock_profile_manager = Mock()
+    mock_profile_manager.base_path = tmp_path / "fileserver"
+    mock_profile_manager.base_path.mkdir(parents=True, exist_ok=True)
+    mock_profile_manager.get_global_stats_path.return_value = tmp_path / "stats.json"
+    mock_profile_manager.get_available_clients.return_value = []
+
+    # Mock SessionLockManager
+    mock_lock_manager = Mock()
+
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
+         patch('main.ProfileManager', return_value=mock_profile_manager), \
+         patch('main.SessionLockManager', return_value=mock_lock_manager):
         mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
         yield window, qtbot
         # Cleanup
-        if window.session_manager.is_active():
-            window.end_session()
+        try:
+            if window.session_manager and window.session_manager.is_active():
+                window.end_session()
+        except:
+            pass
         window.close()
         window.deleteLater()
         qtbot.wait(10)  # Wait for deleteLater to process
