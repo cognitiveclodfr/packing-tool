@@ -1,12 +1,13 @@
-"""
+r"""
 Centralized logging configuration for Packing Tool.
 
 This module provides a robust, production-ready logging system with:
-- Structured logging with consistent format across all modules
+- Structured JSON logging for easy parsing and analysis
 - Automatic file rotation (prevents log files from growing indefinitely)
 - Configurable log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - Automatic cleanup of old logs (retention policy)
 - Both file and console output for development and production
+- Context-aware logging (client_id, session_id, worker_id)
 
 For small warehouse operations, proper logging is essential for:
 - Troubleshooting issues without technical support staff
@@ -15,22 +16,85 @@ For small warehouse operations, proper logging is essential for:
 - Debugging network/file server issues
 - Compliance and quality control tracking
 
-Log file location: %USERPROFILE%\.packers_assistant\logs\
-Log file format: packing_tool_YYYYMMDD.log
+Log file location: \\server\...\0UFulfilment\Logs\packing_tool\
+Log file format: YYYY-MM-DD.log
 Daily log files with automatic rotation when size exceeds MaxLogSizeMB
 
-Example log entry:
-    2025-11-03 14:30:45 | PackerLogic | INFO | process_sku_scan:465 | SKU matched: SKU-CREAM-01
+Example log entry (JSON format):
+    {"timestamp": "2025-11-05T14:30:45.123", "level": "INFO", "tool": "packing_tool",
+     "client_id": "M", "session_id": "2025-11-05_1", "module": "PackerLogic",
+     "function": "process_sku_scan", "line": 465, "message": "SKU matched: SKU-CREAM-01"}
 """
 
 # Standard library imports
 import logging  # Core logging framework
+import json  # JSON formatting for structured logging
 import os  # Environment variables and paths
 from datetime import datetime, timedelta  # Log rotation and cleanup
 from pathlib import Path  # Modern path handling
 from logging.handlers import RotatingFileHandler  # Automatic log rotation
-from typing import Optional  # Type hints
+from typing import Optional, Dict, Any  # Type hints
 import configparser  # Reading config.ini settings
+from contextvars import ContextVar  # Thread-safe context storage
+
+
+# Context variables for structured logging
+_client_id: ContextVar[Optional[str]] = ContextVar('client_id', default=None)
+_session_id: ContextVar[Optional[str]] = ContextVar('session_id', default=None)
+_worker_id: ContextVar[Optional[str]] = ContextVar('worker_id', default=None)
+
+
+class StructuredJSONFormatter(logging.Formatter):
+    """
+    Custom JSON formatter for structured logging.
+
+    Outputs log records as JSON with fields:
+    - timestamp: ISO 8601 format with milliseconds
+    - level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    - tool: Always "packing_tool"
+    - client_id: Current client context (if set)
+    - session_id: Current session context (if set)
+    - worker_id: Current worker context (if set)
+    - module: Module name
+    - function: Function name
+    - line: Line number
+    - message: Log message
+    - exc_info: Exception information (if present)
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """
+        Format log record as JSON string.
+
+        Args:
+            record: LogRecord to format
+
+        Returns:
+            JSON string with structured log data
+        """
+        # Build structured log entry
+        log_data: Dict[str, Any] = {
+            'timestamp': datetime.fromtimestamp(record.created).isoformat(),
+            'level': record.levelname,
+            'tool': 'packing_tool',
+            'client_id': _client_id.get(),
+            'session_id': _session_id.get(),
+            'worker_id': _worker_id.get(),
+            'module': record.name,
+            'function': record.funcName,
+            'line': record.lineno,
+            'message': record.getMessage(),
+        }
+
+        # Add exception info if present
+        if record.exc_info:
+            log_data['exc_info'] = self.formatException(record.exc_info)
+
+        # Add extra fields if present
+        if hasattr(record, 'extra_data'):
+            log_data['extra'] = record.extra_data
+
+        return json.dumps(log_data, ensure_ascii=False)
 
 
 class AppLogger:
@@ -128,16 +192,27 @@ class AppLogger:
         config = cls._load_config()
 
         # === LOG DIRECTORY SETUP ===
-        # Store logs in user's home directory to avoid permission issues
-        # Location: C:\Users\username\.packers_assistant\logs\
-        log_dir = Path(os.path.expanduser("~")) / ".packers_assistant" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)  # Create if doesn't exist
+        # Store logs on centralized file server for unified logging
+        # Get base path from config
+        file_server_path = config.get('Network', 'FileServerPath',
+                                      fallback=r'\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\0UFulfilment')
+
+        # Centralized logs location: \\server\...\0UFulfilment\Logs\packing_tool\
+        log_dir = Path(file_server_path) / "Logs" / "packing_tool"
+
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)  # Create if doesn't exist
+        except Exception as e:
+            # Fallback to local directory if server is not accessible
+            log_dir = Path(os.path.expanduser("~")) / ".packers_assistant" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Warning: Could not access server logs directory. Using local: {log_dir}. Error: {e}")
 
         # === LOG FILE PATH ===
-        # Daily log files with format: packing_tool_YYYYMMDD.log
-        # Example: packing_tool_20251103.log
+        # Daily log files with format: YYYY-MM-DD.log
+        # Example: 2025-11-05.log
         # Each day gets a new log file for easy date-based filtering
-        log_file = log_dir / f"packing_tool_{datetime.now():%Y%m%d}.log"
+        log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
 
         # === LOG LEVEL CONFIGURATION ===
         # Read from config.ini, default to INFO if not specified
@@ -151,27 +226,30 @@ class AppLogger:
         # Converted to bytes: 10 * 1024 * 1024 = 10,485,760 bytes
         max_log_size = config.getint('Logging', 'MaxLogSizeMB', fallback=10) * 1024 * 1024
 
-        # === LOG FORMATTER ===
-        # Structured format for easy parsing and reading:
+        # === LOG FORMATTERS ===
+        # JSON formatter for file (structured logging for easy parsing)
+        json_formatter = StructuredJSONFormatter()
+
+        # Human-readable formatter for console
         # Format: timestamp | module | level | function:line | message
-        # Example: 2025-11-03 14:30:45 | PackerLogic | INFO | process_sku_scan:465 | SKU matched
-        formatter = logging.Formatter(
+        # Example: 2025-11-05 14:30:45 | PackerLogic | INFO | process_sku_scan:465 | SKU matched
+        console_formatter = logging.Formatter(
             fmt='%(asctime)s | %(name)s | %(levelname)s | %(funcName)s:%(lineno)d | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'  # Readable date format
         )
 
         # === FILE HANDLER ===
         # RotatingFileHandler automatically rotates logs when maxBytes is exceeded
-        # backupCount=5: Keep up to 5 rotated files (prevents unlimited growth)
+        # backupCount=30: Keep up to 30 rotated files (increased from 5 for better audit trail)
         # encoding='utf-8': Support Unicode characters (important for international clients)
         file_handler = RotatingFileHandler(
             log_file,
             maxBytes=max_log_size,
-            backupCount=5,
+            backupCount=30,
             encoding='utf-8'
         )
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(json_formatter)  # Use JSON formatter for file logs
 
         # === CONSOLE HANDLER ===
         # Outputs logs to console (terminal/command prompt)
@@ -181,7 +259,7 @@ class AppLogger:
         # - Quick troubleshooting without opening log files
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
-        console_handler.setFormatter(formatter)
+        console_handler.setFormatter(console_formatter)  # Use readable format for console
 
         # === CONFIGURE ROOT LOGGER ===
         # All module loggers inherit from root logger configuration
@@ -277,11 +355,11 @@ class AppLogger:
 
         try:
             # Find all log files matching pattern
-            # Pattern: packing_tool_*.log* matches:
-            # - packing_tool_20251103.log (current day log)
-            # - packing_tool_20251103.log.1 (rotated log)
-            # - packing_tool_20251102.log (yesterday's log)
-            for log_file in log_dir.glob("packing_tool_*.log*"):
+            # Pattern: *.log* matches:
+            # - 2025-11-05.log (current day log)
+            # - 2025-11-05.log.1 (rotated log)
+            # - 2025-11-04.log (yesterday's log)
+            for log_file in log_dir.glob("*.log*"):
                 # Get file's last modification time
                 file_mtime = datetime.fromtimestamp(log_file.stat().st_mtime)
 
@@ -302,7 +380,7 @@ class AppLogger:
             logging.getLogger('PackingTool').warning(f"Failed to cleanup old logs: {e}")
 
 
-# Convenience function
+# Convenience functions
 def get_logger(name: str = 'PackingTool') -> logging.Logger:
     """
     Get application logger.
@@ -319,3 +397,77 @@ def get_logger(name: str = 'PackingTool') -> logging.Logger:
         >>> logger.info("Starting process")
     """
     return AppLogger.get_logger(name)
+
+
+def set_client_context(client_id: Optional[str]) -> None:
+    """
+    Set current client ID for structured logging context.
+
+    This function sets the client_id that will be included in all subsequent
+    log entries from the current execution context. Useful for tracking which
+    client's operations are being logged.
+
+    Args:
+        client_id: Client identifier (e.g., "M", "A", "B") or None to clear
+
+    Example:
+        >>> from logger import set_client_context
+        >>> set_client_context("M")
+        >>> logger.info("Processing order")  # Will include client_id="M"
+    """
+    _client_id.set(client_id)
+
+
+def set_session_context(session_id: Optional[str]) -> None:
+    """
+    Set current session ID for structured logging context.
+
+    This function sets the session_id that will be included in all subsequent
+    log entries from the current execution context. Useful for tracking which
+    session's operations are being logged.
+
+    Args:
+        session_id: Session identifier (e.g., "2025-11-05_1") or None to clear
+
+    Example:
+        >>> from logger import set_session_context
+        >>> set_session_context("2025-11-05_1")
+        >>> logger.info("Starting packing")  # Will include session_id="2025-11-05_1"
+    """
+    _session_id.set(session_id)
+
+
+def set_worker_context(worker_id: Optional[str]) -> None:
+    """
+    Set current worker ID for structured logging context.
+
+    This function sets the worker_id that will be included in all subsequent
+    log entries from the current execution context. Useful for tracking which
+    worker is performing operations.
+
+    Args:
+        worker_id: Worker identifier (e.g., "001", "002") or None to clear
+
+    Example:
+        >>> from logger import set_worker_context
+        >>> set_worker_context("001")
+        >>> logger.info("Scanning barcode")  # Will include worker_id="001"
+    """
+    _worker_id.set(worker_id)
+
+
+def clear_logging_context() -> None:
+    """
+    Clear all logging context (client_id, session_id, worker_id).
+
+    Useful when switching contexts or at the end of operations to ensure
+    clean state for next operations.
+
+    Example:
+        >>> from logger import clear_logging_context
+        >>> clear_logging_context()
+        >>> logger.info("Context cleared")  # No client/session/worker context
+    """
+    _client_id.set(None)
+    _session_id.set(None)
+    _worker_id.set(None)
