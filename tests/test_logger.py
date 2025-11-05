@@ -14,6 +14,8 @@ import json
 import logging
 import tempfile
 import time
+import shutil
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
@@ -33,6 +35,35 @@ from logger import (
     set_worker_context,
     clear_logging_context,
 )
+
+
+@pytest.fixture
+def temp_dir_with_cleanup():
+    """Create temp directory with proper cleanup of file handlers."""
+    temp_dir = tempfile.mkdtemp()
+
+    yield temp_dir
+
+    # Close all handlers before cleanup
+    root_logger = logging.getLogger()
+    handlers_copy = root_logger.handlers[:]
+    for handler in handlers_copy:
+        try:
+            handler.close()
+            root_logger.removeHandler(handler)
+        except Exception:
+            pass
+
+    # Now safe to remove
+    try:
+        shutil.rmtree(temp_dir)
+    except PermissionError:
+        # Last resort: wait and retry
+        time.sleep(0.1)
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass  # Best effort cleanup
 
 
 class TestStructuredJSONFormatter:
@@ -213,109 +244,126 @@ class TestAppLogger:
             root_logger.removeHandler(handler)
         yield
 
-    def test_get_logger_singleton(self):
+    def test_get_logger_singleton(self, temp_dir_with_cleanup):
         """Test that get_logger returns configured logger."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('logger.AppLogger._load_config') as mock_config:
-                # Mock config
-                config = configparser.ConfigParser()
-                config.add_section('Network')
-                config.set('Network', 'FileServerPath', temp_dir)
-                config.add_section('Logging')
-                config.set('Logging', 'LogLevel', 'INFO')
-                mock_config.return_value = config
+        temp_dir = temp_dir_with_cleanup
+        with patch('logger.AppLogger._load_config') as mock_config:
+            # Mock config
+            config = configparser.ConfigParser()
+            config.add_section('Network')
+            config.set('Network', 'FileServerPath', temp_dir)
+            config.add_section('Logging')
+            config.set('Logging', 'LogLevel', 'INFO')
+            mock_config.return_value = config
 
-                logger1 = get_logger("Test1")
-                logger2 = get_logger("Test2")
+            logger1 = get_logger("Test1")
+            logger2 = get_logger("Test2")
 
-                assert logger1 is not None
-                assert logger2 is not None
-                assert isinstance(logger1, logging.Logger)
-                assert isinstance(logger2, logging.Logger)
+            # Close handlers before cleanup
+            for handler in logging.getLogger().handlers[:]:
+                handler.close()
 
-    def test_logger_creates_log_directory(self):
+            assert logger1 is not None
+            assert logger2 is not None
+            assert isinstance(logger1, logging.Logger)
+            assert isinstance(logger2, logging.Logger)
+
+    def test_logger_creates_log_directory(self, temp_dir_with_cleanup):
         """Test that logger creates log directory structure."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('logger.AppLogger._load_config') as mock_config:
-                # Mock config
-                config = configparser.ConfigParser()
-                config.add_section('Network')
-                config.set('Network', 'FileServerPath', temp_dir)
-                config.add_section('Logging')
-                config.set('Logging', 'LogLevel', 'INFO')
-                mock_config.return_value = config
+        temp_dir = temp_dir_with_cleanup
+        with patch('logger.AppLogger._load_config') as mock_config:
+            # Mock config
+            config = configparser.ConfigParser()
+            config.add_section('Network')
+            config.set('Network', 'FileServerPath', temp_dir)
+            config.add_section('Logging')
+            config.set('Logging', 'LogLevel', 'INFO')
+            mock_config.return_value = config
 
-                get_logger("Test")
+            get_logger("Test")
 
-                # Check directory structure
-                log_dir = Path(temp_dir) / "Logs" / "packing_tool"
-                assert log_dir.exists()
-                assert log_dir.is_dir()
+            # Close handlers before checking
+            for handler in logging.getLogger().handlers[:]:
+                handler.close()
 
-    def test_logger_creates_log_file(self):
+            # Check directory structure
+            log_dir = Path(temp_dir) / "Logs" / "packing_tool"
+            assert log_dir.exists()
+            assert log_dir.is_dir()
+
+    def test_logger_creates_log_file(self, temp_dir_with_cleanup):
         """Test that logger creates daily log file."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('logger.AppLogger._load_config') as mock_config:
-                # Mock config
-                config = configparser.ConfigParser()
-                config.add_section('Network')
-                config.set('Network', 'FileServerPath', temp_dir)
-                config.add_section('Logging')
-                config.set('Logging', 'LogLevel', 'INFO')
-                mock_config.return_value = config
+        temp_dir = temp_dir_with_cleanup
+        with patch('logger.AppLogger._load_config') as mock_config:
+            # Mock config
+            config = configparser.ConfigParser()
+            config.add_section('Network')
+            config.set('Network', 'FileServerPath', temp_dir)
+            config.add_section('Logging')
+            config.set('Logging', 'LogLevel', 'INFO')
+            mock_config.return_value = config
 
-                logger = get_logger("Test")
-                logger.info("Test message")
+            logger = get_logger("Test")
+            logger.info("Test message")
 
-                # Check log file exists
-                log_dir = Path(temp_dir) / "Logs" / "packing_tool"
-                log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
-                assert log_file.exists()
+            # Close handlers before checking file
+            for handler in logging.getLogger().handlers[:]:
+                handler.close()
 
-    def test_logger_writes_json_format(self):
+            # Check log file exists
+            log_dir = Path(temp_dir) / "Logs" / "packing_tool"
+            log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
+            assert log_file.exists()
+
+    def test_logger_writes_json_format(self, temp_dir_with_cleanup):
         """Test that logger writes logs in JSON format."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('logger.AppLogger._load_config') as mock_config:
-                # Mock config
-                config = configparser.ConfigParser()
-                config.add_section('Network')
-                config.set('Network', 'FileServerPath', temp_dir)
-                config.add_section('Logging')
-                config.set('Logging', 'LogLevel', 'INFO')
-                mock_config.return_value = config
+        temp_dir = temp_dir_with_cleanup
+        with patch('logger.AppLogger._load_config') as mock_config:
+            # Mock config
+            config = configparser.ConfigParser()
+            config.add_section('Network')
+            config.set('Network', 'FileServerPath', temp_dir)
+            config.add_section('Logging')
+            config.set('Logging', 'LogLevel', 'INFO')
+            mock_config.return_value = config
 
-                logger = get_logger("Test")
-                set_client_context("M")
-                logger.info("JSON test message")
+            logger = get_logger("Test")
+            set_client_context("M")
+            logger.info("JSON test message")
 
-                # Read log file
-                log_dir = Path(temp_dir) / "Logs" / "packing_tool"
-                log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
+            # Close handlers before reading file
+            for handler in logging.getLogger().handlers[:]:
+                handler.close()
 
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
+            # Read log file
+            log_dir = Path(temp_dir) / "Logs" / "packing_tool"
+            log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
 
-                # Should have at least one line (startup + test message)
-                assert len(lines) > 0
+            with open(log_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
 
-                # Check last line is valid JSON with our message
-                last_line = lines[-1].strip()
-                log_data = json.loads(last_line)
-                assert log_data["message"] == "JSON test message"
-                assert log_data["client_id"] == "M"
-                assert log_data["tool"] == "packing_tool"
+            # Should have at least one line (startup + test message)
+            assert len(lines) > 0
 
-                clear_logging_context()
+            # Check last line is valid JSON with our message
+            last_line = lines[-1].strip()
+            log_data = json.loads(last_line)
+            assert log_data["message"] == "JSON test message"
+            assert log_data["client_id"] == "M"
+            assert log_data["tool"] == "packing_tool"
 
-    def test_logger_fallback_to_local(self):
+            clear_logging_context()
+
+    def test_logger_fallback_to_local(self, temp_dir_with_cleanup):
         """Test logger falls back to local directory if server inaccessible."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create a path that will fail when trying to create subdirectories
-            invalid_path = Path(temp_dir) / "readonly"
-            invalid_path.mkdir()
-            # Make it read-only to trigger the fallback
-            os.chmod(invalid_path, 0o444)
+        temp_dir = temp_dir_with_cleanup
+        # Create a path that will fail when trying to create subdirectories
+        invalid_path = Path(temp_dir) / "readonly"
+        invalid_path.mkdir()
+        # Make it read-only to trigger the fallback
+        os.chmod(invalid_path, 0o444)
 
+        try:
             with patch('logger.AppLogger._load_config') as mock_config:
                 # Mock config with path that can't be written to
                 config = configparser.ConfigParser()
@@ -329,40 +377,48 @@ class TestAppLogger:
                     logger = get_logger("Test")
                     logger.info("Fallback test")
 
+                    # Close handlers before checking
+                    for handler in logging.getLogger().handlers[:]:
+                        handler.close()
+
                     # Check if fallback occurred by checking if warning was printed
                     if mock_print.called:
                         warning_msg = str(mock_print.call_args[0][0])
                         assert "Warning" in warning_msg or "Could not access" in warning_msg
+        finally:
+            # Restore permissions for cleanup
+            os.chmod(invalid_path, 0o755)
 
-                # Restore permissions for cleanup
-                os.chmod(invalid_path, 0o755)
-
-    def test_logger_rotation_settings(self):
+    def test_logger_rotation_settings(self, temp_dir_with_cleanup):
         """Test that logger uses correct rotation settings."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('logger.AppLogger._load_config') as mock_config:
-                # Mock config
-                config = configparser.ConfigParser()
-                config.add_section('Network')
-                config.set('Network', 'FileServerPath', temp_dir)
-                config.add_section('Logging')
-                config.set('Logging', 'LogLevel', 'INFO')
-                config.set('Logging', 'MaxLogSizeMB', '10')
-                mock_config.return_value = config
+        temp_dir = temp_dir_with_cleanup
+        with patch('logger.AppLogger._load_config') as mock_config:
+            # Mock config
+            config = configparser.ConfigParser()
+            config.add_section('Network')
+            config.set('Network', 'FileServerPath', temp_dir)
+            config.add_section('Logging')
+            config.set('Logging', 'LogLevel', 'INFO')
+            config.set('Logging', 'MaxLogSizeMB', '10')
+            mock_config.return_value = config
 
-                get_logger("Test")
+            get_logger("Test")
 
-                # Check handlers
-                root_logger = logging.getLogger()
-                rotating_handlers = [h for h in root_logger.handlers
-                                   if hasattr(h, 'maxBytes')]
+            # Check handlers
+            root_logger = logging.getLogger()
+            rotating_handlers = [h for h in root_logger.handlers
+                               if hasattr(h, 'maxBytes')]
 
-                assert len(rotating_handlers) > 0
-                handler = rotating_handlers[0]
+            assert len(rotating_handlers) > 0
+            handler = rotating_handlers[0]
 
-                # Check settings
-                assert handler.maxBytes == 10 * 1024 * 1024  # 10MB
-                assert handler.backupCount == 30  # Updated from 5 to 30
+            # Check settings
+            assert handler.maxBytes == 10 * 1024 * 1024  # 10MB
+            assert handler.backupCount == 30  # Updated from 5 to 30
+
+            # Close handlers before cleanup
+            for handler in root_logger.handlers[:]:
+                handler.close()
 
     def test_cleanup_old_logs(self):
         """Test that old log files are cleaned up."""
@@ -426,40 +482,44 @@ class TestLoggingIntegration:
         clear_logging_context()
         yield
 
-    def test_complete_logging_workflow(self):
+    def test_complete_logging_workflow(self, temp_dir_with_cleanup):
         """Test complete logging workflow with context."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('logger.AppLogger._load_config') as mock_config:
-                # Mock config
-                config = configparser.ConfigParser()
-                config.add_section('Network')
-                config.set('Network', 'FileServerPath', temp_dir)
-                config.add_section('Logging')
-                config.set('Logging', 'LogLevel', 'DEBUG')
-                mock_config.return_value = config
+        temp_dir = temp_dir_with_cleanup
+        with patch('logger.AppLogger._load_config') as mock_config:
+            # Mock config
+            config = configparser.ConfigParser()
+            config.add_section('Network')
+            config.set('Network', 'FileServerPath', temp_dir)
+            config.add_section('Logging')
+            config.set('Logging', 'LogLevel', 'DEBUG')
+            mock_config.return_value = config
 
-                # Start session
-                logger = get_logger("PackerLogic")
-                set_client_context("M")
-                set_session_context("2025-11-05_1")
-                set_worker_context("001")
+            # Start session
+            logger = get_logger("PackerLogic")
+            set_client_context("M")
+            set_session_context("2025-11-05_1")
+            set_worker_context("001")
 
-                # Log various messages
-                logger.debug("Starting packing session")
-                logger.info("Scanning barcode: 12345")
-                logger.warning("Low stock detected")
-                logger.error("Invalid SKU")
+            # Log various messages
+            logger.debug("Starting packing session")
+            logger.info("Scanning barcode: 12345")
+            logger.warning("Low stock detected")
+            logger.error("Invalid SKU")
 
-                # Clear context
-                clear_logging_context()
-                logger.info("Session completed")
+            # Clear context
+            clear_logging_context()
+            logger.info("Session completed")
 
-                # Read and verify log file
-                log_dir = Path(temp_dir) / "Logs" / "packing_tool"
-                log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
+            # Close handlers before reading file
+            for handler in logging.getLogger().handlers[:]:
+                handler.close()
 
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
+            # Read and verify log file
+            log_dir = Path(temp_dir) / "Logs" / "packing_tool"
+            log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
+
+            with open(log_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
 
                 # Verify context in logs
                 found_with_context = False
