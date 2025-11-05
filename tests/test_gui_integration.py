@@ -1,7 +1,9 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import pandas as pd
 import os
+import tempfile
+from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog
 
@@ -45,27 +47,139 @@ def test_excel_file_duplicates(tmp_path_factory):
     return str(fn)
 
 @pytest.fixture
-def app_basic(qtbot, test_excel_file_basic):
+def mock_profile_manager(tmp_path):
+    """Create a mock ProfileManager for testing."""
+    with patch('main.ProfileManager') as mock_pm_class:
+        mock_pm = Mock()
+
+        # Setup basic mock behavior
+        mock_pm.get_available_clients.return_value = ['TEST_CLIENT']
+        mock_pm.load_client_config.return_value = {
+            'client_id': 'TEST_CLIENT',
+            'client_name': 'Test Client',
+            'barcode_label': {'width_mm': 65, 'height_mm': 35, 'dpi': 203}
+        }
+        mock_pm.get_global_stats_path.return_value = tmp_path / "stats.json"
+        mock_pm.get_clients_root.return_value = tmp_path / "Clients"
+        mock_pm.get_sessions_root.return_value = tmp_path / "Sessions"
+        mock_pm.load_sku_mapping.return_value = {}
+
+        # Make ProfileManager() return our mock
+        mock_pm_class.return_value = mock_pm
+
+        yield mock_pm
+
+@pytest.fixture
+def mock_session_lock_manager():
+    """Create a mock SessionLockManager for testing."""
+    with patch('main.SessionLockManager') as mock_lm_class:
+        mock_lm = Mock()
+        mock_lm_class.return_value = mock_lm
+        yield mock_lm
+
+@pytest.fixture
+def mock_stats_manager():
+    """Mock StatisticsManager to avoid file server dependencies."""
+    with patch('main.StatisticsManager') as mock_stats_class:
+        mock_stats = Mock()
+        mock_stats.get_display_stats.return_value = {
+            'Total Unique Orders': 0,
+            'Total Completed': 0
+        }
+        mock_stats.record_new_orders = Mock()
+        mock_stats.record_order_completion = Mock()
+        mock_stats.record_session_completion = Mock()
+        mock_stats_class.return_value = mock_stats
+        yield mock_stats
+
+@pytest.fixture
+def mock_widgets():
+    """Mock dashboard and history widgets to avoid initialization issues."""
+    with patch('main.DashboardWidget') as mock_dashboard, \
+         patch('main.SessionHistoryWidget') as mock_history:
+        # Create mock instances
+        dashboard_instance = Mock()
+        dashboard_instance.load_clients = Mock()
+        mock_dashboard.return_value = dashboard_instance
+
+        history_instance = Mock()
+        history_instance.load_clients = Mock()
+        mock_history.return_value = history_instance
+
+        yield mock_dashboard, mock_history
+
+@pytest.fixture
+def app_basic(qtbot, test_excel_file_basic, mock_profile_manager, mock_session_lock_manager,
+              mock_stats_manager, mock_widgets, tmp_path):
     """App fixture using the basic test file."""
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
+         patch('main.SessionManager') as mock_session_mgr_class, \
+         patch('main.PackerLogic') as mock_packer_logic_class:
+
         mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
+
+        # Mock SessionManager
+        mock_session_mgr = Mock()
+        mock_session_mgr.is_active.return_value = False
+        mock_session_mgr.start_session.return_value = "test_session_001"
+        mock_session_mgr.get_barcodes_dir.return_value = tmp_path / "barcodes"
+        mock_session_mgr.get_output_dir.return_value = tmp_path / "output"
+        mock_session_mgr.get_session_info.return_value = {'started_at': '2025-01-01T00:00:00'}
+        mock_session_mgr.packing_list_path = str(test_excel_file_basic)
+        mock_session_mgr.session_id = "test_session_001"
+        mock_session_mgr_class.return_value = mock_session_mgr
+
+        # Mock PackerLogic
+        mock_packer_logic = Mock()
+        mock_packer_logic.session_packing_state = {'completed_orders': [], 'in_progress': {}}
+        mock_packer_logic_class.return_value = mock_packer_logic
+
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
+
+        # Manually set current_client_id since load_available_clients sets it
+        window.current_client_id = 'TEST_CLIENT'
+
         yield window, qtbot
-        if window.session_manager.is_active():
+        if window.session_manager and window.session_manager.is_active():
             window.end_session()
 
 @pytest.fixture
-def app_duplicates(qtbot, test_excel_file_duplicates):
+def app_duplicates(qtbot, test_excel_file_duplicates, mock_profile_manager, mock_session_lock_manager,
+                   mock_stats_manager, mock_widgets, tmp_path):
     """App fixture using the test file with duplicate SKUs."""
-    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+    with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
+         patch('main.SessionManager') as mock_session_mgr_class, \
+         patch('main.PackerLogic') as mock_packer_logic_class:
+
         mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
+
+        # Mock SessionManager
+        mock_session_mgr = Mock()
+        mock_session_mgr.is_active.return_value = False
+        mock_session_mgr.start_session.return_value = "test_session_002"
+        mock_session_mgr.get_barcodes_dir.return_value = tmp_path / "barcodes"
+        mock_session_mgr.get_output_dir.return_value = tmp_path / "output"
+        mock_session_mgr.get_session_info.return_value = {'started_at': '2025-01-01T00:00:00'}
+        mock_session_mgr.packing_list_path = str(test_excel_file_duplicates)
+        mock_session_mgr.session_id = "test_session_002"
+        mock_session_mgr_class.return_value = mock_session_mgr
+
+        # Mock PackerLogic
+        mock_packer_logic = Mock()
+        mock_packer_logic.session_packing_state = {'completed_orders': [], 'in_progress': {}}
+        mock_packer_logic_class.return_value = mock_packer_logic
+
         window = MainWindow()
         qtbot.addWidget(window)
         window.show()
+
+        # Manually set current_client_id since load_available_clients sets it
+        window.current_client_id = 'TEST_CLIENT'
+
         yield window, qtbot
-        if window.session_manager.is_active():
+        if window.session_manager and window.session_manager.is_active():
             window.end_session()
 
 def test_start_session_and_load_data(app_basic):
