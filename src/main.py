@@ -90,8 +90,13 @@ class MainWindow(QMainWindow):
         table_model (OrderTableModel): The model for the orders table.
         proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
     """
-    def __init__(self):
-        """Initialize the MainWindow, sets up UI, and loads initial state."""
+    def __init__(self, config_path: str = "config.ini"):
+        """
+        Initialize the MainWindow, sets up UI, and loads initial state.
+
+        Args:
+            config_path: Path to configuration file (default: "config.ini")
+        """
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
         self.resize(1024, 768)
@@ -100,7 +105,7 @@ class MainWindow(QMainWindow):
 
         # Initialize ProfileManager (may raise NetworkError)
         try:
-            self.profile_manager = ProfileManager()
+            self.profile_manager = ProfileManager(config_path=config_path)
             logger.info("ProfileManager initialized successfully")
         except NetworkError as e:
             logger.error(f"Failed to initialize ProfileManager: {e}")

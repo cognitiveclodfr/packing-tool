@@ -48,29 +48,34 @@ def test_excel_file_duplicates(tmp_path_factory):
     return str(fn)
 
 @pytest.fixture
-@patch('main.ProfileManager')
-@patch('main.SessionLockManager')
-def app_basic(mock_lock_mgr, mock_profile_mgr, qtbot, test_excel_file_basic, tmp_path):
+def app_basic(qtbot, test_excel_file_basic, tmp_path):
     """App fixture using the basic test file."""
-    # Import MainWindow here - patches are already active via decorators
     from main import MainWindow
 
-    # Configure mock ProfileManager
-    mock_pm = Mock()
-    mock_pm.base_path = tmp_path / "fileserver"
-    mock_pm.base_path.mkdir(parents=True, exist_ok=True)
-    mock_pm.get_global_stats_path.return_value = tmp_path / "stats.json"
-    mock_pm.get_available_clients.return_value = []
-    mock_profile_mgr.return_value = mock_pm
+    # Create test file server structure
+    file_server_path = tmp_path / "file_server"
+    file_server_path.mkdir(parents=True)
+    (file_server_path / "Clients").mkdir()
+    (file_server_path / "Sessions").mkdir()
+    (file_server_path / "Workers").mkdir()
+    (file_server_path / "Stats").mkdir()
+    (file_server_path / "Logs").mkdir()
 
-    # Configure mock SessionLockManager
-    mock_lm = Mock()
-    mock_lock_mgr.return_value = mock_lm
+    # Create test config pointing to tmp_path
+    config_path = tmp_path / "test_config.ini"
+    config_path.write_text(f"""[Network]
+FileServerPath = {file_server_path}
+LocalCachePath = {tmp_path / 'cache'}
+ConnectionTimeout = 5
+
+[Application]
+AutoSaveInterval = 30
+""")
 
     with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
         mock_dialog.return_value = (test_excel_file_basic, "Excel Files (*.xlsx)")
 
-        window = MainWindow()
+        window = MainWindow(config_path=str(config_path))
         qtbot.addWidget(window)
         window.show()
         yield window, qtbot
@@ -85,29 +90,34 @@ def app_basic(mock_lock_mgr, mock_profile_mgr, qtbot, test_excel_file_basic, tmp
         qtbot.wait(10)  # Wait for deleteLater to process
 
 @pytest.fixture
-@patch('main.ProfileManager')
-@patch('main.SessionLockManager')
-def app_duplicates(mock_lock_mgr, mock_profile_mgr, qtbot, test_excel_file_duplicates, tmp_path):
+def app_duplicates(qtbot, test_excel_file_duplicates, tmp_path):
     """App fixture using the test file with duplicate SKUs."""
-    # Import MainWindow here - patches are already active via decorators
     from main import MainWindow
 
-    # Configure mock ProfileManager
-    mock_pm = Mock()
-    mock_pm.base_path = tmp_path / "fileserver"
-    mock_pm.base_path.mkdir(parents=True, exist_ok=True)
-    mock_pm.get_global_stats_path.return_value = tmp_path / "stats.json"
-    mock_pm.get_available_clients.return_value = []
-    mock_profile_mgr.return_value = mock_pm
+    # Create test file server structure
+    file_server_path = tmp_path / "file_server"
+    file_server_path.mkdir(parents=True)
+    (file_server_path / "Clients").mkdir()
+    (file_server_path / "Sessions").mkdir()
+    (file_server_path / "Workers").mkdir()
+    (file_server_path / "Stats").mkdir()
+    (file_server_path / "Logs").mkdir()
 
-    # Configure mock SessionLockManager
-    mock_lm = Mock()
-    mock_lock_mgr.return_value = mock_lm
+    # Create test config pointing to tmp_path
+    config_path = tmp_path / "test_config.ini"
+    config_path.write_text(f"""[Network]
+FileServerPath = {file_server_path}
+LocalCachePath = {tmp_path / 'cache'}
+ConnectionTimeout = 5
+
+[Application]
+AutoSaveInterval = 30
+""")
 
     with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
         mock_dialog.return_value = (test_excel_file_duplicates, "Excel Files (*.xlsx)")
 
-        window = MainWindow()
+        window = MainWindow(config_path=str(config_path))
         qtbot.addWidget(window)
         window.show()
         yield window, qtbot
