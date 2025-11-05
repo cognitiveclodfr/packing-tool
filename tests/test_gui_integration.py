@@ -53,8 +53,12 @@ def app_basic(qtbot, test_excel_file_basic):
         qtbot.addWidget(window)
         window.show()
         yield window, qtbot
+        # Cleanup
         if window.session_manager.is_active():
             window.end_session()
+        window.close()
+        window.deleteLater()
+        qtbot.wait(10)  # Wait for deleteLater to process
 
 @pytest.fixture
 def app_duplicates(qtbot, test_excel_file_duplicates):
@@ -65,8 +69,12 @@ def app_duplicates(qtbot, test_excel_file_duplicates):
         qtbot.addWidget(window)
         window.show()
         yield window, qtbot
+        # Cleanup
         if window.session_manager.is_active():
             window.end_session()
+        window.close()
+        window.deleteLater()
+        qtbot.wait(10)  # Wait for deleteLater to process
 
 def test_start_session_and_load_data(app_basic):
     """

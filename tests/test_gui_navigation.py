@@ -32,10 +32,13 @@ class TestPackingModeNavigation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Create QApplication instance once for all tests."""
+        # Use existing QApplication instance (managed by pytest conftest)
         if not QApplication.instance():
             cls.app = QApplication(sys.argv)
         else:
             cls.app = QApplication.instance()
+        # Process events to ensure clean state
+        cls.app.processEvents()
 
     def setUp(self):
         """Set up test fixtures."""
@@ -71,6 +74,9 @@ Environment = test
 
     def tearDown(self):
         """Clean up test fixtures."""
+        # Process any pending Qt events
+        if self.app:
+            self.app.processEvents()
         if self.temp_dir.exists():
             shutil.rmtree(self.temp_dir)
 
@@ -120,6 +126,8 @@ Environment = test
 
         finally:
             window.close()
+            window.deleteLater()
+            self.app.processEvents()
 
     @patch('main.ProfileManager')
     @patch('main.SessionLockManager')
@@ -161,6 +169,8 @@ Environment = test
 
         finally:
             window.close()
+            window.deleteLater()
+            self.app.processEvents()
 
 
 class TestRestoreSessionDialog(unittest.TestCase):
@@ -169,10 +179,13 @@ class TestRestoreSessionDialog(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Create QApplication instance once for all tests."""
+        # Use existing QApplication instance (managed by pytest conftest)
         if not QApplication.instance():
             cls.app = QApplication(sys.argv)
         else:
             cls.app = QApplication.instance()
+        # Process events to ensure clean state
+        cls.app.processEvents()
 
     def setUp(self):
         """Set up test fixtures."""
@@ -182,6 +195,9 @@ class TestRestoreSessionDialog(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test fixtures."""
+        # Process any pending Qt events
+        if self.app:
+            self.app.processEvents()
         if self.temp_dir.exists():
             shutil.rmtree(self.temp_dir)
 

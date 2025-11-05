@@ -40,9 +40,12 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up QApplication for all tests"""
+        # Use existing QApplication instance (managed by pytest conftest)
         cls.app = QApplication.instance()
         if cls.app is None:
             cls.app = QApplication([])
+        # Process events to ensure clean state
+        cls.app.processEvents()
 
     def setUp(self):
         """Set up test fixtures"""
@@ -61,6 +64,10 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
     def tearDown(self):
         """Clean up test files"""
         self.widget.close()
+        self.widget.deleteLater()
+        # Process events to ensure widget is properly deleted
+        if self.app:
+            self.app.processEvents()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_widget_loads_completed_sessions(self):
@@ -192,9 +199,12 @@ class TestHistoryWidgetFilters(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up QApplication"""
+        # Use existing QApplication instance (managed by pytest conftest)
         cls.app = QApplication.instance()
         if cls.app is None:
             cls.app = QApplication([])
+        # Process events to ensure clean state
+        cls.app.processEvents()
 
     def setUp(self):
         """Set up test fixtures"""
@@ -232,6 +242,10 @@ class TestHistoryWidgetFilters(unittest.TestCase):
     def tearDown(self):
         """Clean up"""
         self.widget.close()
+        self.widget.deleteLater()
+        # Process events to ensure widget is properly deleted
+        if self.app:
+            self.app.processEvents()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_filter_by_client(self):
