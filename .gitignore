@@ -10,3 +10,14 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Network paths (created during tests)
+\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\0UFulfilment/
+
+# Pytest cache
+.pytest_cache/
+
+# Test coverage
+.coverage
+htmlcov/
+coverage.xml
