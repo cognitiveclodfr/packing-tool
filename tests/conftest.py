@@ -1,8 +1,8 @@
 """
 Pytest configuration and fixtures for all tests.
 
-This file provides proper Qt application lifecycle management
-to prevent test hangs and ensure proper cleanup.
+This file configures pytest-qt and provides additional Qt cleanup
+to prevent test hangs.
 """
 
 import pytest
@@ -10,97 +10,81 @@ import sys
 import gc
 
 
-# Qt application fixture for proper lifecycle management
+# Add debug output to track test progress
+def pytest_runtest_logstart(nodeid, location):
+    """Log when each test starts to help debug hangs."""
+    print(f"\n>>> Starting test: {nodeid}")
+    sys.stdout.flush()
+
+
+# Configure pytest-qt to not crash on Qt exceptions
 @pytest.fixture(scope="session")
-def qapp():
-    """
-    Session-scoped QApplication fixture.
-
-    Creates a single QApplication instance for all tests to share,
-    ensuring proper initialization and cleanup of the Qt event loop.
-    """
-    try:
-        from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import QTimer
-    except ImportError:
-        # Qt not available, skip
-        yield None
-        return
-
-    # Get or create QApplication instance
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(sys.argv)
-
-    yield app
-
-    # Cleanup: process pending events and quit
-    app.processEvents()
-
-    # Use a single-shot timer to quit the application after processing events
-    QTimer.singleShot(0, app.quit)
-    app.processEvents()
+def qapp_args():
+    """Arguments to pass to QApplication constructor."""
+    return []
 
 
+# Aggressive cleanup after each test
 @pytest.fixture(autouse=True)
-def qt_cleanup(qapp):
-    """
-    Auto-use fixture that runs after each test to clean up Qt resources.
-
-    This ensures that:
-    1. All pending Qt events are processed
-    2. Widgets are properly deleted
-    3. The event loop is kept clean between tests
-    """
+def qt_auto_cleanup(request):
+    """Automatically clean up Qt resources after each test."""
     yield
 
-    if qapp is not None:
-        try:
-            from PySide6.QtCore import QCoreApplication
-
-            # Process all pending events
-            qapp.processEvents()
-
-            # Force garbage collection to clean up any Qt objects
-            gc.collect()
-
-            # Process events again to handle any deleteLater() calls
-            qapp.processEvents()
-
-        except ImportError:
-            pass
-
-
-@pytest.fixture(autouse=True, scope="session")
-def session_cleanup():
-    """
-    Session-level cleanup that runs once at the very end of all tests.
-
-    Ensures Qt application is fully shut down to prevent hanging.
-    """
-    yield
-
+    # Cleanup after test
     try:
         from PySide6.QtWidgets import QApplication
 
         app = QApplication.instance()
         if app is not None:
-            # Process all remaining events
-            app.processEvents()
+            # Close all top-level widgets
+            for widget in app.topLevelWidgets():
+                try:
+                    widget.close()
+                    widget.deleteLater()
+                except:
+                    pass
 
-            # Close all remaining windows
+            # Process events
+            for _ in range(10):
+                app.processEvents()
+
+            # Force garbage collection
+            gc.collect()
+
+            # Process again
+            for _ in range(10):
+                app.processEvents()
+
+    except ImportError:
+        pass
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Pytest hook that runs at the very end of the test session.
+
+    Ensures Qt application is fully shut down to prevent hanging.
+    """
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            # Final cleanup
             for widget in app.topLevelWidgets():
                 widget.close()
                 widget.deleteLater()
 
-            # Process deletion events
-            app.processEvents()
+            # Process events
+            for _ in range(5):
+                app.processEvents()
 
             # Quit the application
             app.quit()
 
-            # Final event processing
-            app.processEvents()
+            # Final processing
+            for _ in range(5):
+                app.processEvents()
 
     except ImportError:
         pass
