@@ -9,12 +9,18 @@ import json
 import os
 import socket
 import time
-import msvcrt
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 import shutil
 import tempfile
+
+# Windows-specific file locking
+try:
+    import msvcrt
+    WINDOWS_LOCKING_AVAILABLE = True
+except ImportError:
+    WINDOWS_LOCKING_AVAILABLE = False
 
 from logger import AppLogger
 from exceptions import SessionLockedError, StaleLockError
