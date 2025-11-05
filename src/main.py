@@ -20,6 +20,7 @@ from session_lock_manager import SessionLockManager
 from exceptions import SessionLockedError, StaleLockError
 from restore_session_dialog import RestoreSessionDialog
 from session_monitor_widget import SessionMonitorWidget
+from session_selector import SessionSelectorDialog
 from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
 from packer_mode_widget import PackerModeWidget
@@ -200,6 +201,12 @@ class MainWindow(QMainWindow):
         self.start_session_button = QPushButton("Start Session")
         self.start_session_button.clicked.connect(self.start_session)
         control_layout.addWidget(self.start_session_button)
+
+        self.load_shopify_button = QPushButton("Load Shopify Session")
+        self.load_shopify_button.clicked.connect(self.load_shopify_session)
+        self.load_shopify_button.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.load_shopify_button.setToolTip("Load orders from a Shopify Tool analysis session")
+        control_layout.addWidget(self.load_shopify_button)
 
         self.restore_session_button = QPushButton("Restore Session")
         self.restore_session_button.clicked.connect(self.open_restore_session_dialog)
@@ -771,6 +778,8 @@ class MainWindow(QMainWindow):
         self.logic = None
 
         self.start_session_button.setEnabled(True)
+        self.load_shopify_button.setEnabled(True)
+        self.restore_session_button.setEnabled(True)
         self.end_session_button.setEnabled(False)
         self.print_button.setEnabled(False)
         self.packer_mode_button.setEnabled(False)
@@ -1075,6 +1084,139 @@ class MainWindow(QMainWindow):
                         "Error",
                         f"Failed to read session information:\n\n{e}"
                     )
+
+    def load_shopify_session(self):
+        """
+        Load orders from a Shopify Tool session.
+
+        Phase 1.3.2: Integration with Shopify Tool
+        - Opens SessionSelectorDialog to choose a Shopify session
+        - Loads analysis_data.json from selected session
+        - Creates new packing session with Shopify data
+        """
+        logger.info("Opening Shopify session selector")
+
+        # Check if client is selected
+        if not self.current_client_id:
+            logger.warning("Attempted to load Shopify session without selecting client")
+            self.client_combo.setStyleSheet("border: 2px solid red;")
+            QMessageBox.warning(
+                self,
+                "No Client Selected",
+                "Please select a client before loading a Shopify session!"
+            )
+            QTimer.singleShot(2000, lambda: self.client_combo.setStyleSheet(""))
+            return
+
+        # Check if session already active
+        if self.session_manager and self.session_manager.is_active():
+            logger.warning("Attempted to load Shopify session while one is already active")
+            QMessageBox.warning(
+                self,
+                "Session Active",
+                "A session is already active. Please end it first."
+            )
+            return
+
+        # Open session selector dialog
+        dialog = SessionSelectorDialog(self.profile_manager, self)
+
+        if dialog.exec() != QDialog.Accepted:
+            logger.info("Shopify session selection cancelled")
+            return
+
+        selected_session_path = dialog.get_selected_session()
+        session_data = dialog.get_session_data()
+
+        if not selected_session_path or not session_data:
+            logger.warning("No session selected or invalid data")
+            return
+
+        logger.info(f"Loading Shopify session: {selected_session_path}")
+
+        try:
+            # Clear existing table
+            self.orders_table.setModel(None)
+
+            # Create SessionManager for this client
+            self.session_manager = SessionManager(
+                client_id=self.current_client_id,
+                profile_manager=self.profile_manager,
+                lock_manager=self.lock_manager
+            )
+
+            # Start session (no actual packing list file, use session path as identifier)
+            session_id = self.session_manager.start_session(
+                packing_list_path=str(selected_session_path / "analysis" / "analysis_data.json"),
+                restore_dir=None
+            )
+            logger.info(f"Packing session started: {session_id}")
+
+            # Get barcode directory
+            barcodes_dir = self.session_manager.get_barcodes_dir()
+
+            # Create PackerLogic instance
+            self.logic = PackerLogic(
+                client_id=self.current_client_id,
+                profile_manager=self.profile_manager,
+                barcode_dir=barcodes_dir
+            )
+
+            # Connect signals
+            self.logic.item_packed.connect(self._on_item_packed)
+
+            # Load data from Shopify analysis
+            self.status_label.setText(f"Loading Shopify session: {selected_session_path.name}...")
+            QApplication.processEvents()  # Update UI
+
+            order_count, analyzed_at = self.logic.load_from_shopify_analysis(selected_session_path)
+
+            # Setup order table
+            self.setup_order_table()
+
+            # Record orders in statistics
+            order_ids = self.order_summary_df['Order_Number'].tolist()
+            self.stats_manager.record_new_orders(order_ids)
+            self._update_dashboard()
+
+            # Update UI
+            self.status_label.setText(
+                f"Successfully loaded Shopify session '{selected_session_path.name}'\n"
+                f"Analyzed at: {analyzed_at}\n"
+                f"Orders: {order_count}"
+            )
+
+            self.start_session_button.setEnabled(False)
+            self.load_shopify_button.setEnabled(False)
+            self.restore_session_button.setEnabled(False)
+            self.end_session_button.setEnabled(True)
+            self.print_button.setEnabled(True)
+            self.packer_mode_button.setEnabled(True)
+
+            logger.info(f"Successfully loaded Shopify session with {order_count} orders")
+
+            QMessageBox.information(
+                self,
+                "Shopify Session Loaded",
+                f"Successfully loaded {order_count} orders from Shopify session.\n\n"
+                f"Session: {selected_session_path.name}\n"
+                f"Analyzed: {analyzed_at}\n\n"
+                f"You can now start packing!"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to load Shopify session: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to load Shopify session:\n\n{e}"
+            )
+
+            # Cleanup on failure
+            if self.session_manager:
+                self.session_manager.end_session()
+            self.session_manager = None
+            self.logic = None
 
     def open_session_monitor(self):
         """Open the session monitor window."""
