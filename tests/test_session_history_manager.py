@@ -42,6 +42,10 @@ class TestSessionHistoryManager(unittest.TestCase):
         session_dir = client_dir / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 
+        # Create barcodes subdirectory
+        barcodes_dir = session_dir / "barcodes"
+        barcodes_dir.mkdir(parents=True, exist_ok=True)
+
         # Create packing_state.json
         packing_state = {
             "version": "1.0",
@@ -59,10 +63,16 @@ class TestSessionHistoryManager(unittest.TestCase):
             }
         }
 
+        # Create packing_state.json in both locations for compatibility:
+        # 1. In barcodes/ for _parse_session_directory to find
+        with open(barcodes_dir / "packing_state.json", 'w') as f:
+            json.dump(packing_state, f)
+
+        # 2. At session root for get_session_details to find
         with open(session_dir / "packing_state.json", 'w') as f:
             json.dump(packing_state, f)
 
-        # Optionally create session_info.json
+        # Create session_info.json at session root
         session_info = {
             "client_id": client_id,
             "packing_list_path": "/path/to/list.xlsx",

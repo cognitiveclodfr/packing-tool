@@ -11,8 +11,9 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Network paths (created during tests - escape backslashes properly)
-\\\\192.168.88.101/
+# Network paths (created during tests - match any UNC path starting with backslashes)
+\\\\*/
+[\\][\\]*/
 
 # Pytest cache
 .pytest_cache/
