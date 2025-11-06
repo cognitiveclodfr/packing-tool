@@ -95,14 +95,18 @@ def mock_stats_manager():
 @pytest.fixture
 def mock_widgets():
     """Mock dashboard and history widgets to avoid initialization issues."""
+    from PySide6.QtWidgets import QWidget
+
     with patch('main.DashboardWidget') as mock_dashboard, \
          patch('main.SessionHistoryWidget') as mock_history:
-        # Create mock instances
-        dashboard_instance = Mock()
+        # Create real QWidget instances instead of Mocks
+        dashboard_instance = QWidget()
+        # Add load_clients method as a spy
         dashboard_instance.load_clients = Mock()
         mock_dashboard.return_value = dashboard_instance
 
-        history_instance = Mock()
+        history_instance = QWidget()
+        # Add load_clients method as a spy
         history_instance.load_clients = Mock()
         mock_history.return_value = history_instance
 
@@ -132,6 +136,33 @@ def app_basic(qtbot, test_excel_file_basic, mock_profile_manager, mock_session_l
         # Mock PackerLogic
         mock_packer_logic = Mock()
         mock_packer_logic.session_packing_state = {'completed_orders': [], 'in_progress': {}}
+
+        # Configure load_packing_list_from_file to return a DataFrame
+        test_df = pd.read_excel(test_excel_file_basic)
+        mock_packer_logic.load_packing_list_from_file.return_value = test_df
+
+        # Configure process_data_and_generate_barcodes to return order count
+        mock_packer_logic.process_data_and_generate_barcodes.return_value = 2
+
+        # Configure processed_df for the table setup
+        mock_packer_logic.processed_df = test_df
+
+        # Configure process_sku_scan to return proper tuple (result_dict, status)
+        mock_packer_logic.process_sku_scan.return_value = (
+            {"row": 0, "packed": 1, "is_complete": True},
+            "SKU_OK"
+        )
+
+        # Configure start_packing_order to return order data
+        mock_packer_logic.start_packing_order.return_value = {
+            "order_number": "#ORD-001",
+            "items": [
+                {"Product_Name": "Product A", "SKU": "SKU-A-123", "Quantity": 1, "packed": 0},
+                {"Product_Name": "Product B", "SKU": "SKU-B-456", "Quantity": 2, "packed": 0}
+            ]
+        }
+        mock_packer_logic.current_order_number = "#ORD-001"
+
         mock_packer_logic_class.return_value = mock_packer_logic
 
         window = MainWindow()
@@ -169,6 +200,34 @@ def app_duplicates(qtbot, test_excel_file_duplicates, mock_profile_manager, mock
         # Mock PackerLogic
         mock_packer_logic = Mock()
         mock_packer_logic.session_packing_state = {'completed_orders': [], 'in_progress': {}}
+
+        # Configure load_packing_list_from_file to return a DataFrame
+        test_df = pd.read_excel(test_excel_file_duplicates)
+        mock_packer_logic.load_packing_list_from_file.return_value = test_df
+
+        # Configure process_data_and_generate_barcodes to return order count
+        mock_packer_logic.process_data_and_generate_barcodes.return_value = 1
+
+        # Configure processed_df for the table setup
+        mock_packer_logic.processed_df = test_df
+
+        # Configure process_sku_scan to return proper tuple (result_dict, status)
+        mock_packer_logic.process_sku_scan.return_value = (
+            {"row": 0, "packed": 1, "is_complete": False},
+            "SKU_OK"
+        )
+
+        # Configure start_packing_order to return order data
+        mock_packer_logic.start_packing_order.return_value = {
+            "order_number": "ORD-100",
+            "items": [
+                {"Product_Name": "Product X", "SKU": "SKU-X", "Quantity": 1, "packed": 0},
+                {"Product_Name": "Product Y", "SKU": "SKU-Y", "Quantity": 2, "packed": 0},
+                {"Product_Name": "Product X", "SKU": "SKU-X", "Quantity": 1, "packed": 0}
+            ]
+        }
+        mock_packer_logic.current_order_number = "ORD-100"
+
         mock_packer_logic_class.return_value = mock_packer_logic
 
         window = MainWindow()
