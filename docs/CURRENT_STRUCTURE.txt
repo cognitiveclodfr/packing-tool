@@ -1,0 +1,306 @@
+PACKING TOOL - PROJECT STRUCTURE
+=================================
+
+Generated: 2025-11-10
+Purpose: Analysis for Shopify Tool integration migration
+
+ROOT DIRECTORY
+==============
+├── .git/                           # Git repository
+├── .github/                        # GitHub workflows and config
+├── .gitignore                      # Git ignore rules
+│
+├── config.ini                      # Active configuration (network paths)
+├── config.ini.example              # Configuration template
+├── main.spec                       # PyInstaller spec for building executable
+├── requirements.txt                # Python dependencies
+│
+├── BUGFIX_PLAN.md                  # Development planning document
+├── README.md                       # Project overview and setup
+├── STORAGE_ARCHITECTURE.md         # Centralized storage documentation
+├── TEST_HANG_FIX.md               # Test debugging documentation
+├── Unified development plan        # Long-term development roadmap
+│
+├── migrate_to_0ufulfilment.py      # Migration script (legacy)
+└── verify_logging.py               # Logging verification utility
+
+DOCUMENTATION (docs/)
+=====================
+docs/
+├── API.md                          # API reference documentation
+├── ARCHITECTURE.md                 # System architecture overview
+├── FUNCTIONS.md                    # Function reference
+├── INTEGRATION.md                  # Shopify Tool integration guide
+├── MIGRATION_CHECKLIST.md          # Migration task checklist
+└── MIGRATION_GUIDE.md              # Step-by-step migration guide
+
+SOURCE CODE (src/)
+==================
+src/
+├── main.py                         # Application entry point, MainWindow
+│   • MainWindow class - main GUI coordinator
+│   • load_shopify_session() - loads Shopify Tool sessions
+│   • Client selection and session management
+│
+├── packer_logic.py                 # Core packing business logic
+│   • PackerLogic class - order processing
+│   • load_from_shopify_analysis() - loads analysis_data.json
+│   • Barcode generation and SKU mapping
+│   • State persistence (packing_state.json)
+│
+├── session_manager.py              # Session lifecycle management
+│   • SessionManager class
+│   • start_session() - creates/restores sessions
+│   • Session directory structure creation
+│   • Lock acquisition and heartbeat
+│
+├── session_selector.py             # Shopify session selection dialog
+│   • SessionSelectorDialog - GUI for choosing sessions
+│   • Scans SESSIONS/CLIENT_{ID}/ directories
+│   • Looks for analysis/analysis_data.json
+│
+├── session_history_manager.py      # Historical session queries
+│   • Reads session_summary.json (completed sessions)
+│   • Falls back to packing_state.json (incomplete)
+│   • Provides session metadata for UI
+│
+├── session_history_widget.py       # Session history UI widget
+│   • Displays past sessions
+│   • Search and filter capabilities
+│
+├── session_monitor_widget.py       # Active session monitoring
+│   • Shows locked sessions
+│   • Force-release stale locks
+│
+├── restore_session_dialog.py       # Crash recovery dialog
+│   • Lists incomplete sessions
+│   • Allows session restoration
+│
+├── session_lock_manager.py         # File-based locking system
+│   • Heartbeat mechanism (60s updates)
+│   • Stale lock detection (120s timeout)
+│   • Multi-PC coordination
+│
+├── profile_manager.py              # Centralized client profiles
+│   • ProfileManager class
+│   • File server path management
+│   • SKU mapping load/save
+│   • Session directory creation
+│
+├── statistics_manager.py           # Statistics tracking
+│   • StatisticsManager class
+│   • Centralized stats on file server
+│   • File locking for concurrent access
+│
+├── worker_manager.py               # Worker/packer tracking
+│   • Worker performance metrics
+│   • Per-worker statistics
+│
+├── dashboard_widget.py             # Performance dashboard UI
+│   • Statistics visualization
+│   • Charts and metrics
+│
+├── packer_mode_widget.py           # Barcode scanning interface
+│   • Real-time scanning mode
+│   • Visual feedback
+│
+├── order_table_model.py            # Order list table model
+│   • Qt table model for orders
+│   • Status tracking
+│
+├── custom_filter_proxy_model.py    # Table filtering
+│   • Search and filter orders
+│
+├── mapping_dialog.py               # Column mapping dialog
+│   • Excel column mapper
+│
+├── sku_mapping_dialog.py           # SKU mapping editor
+│   • Edit barcode-to-SKU mappings
+│
+├── sku_mapping_manager.py          # SKU mapping logic (legacy)
+│   • Local SKU mapping (deprecated)
+│
+├── print_dialog.py                 # Barcode printing dialog
+│   • Print configuration
+│
+├── logger.py                       # Logging configuration
+│   • Centralized logging setup
+│
+├── exceptions.py                   # Custom exceptions
+│   • SessionLockedError
+│   • StaleLockError
+│   • NetworkError
+│
+└── styles.qss                      # Qt stylesheet (UI styling)
+
+SHARED MODULES (shared/)
+========================
+shared/
+├── __init__.py                     # Package initialization
+├── README.md                       # Shared module documentation
+└── stats_manager.py                # Shared statistics utilities
+    • Used by both Packing Tool and Shopify Tool
+
+TESTS (tests/)
+==============
+tests/
+├── integration/                    # Integration tests
+│   ├── __init__.py
+│   └── test_migration.py          # Migration testing
+│
+├── test_gui_integration.py         # GUI integration tests
+├── test_gui_navigation.py          # UI navigation tests
+├── test_history_widget_integration.py # History widget tests
+├── test_logger.py                  # Logging tests
+├── test_packer_logic.py            # PackerLogic unit tests
+├── test_session_history_manager.py # History manager tests
+├── test_session_manager.py         # SessionManager tests
+├── test_session_selector.py        # Session selector tests
+├── test_session_summary.py         # session_summary.json tests
+├── test_shopify_integration.py     # Shopify integration tests
+├── test_statistics_manager_enhanced.py # Enhanced stats tests
+├── test_stats_concurrent_access.py # Concurrent access tests
+├── test_unified_stats_manager.py   # Unified stats tests
+└── test_worker_manager.py          # Worker manager tests
+
+RUNTIME DIRECTORY STRUCTURE
+============================
+
+On File Server (\\SERVER\SHARE\2Packing-tool\):
+------------------------------------------------
+
+CLIENTS/                            # Client profiles
+└── CLIENT_{ID}/
+    ├── config.json                 # Client configuration
+    ├── sku_mapping.json            # Barcode-to-SKU mappings
+    └── backups/                    # Configuration backups
+
+SESSIONS/                           # Session history
+└── CLIENT_{ID}/
+    └── {TIMESTAMP}/                # Individual session
+        ├── .session.lock           # Lock file with heartbeat
+        ├── session_info.json       # Session metadata
+        ├── session_summary.json    # Completion summary (created on end)
+        │
+        ├── barcodes/               # Generated barcodes
+        │   ├── packing_state.json  # Packing progress
+        │   └── ORDER-*.png         # Barcode image files
+        │
+        ├── analysis/               # Shopify Tool integration (Phase 1.3.2)
+        │   └── analysis_data.json  # Loaded from Shopify sessions
+        │
+        └── output/                 # Reports (if generated)
+            └── *.xlsx              # Excel reports
+
+STATS/                              # Global statistics
+└── stats.json                      # Centralized statistics
+
+Local Cache (~/.packers_assistant/):
+------------------------------------
+cache/                              # Temporary cache (60s TTL)
+logs/                               # Application logs
+└── packing_tool.log
+
+KEY FILES BY FUNCTION
+=====================
+
+SESSION CREATION:
+- src/session_manager.py (SessionManager.start_session)
+- Creates: SESSIONS/CLIENT_{ID}/{TIMESTAMP}/
+- Files created:
+  • .session.lock
+  • session_info.json
+  • barcodes/ directory
+
+DATA LOADING FROM SHOPIFY:
+- src/packer_logic.py (PackerLogic.load_from_shopify_analysis)
+- Reads: {session_path}/analysis/analysis_data.json
+- Expected structure:
+  {
+    "analyzed_at": "2025-11-04T11:00:00",
+    "total_orders": 150,
+    "orders": [
+      {
+        "order_number": "ORDER-001",
+        "courier": "DHL",
+        "items": [
+          {"sku": "SKU-123", "quantity": 2, "product_name": "Product A"}
+        ]
+      }
+    ]
+  }
+
+STATE PERSISTENCE:
+- src/packer_logic.py (PackerLogic.save_state, PackerLogic.load_state)
+- Location 1: {session}/barcodes/packing_state.json
+- Location 2: {session}/packing_state.json (compatibility)
+- Contains:
+  • in_progress: Dict[order_number, order_state]
+  • completed: List[order_number]
+  • last_updated: timestamp
+
+SESSION COMPLETION:
+- src/main.py (MainWindow.end_session)
+- Creates: {session}/session_summary.json
+- Contains:
+  • client_id
+  • session_id
+  • started_at
+  • completed_at
+  • total_orders
+  • completed_orders
+  • total_items
+
+BARCODE STORAGE:
+- src/packer_logic.py (PackerLogic.generate_barcode)
+- Location: {session}/barcodes/ORDER-{number}.png
+- Format: Code128 barcode images
+
+GUI ENTRY POINTS:
+- src/main.py (MainWindow)
+- Menu: File → Load Shopify Session
+- Method: load_shopify_session()
+- Opens: SessionSelectorDialog
+- Loads: analysis_data.json from selected session
+
+INTEGRATION POINTS WITH SHOPIFY TOOL
+=====================================
+
+1. SESSION DIRECTORY SHARING:
+   - Both tools use SESSIONS/CLIENT_{ID}/ structure
+   - Shopify Tool creates: {timestamp}/analysis/analysis_data.json
+   - Packing Tool reads from: same directory
+
+2. DATA FORMAT:
+   - Shopify Tool exports: analysis_data.json
+   - Packing Tool converts to: internal DataFrame
+   - Common columns: Order_Number, SKU, Product_Name, Quantity, Courier
+
+3. FILE SERVER:
+   - Shared base path: \\SERVER\SHARE\2Packing-tool\
+   - Same CLIENTS/ directory for profiles
+   - Same STATS/ directory for statistics
+
+4. CLIENT PROFILES:
+   - Both tools access: CLIENTS/CLIENT_{ID}/
+   - Shared sku_mapping.json for barcode translation
+   - Shared config.json for client settings
+
+CODE METRICS
+============
+
+Python Files: 38
+Lines of Code: ~15,000+ (estimated)
+Core Modules: 20
+Test Files: 14
+Documentation Files: 9
+
+DEPENDENCIES (requirements.txt)
+================================
+- PySide6 (Qt6 GUI framework)
+- pandas (Excel/data processing)
+- openpyxl (Excel file handling)
+- python-barcode (barcode generation)
+- Pillow (image processing)
+
+END OF STRUCTURE DOCUMENT
