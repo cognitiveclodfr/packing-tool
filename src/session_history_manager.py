@@ -326,16 +326,16 @@ class SessionHistoryManager:
             end_time = None
             duration_seconds = None
 
-            if 'started_at' in summary:
+            if 'started_at' in summary and summary['started_at']:
                 try:
                     start_time = datetime.fromisoformat(summary['started_at'])
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
 
-            if 'completed_at' in summary:
+            if 'completed_at' in summary and summary['completed_at']:
                 try:
                     end_time = datetime.fromisoformat(summary['completed_at'])
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
 
             if 'duration_seconds' in summary:

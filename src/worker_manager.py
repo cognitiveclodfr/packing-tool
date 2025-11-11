@@ -299,7 +299,8 @@ class WorkerManager:
             activities = activity_log.get('activities', [])
 
             # Sort by timestamp descending (most recent first)
-            activities.sort(key=lambda a: a.get('timestamp', ''), reverse=True)
+            # Use empty string as default, which sorts before any actual timestamp
+            activities.sort(key=lambda a: a.get('timestamp', '0'), reverse=True)
 
             if limit:
                 activities = activities[:limit]
