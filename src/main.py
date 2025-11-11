@@ -32,6 +32,8 @@ from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from dashboard_widget import DashboardWidget
 from session_history_widget import SessionHistoryWidget
+from worker_manager import WorkerManager
+from worker_selector_dialog import WorkerSelectorDialog
 
 logger = get_logger(__name__)
 
@@ -119,6 +121,11 @@ class MainWindow(QMainWindow):
         # Initialize SessionLockManager
         self.lock_manager = SessionLockManager(self.profile_manager)
         logger.info("SessionLockManager initialized successfully")
+
+        # Initialize WorkerManager (Phase 2.0)
+        workers_dir = self.profile_manager.base_path / "Workers"
+        self.worker_manager = WorkerManager(workers_dir)
+        logger.info("WorkerManager initialized successfully")
 
         # Current client state
         self.current_client_id = None
@@ -803,6 +810,47 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Could not save the report. Error: {e}")
             logger.error(f"Error during end_session: {e}")
 
+        # Phase 2.0: Generate detailed packing history and session summary
+        if self.logic:
+            try:
+                logger.info("Generating packing history (Phase 2.0)...")
+
+                # Generate detailed packing history with all scan timestamps
+                packing_history = self.logic.generate_packing_history()
+                if packing_history:
+                    logger.info("Packing history generated successfully")
+                else:
+                    logger.warning("Packing history generation returned None")
+
+                # Generate session summary (links to packing_history.json)
+                session_summary = self.logic.generate_session_summary()
+                if session_summary:
+                    logger.info("Session summary (v2.0) generated successfully")
+                else:
+                    logger.warning("Session summary generation returned None")
+
+                # Log worker activity
+                if hasattr(self, 'worker_manager') and self.logic.worker_id:
+                    try:
+                        completed_orders = len(self.logic.session_packing_state.get('completed_orders', []))
+                        self.worker_manager.log_activity(
+                            worker_id=self.logic.worker_id,
+                            activity_type='session_complete',
+                            details={
+                                'session_id': self.logic.session_id,
+                                'client_id': self.logic.client_id,
+                                'packing_list': self.logic.packing_list_name,
+                                'orders_completed': completed_orders
+                            }
+                        )
+                        logger.info(f"Worker activity logged for {self.logic.worker_id}")
+                    except Exception as e:
+                        logger.error(f"Error logging worker activity: {e}")
+
+            except Exception as e:
+                logger.error(f"Error generating packing history: {e}", exc_info=True)
+                # Continue with cleanup even if history generation fails
+
         # Cleanup PackerLogic state
         if self.logic:
             self.logic.end_session_cleanup()
@@ -1321,12 +1369,46 @@ class MainWindow(QMainWindow):
             logger.info(f"Work directory created: {work_dir}")
             logger.info(f"Barcodes directory: {barcodes_dir}")
 
-            # Step 4: Create PackerLogic instance
+            # Step 3.5: Worker Selection (Phase 2.0)
+            logger.info("Opening worker selection dialog")
+            worker_dialog = WorkerSelectorDialog(self.worker_manager, self)
+
+            if worker_dialog.exec() != QDialog.DialogCode.Accepted:
+                logger.info("Worker selection cancelled")
+                QMessageBox.information(
+                    self,
+                    "Cancelled",
+                    "Session loading cancelled. Worker selection is required."
+                )
+                return
+
+            selected_worker = worker_dialog.get_selected_worker()
+            if not selected_worker:
+                logger.error("No worker selected despite dialog acceptance")
+                QMessageBox.warning(
+                    self,
+                    "No Worker",
+                    "No worker was selected. Session loading cancelled."
+                )
+                return
+
+            worker_id = selected_worker.get('worker_id', '')
+            worker_name = selected_worker.get('name', '')
+
+            logger.info(f"Worker selected: {worker_name} ({worker_id})")
+
+            # Step 4: Create PackerLogic instance with worker info
             self.logic = PackerLogic(
                 client_id=self.current_client_id,
                 profile_manager=self.profile_manager,
                 barcode_dir=str(barcodes_dir)
             )
+
+            # Set worker information (Phase 2.0)
+            self.logic.worker_id = worker_id
+            self.logic.worker_name = worker_name
+            self.logic.session_id = session_path.name  # Store session ID
+            logger.info(f"PackerLogic initialized with worker: {worker_name}")
 
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)
