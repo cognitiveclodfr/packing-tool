@@ -749,14 +749,34 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error recording session metrics to stats: {e}", exc_info=True)
 
-                # Phase 1.3: ALWAYS save session summary for History
+                # Phase 2: Generate detailed packing history BEFORE summary
+                packing_history_path = None
+                try:
+                    if self.logic:
+                        # Set session start time if not set
+                        if not self.logic.session_start_time and start_time:
+                            self.logic.session_start_time = start_time
+
+                        # Generate detailed packing history
+                        packing_history_file = os.path.join(summary_output_dir, "packing_history.json")
+                        self.logic.generate_packing_history(output_path=packing_history_file)
+                        packing_history_path = "packing_history.json"  # Relative path for reference
+                        logger.info(f"Generated detailed packing history: {packing_history_file}")
+                except Exception as e:
+                    logger.error(f"Error generating packing history: {e}", exc_info=True)
+                    # Continue even if packing history fails
+
+                # Phase 2: ALWAYS save session summary for History (v2.0 with worker info)
                 try:
                     summary_path = os.path.join(summary_output_dir, "session_summary.json")
                     session_summary = {
-                        "version": "1.0",
+                        "version": "2.0",
                         "session_id": session_id,
                         "session_type": "shopify" if is_shopify_session else "excel",
                         "client_id": self.current_client_id,
+                        "packing_list_name": self.logic.packing_list_name if self.logic else None,
+                        "worker_id": self.logic.worker_id if self.logic else None,
+                        "worker_name": self.logic.worker_name if self.logic else None,
                         "started_at": start_time.isoformat() if start_time else None,
                         "completed_at": end_time.isoformat(),
                         "duration_seconds": int((end_time - start_time).total_seconds()) if start_time else None,
@@ -768,7 +788,8 @@ class MainWindow(QMainWindow):
                         "completed_orders": completed_orders,
                         "in_progress_orders": in_progress_orders,
                         "total_items": total_items,
-                        "items_packed": items_packed
+                        "items_packed": items_packed,
+                        "packing_history_file": packing_history_path  # Reference to detailed history
                     }
 
                     with open(summary_path, 'w', encoding='utf-8') as f:

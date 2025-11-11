@@ -107,6 +107,11 @@ class PackerLogic(QObject):
         self.worker_name = None
         self.packing_list_name = None  # Name of current packing list
 
+        # Phase 2: Detailed history tracking
+        self.scan_history = []  # List of all scans with timestamps
+        self.order_start_times = {}  # {order_number: start_datetime}
+        self.session_start_time = None  # Session start timestamp
+
         # Load SKU mapping from ProfileManager
         self.sku_map = self._load_sku_mapping()
 
@@ -225,14 +230,19 @@ class PackerLogic(QObject):
 
         Uses atomic write pattern to prevent corruption during crashes.
         Creates backup before overwriting.
+
+        Phase 2: Now saves version 2.0 with timestamps, worker info, and scan history.
         """
         state_file = self._get_state_file_path()
 
-        # Create data with version and timestamp
+        # Create data with version 2.0 and enhanced metadata
         data = {
-            'version': '1.0',
+            'version': '2.0',
             'timestamp': datetime.now().isoformat(),
             'client_id': self.client_id,
+            'worker_id': self.worker_id,
+            'worker_name': self.worker_name,
+            'packing_list_name': self.packing_list_name,
             'data': self.session_packing_state
         }
 
@@ -596,6 +606,8 @@ class PackerLogic(QObject):
         It looks up the order number, validates its status (e.g., not already
         completed), and loads its packing state into memory.
 
+        Phase 2: Now records order start timestamp and initializes scan arrays.
+
         Args:
             scanned_text (str): The content from the scanned order barcode.
 
@@ -617,8 +629,15 @@ class PackerLogic(QObject):
         items = self.orders_data[original_order_number]['items']
 
         if original_order_number in self.session_packing_state['in_progress']:
+            # Resuming existing order
             self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
         else:
+            # Starting new order - record start time
+            order_start_time = datetime.now()
+            self.order_start_times[original_order_number] = order_start_time
+
+            logger.info(f"Starting new order {original_order_number} at {order_start_time.isoformat()}")
+
             self.current_order_state = []
             for i, item in enumerate(items):
                 sku = item.get('SKU')
@@ -629,13 +648,17 @@ class PackerLogic(QObject):
                     quantity = 1
 
                 normalized_sku = self._normalize_sku(sku)
+                # Phase 2: Add scans array to track each individual scan
                 self.current_order_state.append({
                     'original_sku': sku,
                     'normalized_sku': normalized_sku,
                     'required': quantity,
                     'packed': 0,
-                    'row': i
+                    'row': i,
+                    'scans': [],  # Array of {timestamp, scan_number} for each scan
+                    'started_at': order_start_time.isoformat()
                 })
+
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state()
 
@@ -732,6 +755,38 @@ class PackerLogic(QObject):
             # Increment packed count for this item
             found_item['packed'] += 1
 
+            # Phase 2: Record scan timestamp and add to scans array
+            scan_timestamp = datetime.now()
+            scan_number = found_item['packed']  # Current scan number (1, 2, 3...)
+
+            # Create scan record
+            scan_record = {
+                'timestamp': scan_timestamp.isoformat(),
+                'scan_number': scan_number
+            }
+
+            # Add to scans array in item state
+            if 'scans' not in found_item:
+                found_item['scans'] = []
+            found_item['scans'].append(scan_record)
+
+            # Add to global scan history
+            scan_history_record = {
+                'timestamp': scan_timestamp.isoformat(),
+                'order_number': self.current_order_number,
+                'sku': found_item['original_sku'],
+                'normalized_sku': found_item['normalized_sku'],
+                'scan_number': scan_number,
+                'worker_id': self.worker_id
+            }
+            self.scan_history.append(scan_history_record)
+
+            logger.debug(
+                f"Scan recorded: Order {self.current_order_number}, "
+                f"SKU {found_item['original_sku']}, "
+                f"Scan #{scan_number}, Time: {scan_timestamp.isoformat()}"
+            )
+
             # Check if this specific item is now complete
             # (all required quantity for this SKU has been packed)
             is_complete = found_item['packed'] == found_item['required']
@@ -748,13 +803,40 @@ class PackerLogic(QObject):
                 # Order is complete!
                 status = "ORDER_COMPLETE"
 
+                # Phase 2: Record completion time and calculate duration
+                completed_at = datetime.now()
+                order_start_time = self.order_start_times.get(self.current_order_number)
+
+                # Calculate duration in seconds
+                duration_seconds = None
+                if order_start_time:
+                    duration_seconds = (completed_at - order_start_time).total_seconds()
+                    logger.info(
+                        f"Order {self.current_order_number} completed in {duration_seconds:.1f} seconds "
+                        f"({duration_seconds/60:.1f} minutes)"
+                    )
+
                 # Move order from "in_progress" to "completed_orders"
                 del self.session_packing_state['in_progress'][self.current_order_number]
 
-                # Add to completed list (if not already there)
-                # This check prevents duplicates in case of rare edge cases
-                if self.current_order_number not in self.session_packing_state['completed_orders']:
-                    self.session_packing_state['completed_orders'].append(self.current_order_number)
+                # Phase 2: Store completed order with metadata (not just order number)
+                completed_order_record = {
+                    'order_number': self.current_order_number,
+                    'completed_at': completed_at.isoformat(),
+                    'duration_seconds': duration_seconds
+                }
+
+                # Initialize completed_orders as list if it's old format
+                if not isinstance(self.session_packing_state.get('completed_orders'), list):
+                    self.session_packing_state['completed_orders'] = []
+
+                # Check if already in completed (prevent duplicates)
+                if not any(
+                    (isinstance(c, dict) and c.get('order_number') == self.current_order_number) or
+                    (isinstance(c, str) and c == self.current_order_number)
+                    for c in self.session_packing_state['completed_orders']
+                ):
+                    self.session_packing_state['completed_orders'].append(completed_order_record)
             else:
                 # Order still in progress
                 status = "SKU_OK"
@@ -935,7 +1017,11 @@ class PackerLogic(QObject):
         # Generate barcodes
         try:
             order_count = self.process_data_and_generate_barcodes(column_mapping=None)
+
+            # Phase 2: Set session start time
+            self.session_start_time = datetime.now()
             logger.info(f"Successfully loaded packing list '{list_name}': {order_count} orders")
+            logger.info(f"Session started at: {self.session_start_time.isoformat()}")
 
             return order_count, packing_data.get('list_name', list_name)
 
@@ -1081,7 +1167,11 @@ class PackerLogic(QObject):
         # Generate barcodes
         try:
             order_count = self.process_data_and_generate_barcodes(column_mapping=None)
+
+            # Phase 2: Set session start time
+            self.session_start_time = datetime.now()
             logger.info(f"Successfully loaded Shopify session: {order_count} orders")
+            logger.info(f"Session started at: {self.session_start_time.isoformat()}")
 
             return order_count, analysis_data.get('analyzed_at', 'Unknown')
 
@@ -1089,6 +1179,323 @@ class PackerLogic(QObject):
             error_msg = f"Error generating barcodes from Shopify data: {e}"
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg)
+
+    def generate_packing_history(self, output_path: str = None) -> Dict[str, Any]:
+        """
+        Generate detailed packing history JSON with all scans, timestamps, and metrics.
+
+        Phase 2: This method creates a comprehensive history file with:
+        - All orders with detailed scan information
+        - Performance metrics (fastest/slowest orders, scans per minute, etc.)
+        - Summary statistics
+
+        Args:
+            output_path: Path to save packing_history.json (defaults to barcode_dir)
+
+        Returns:
+            Dictionary with complete packing history
+
+        Raises:
+            ValueError: If session data is incomplete
+        """
+        logger.info("Generating detailed packing history")
+
+        if not output_path:
+            output_path = os.path.join(self.barcode_dir, "packing_history.json")
+
+        # Calculate session metrics
+        session_end_time = datetime.now()
+        session_start_time = self.session_start_time or session_end_time
+        duration_seconds = (session_end_time - session_start_time).total_seconds()
+
+        # Build orders history
+        orders_history = self._build_orders_history()
+
+        # Calculate summary statistics
+        summary = self._calculate_summary_statistics(orders_history)
+
+        # Calculate performance metrics
+        performance_metrics = self._calculate_performance_metrics(orders_history, duration_seconds)
+
+        # Build complete history structure
+        history = {
+            'version': '2.0',
+            'session_id': os.path.basename(os.path.dirname(self.barcode_dir)),  # Extract session ID from path
+            'client_id': self.client_id,
+            'packing_list_name': self.packing_list_name,
+            'worker_id': self.worker_id,
+            'worker_name': self.worker_name,
+            'started_at': session_start_time.isoformat(),
+            'completed_at': session_end_time.isoformat(),
+            'duration_seconds': int(duration_seconds),
+            'pc_name': os.environ.get('COMPUTERNAME', 'Unknown'),
+
+            'summary': summary,
+            'orders': orders_history,
+            'performance_metrics': performance_metrics
+        }
+
+        # Save to file
+        try:
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Packing history saved to: {output_path}")
+            logger.info(
+                f"Summary: {summary['completed_orders']}/{summary['total_orders']} orders, "
+                f"{summary['total_items_scanned']}/{summary['total_items_required']} items, "
+                f"{summary['completion_rate']:.1f}% complete"
+            )
+
+        except Exception as e:
+            logger.error(f"Error saving packing history: {e}", exc_info=True)
+            raise
+
+        return history
+
+    def _build_orders_history(self) -> List[Dict[str, Any]]:
+        """
+        Build detailed history for all orders (completed and in-progress).
+
+        Returns:
+            List of order history dictionaries
+        """
+        orders_history = []
+
+        # Process completed orders
+        completed_orders = self.session_packing_state.get('completed_orders', [])
+
+        for completed_record in completed_orders:
+            # Handle both old format (string) and new format (dict)
+            if isinstance(completed_record, str):
+                order_number = completed_record
+                completed_at = None
+                duration_seconds = None
+            else:
+                order_number = completed_record.get('order_number')
+                completed_at = completed_record.get('completed_at')
+                duration_seconds = completed_record.get('duration_seconds')
+
+            # Get items for this order from processed_df
+            order_items = self._get_order_items_history(order_number, status='completed')
+
+            started_at = self.order_start_times.get(order_number)
+            if started_at:
+                started_at = started_at.isoformat()
+
+            order_history = {
+                'order_number': order_number,
+                'started_at': started_at,
+                'completed_at': completed_at,
+                'duration_seconds': duration_seconds,
+                'status': 'completed',
+                'total_items': len(order_items),
+                'items_scanned': sum(item['scanned_quantity'] for item in order_items),
+                'items': order_items
+            }
+
+            orders_history.append(order_history)
+
+        # Process in-progress orders
+        in_progress_orders = self.session_packing_state.get('in_progress', {})
+
+        for order_number, order_state in in_progress_orders.items():
+            # Get items for this order
+            order_items = self._get_order_items_history(order_number, status='in_progress', order_state=order_state)
+
+            # Get start time from first item's started_at field
+            started_at = None
+            if order_state and len(order_state) > 0:
+                first_item = order_state[0]
+                if isinstance(first_item, dict):
+                    started_at = first_item.get('started_at')
+
+            order_history = {
+                'order_number': order_number,
+                'started_at': started_at,
+                'completed_at': None,
+                'duration_seconds': None,
+                'status': 'in_progress',
+                'total_items': len(order_items),
+                'items_scanned': sum(item['scanned_quantity'] for item in order_items),
+                'items': order_items
+            }
+
+            orders_history.append(order_history)
+
+        return orders_history
+
+    def _get_order_items_history(
+        self,
+        order_number: str,
+        status: str,
+        order_state: List[Dict] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get detailed item history for a specific order.
+
+        Args:
+            order_number: Order number
+            status: Order status ('completed' or 'in_progress')
+            order_state: Order state from session_packing_state (for in-progress orders)
+
+        Returns:
+            List of item dictionaries with scan details
+        """
+        items_history = []
+
+        if self.processed_df is None:
+            return items_history
+
+        # Get items for this order from processed_df
+        order_rows = self.processed_df[self.processed_df['Order_Number'] == order_number]
+
+        for idx, row in order_rows.iterrows():
+            sku = row.get('SKU', '')
+            product_name = row.get('Product_Name', '')
+            required_quantity = int(float(row.get('Quantity', 0)))
+
+            # Get scan information if available
+            scanned_quantity = 0
+            scans = []
+
+            if order_state:
+                # Find matching item in order_state
+                normalized_sku = self._normalize_sku(sku)
+                for item_state in order_state:
+                    if isinstance(item_state, dict) and item_state.get('normalized_sku') == normalized_sku:
+                        scanned_quantity = item_state.get('packed', 0)
+                        scans = item_state.get('scans', [])
+                        break
+
+            # If completed, assume all items scanned
+            if status == 'completed':
+                scanned_quantity = required_quantity
+
+            item_history = {
+                'sku': sku,
+                'product_name': product_name,
+                'required_quantity': required_quantity,
+                'scanned_quantity': scanned_quantity,
+                'scans': scans
+            }
+
+            items_history.append(item_history)
+
+        return items_history
+
+    def _calculate_summary_statistics(self, orders_history: List[Dict]) -> Dict[str, Any]:
+        """
+        Calculate summary statistics from orders history.
+
+        Args:
+            orders_history: List of order history dictionaries
+
+        Returns:
+            Dictionary with summary statistics
+        """
+        total_orders = len(orders_history)
+        completed_orders = sum(1 for o in orders_history if o['status'] == 'completed')
+        in_progress_orders = sum(1 for o in orders_history if o['status'] == 'in_progress')
+
+        total_items_required = sum(o['total_items'] for o in orders_history)
+        total_items_scanned = sum(o['items_scanned'] for o in orders_history)
+
+        completion_rate = (completed_orders / total_orders * 100) if total_orders > 0 else 0.0
+
+        # Calculate average time per order (only for completed orders)
+        completed_durations = [
+            o['duration_seconds']
+            for o in orders_history
+            if o['status'] == 'completed' and o['duration_seconds'] is not None
+        ]
+
+        avg_time_per_order = sum(completed_durations) / len(completed_durations) if completed_durations else 0.0
+
+        # Calculate items per minute
+        total_duration_seconds = sum(completed_durations) if completed_durations else 0
+        items_per_minute = (total_items_scanned / (total_duration_seconds / 60)) if total_duration_seconds > 0 else 0.0
+
+        return {
+            'total_orders': total_orders,
+            'completed_orders': completed_orders,
+            'in_progress_orders': in_progress_orders,
+            'total_items_required': total_items_required,
+            'total_items_scanned': total_items_scanned,
+            'completion_rate': round(completion_rate, 2),
+            'average_time_per_order_seconds': round(avg_time_per_order, 1),
+            'items_per_minute': round(items_per_minute, 2)
+        }
+
+    def _calculate_performance_metrics(
+        self,
+        orders_history: List[Dict],
+        total_duration_seconds: float
+    ) -> Dict[str, Any]:
+        """
+        Calculate performance metrics from orders history.
+
+        Args:
+            orders_history: List of order history dictionaries
+            total_duration_seconds: Total session duration in seconds
+
+        Returns:
+            Dictionary with performance metrics
+        """
+        # Find fastest and slowest orders
+        completed_with_duration = [
+            o for o in orders_history
+            if o['status'] == 'completed' and o['duration_seconds'] is not None
+        ]
+
+        fastest_order = None
+        slowest_order = None
+
+        if completed_with_duration:
+            fastest = min(completed_with_duration, key=lambda o: o['duration_seconds'])
+            slowest = max(completed_with_duration, key=lambda o: o['duration_seconds'])
+
+            fastest_order = {
+                'order_number': fastest['order_number'],
+                'duration_seconds': fastest['duration_seconds']
+            }
+
+            slowest_order = {
+                'order_number': slowest['order_number'],
+                'duration_seconds': slowest['duration_seconds']
+            }
+
+        # Calculate total scans
+        total_scans = sum(
+            len(item['scans'])
+            for order in orders_history
+            for item in order['items']
+        )
+
+        # Calculate scans per minute
+        scans_per_minute = (total_scans / (total_duration_seconds / 60)) if total_duration_seconds > 0 else 0.0
+
+        # Calculate scans by hour (from scan_history)
+        scans_by_hour = {}
+        for scan in self.scan_history:
+            try:
+                scan_time = datetime.fromisoformat(scan['timestamp'])
+                hour_key = scan_time.strftime('%H:00')
+                scans_by_hour[hour_key] = scans_by_hour.get(hour_key, 0) + 1
+            except Exception:
+                pass
+
+        return {
+            'fastest_order': fastest_order,
+            'slowest_order': slowest_order,
+            'average_scans_per_minute': round(scans_per_minute, 2),
+            'scans_by_hour': scans_by_hour,
+            'total_scans': total_scans
+        }
 
     def end_session_cleanup(self):
         """Removes the session state file upon graceful session termination."""
