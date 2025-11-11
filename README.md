@@ -50,6 +50,76 @@ Packer's Assistant is a desktop application designed to streamline the order ful
 9.  **Complete Order:** Once all items are packed, a success message appears. The main table updates the order's status to "Completed".
 10. **End Session:** When all work is done, click "End Session". This closes the session gracefully and saves the final `_completed.xlsx` report.
 
+## Integration with Shopify Tool
+
+The Packing Tool is designed to seamlessly integrate with the Shopify Tool, allowing you to work with order data directly from your Shopify store without manual Excel file creation.
+
+### Unified Workflow
+
+When using both tools together, all data is stored in a **unified work directory** structure that maintains a clear audit trail and allows both tools to work with the same session data.
+
+#### Directory Structure
+
+```
+Sessions/
+└── CLIENT_NAME/
+    └── YYYY-MM-DD_N/              # Unified session directory
+        ├── session_info.json       # Session metadata
+        ├── analysis/               # Shopify Tool: Analysis results
+        │   └── analysis_data.json  # Order data from Shopify
+        ├── packing_lists/          # Shopify Tool: Generated packing lists
+        │   └── Courier_Orders.json # Filtered by courier
+        └── packing/                # Packing Tool: Work directories
+            ├── DHL_Orders/         # Packing work for DHL
+            │   ├── barcodes/       # Generated barcodes
+            │   ├── packing_state.json
+            │   └── reports/        # Completion reports
+            └── PostOne_Orders/     # Packing work for PostOne
+                ├── barcodes/
+                ├── packing_state.json
+                └── reports/
+```
+
+### Integration Workflow
+
+1. **Shopify Tool** generates packing lists:
+   - Creates session: `Sessions/CLIENT_M/2025-11-10_1/`
+   - Analyzes Shopify orders: `analysis/analysis_data.json`
+   - Optionally generates courier-specific lists: `packing_lists/DHL_Orders.json`
+
+2. **Packing Tool** uses the same session:
+   - Opens Shopify session directory
+   - Loads orders from `analysis/analysis_data.json`
+   - Creates work directory: `packing/DHL_Orders/`
+   - Generates barcodes and tracks packing progress
+
+3. **Results** stored in unified structure:
+   - `packing/DHL_Orders/packing_state.json` - Packing progress
+   - `packing/DHL_Orders/barcodes/` - Order barcodes
+   - `packing/DHL_Orders/reports/` - Completion reports
+
+### Benefits
+
+- **All Data in One Place:** Complete order lifecycle from Shopify to packed orders in a single directory
+- **Clear Audit Trail:** Easily see what was analyzed, when, and what was packed
+- **Multiple Packing Lists:** Work on different courier lists simultaneously (DHL, PostOne, etc.)
+- **Easy Tracking:** See exactly what was packed and when for each session
+- **Session History:** Browse previous sessions and review packing results
+
+### Usage with Shopify Tool
+
+1. Use Shopify Tool to create a session and analyze orders
+2. In Packing Tool, use "Load from Shopify Session" to select the session directory
+3. Select which courier's orders to pack (if multiple packing lists exist)
+4. Pack orders as normal - all data will be saved in the unified structure
+
+### Backward Compatibility
+
+The Packing Tool maintains full compatibility with traditional Excel-based workflows. You can still:
+- Load Excel files directly using "Start Session"
+- Use custom column mapping for non-standard formats
+- Work independently without Shopify Tool integration
+
 ## Technical Implementation
 
 This is a Python application built with the **PySide6** GUI framework.

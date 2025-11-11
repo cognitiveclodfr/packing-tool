@@ -299,6 +299,7 @@ class WorkerManager:
             activities = activity_log.get('activities', [])
 
             # Sort by timestamp descending (most recent first)
+            # Use empty string as default for missing timestamps (sorts to end when reversed)
             activities.sort(key=lambda a: a.get('timestamp', ''), reverse=True)
 
             if limit:

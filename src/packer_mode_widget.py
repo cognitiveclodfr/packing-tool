@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -6,6 +7,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class PackerModeWidget(QWidget):
     """
@@ -208,8 +211,14 @@ class PackerModeWidget(QWidget):
             packed_count (int): The new number of items packed for that SKU.
             is_complete (bool): Whether this SKU is now fully packed.
         """
-        required_quantity = self.table.item(row, 2).text().split(' / ')[1]
-        self.table.item(row, 2).setText(f"{packed_count} / {required_quantity}")
+        # Check if table item exists before accessing
+        quantity_item = self.table.item(row, 2)
+        if quantity_item is None:
+            logger.warning(f"Cannot update row {row}: quantity item is None")
+            return
+
+        required_quantity = quantity_item.text().split(' / ')[1]
+        quantity_item.setText(f"{packed_count} / {required_quantity}")
 
         if is_complete:
             status_item = QTableWidgetItem("Packed")

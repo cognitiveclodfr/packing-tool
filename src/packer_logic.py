@@ -872,8 +872,20 @@ class PackerLogic(QObject):
         rows = []
 
         for order in orders_list:
-            order_number = order.get('order_number', 'UNKNOWN')
-            courier = order.get('courier', 'Unknown')
+            # Validate required order fields
+            missing_fields = []
+            if 'order_number' not in order:
+                missing_fields.append('order_number')
+            if 'courier' not in order or not order['courier']:
+                missing_fields.append('courier')
+
+            if missing_fields:
+                error_msg = f"Missing required columns in order data: {missing_fields}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            order_number = order['order_number']
+            courier = order['courier']
             items = order.get('items', [])
 
             for item in items:
