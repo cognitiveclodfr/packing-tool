@@ -916,7 +916,18 @@ class MainWindow(QMainWindow):
                 order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
             elif order_number in in_progress_orders:
                 order_state = in_progress_orders[order_number]
-                total_packed = sum(s['packed'] for s in order_state.values())
+
+                # Handle both dict and list formats (for backward compatibility)
+                if isinstance(order_state, dict):
+                    # Expected format: {SKU: {'packed': N, 'required': M}, ...}
+                    total_packed = sum(s['packed'] for s in order_state.values())
+                elif isinstance(order_state, list):
+                    # Old format: might be a list of packed items
+                    total_packed = len(order_state)
+                else:
+                    logger.warning(f"Unexpected order_state type for {order_number}: {type(order_state)}")
+                    total_packed = 0
+
                 order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {int(total_required)}"
                 if total_packed > 0:
                     order_summary.at[index, 'Status'] = 'In Progress'
@@ -1155,10 +1166,24 @@ class MainWindow(QMainWindow):
                 completed_col_index = self.order_summary_df.columns.get_loc('Completed At')
                 self.order_summary_df.iloc[row_index, completed_col_index] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             elif status == 'In Progress':
-                if order_number in self.logic.session_packing_state:
-                    order_state = self.logic.session_packing_state[order_number]
-                    total_packed = sum(s['packed'] for s in order_state.values())
-                    total_required = sum(s['required'] for s in order_state.values())
+                in_progress = self.logic.session_packing_state.get('in_progress', {})
+                if order_number in in_progress:
+                    order_state = in_progress[order_number]
+
+                    # Handle both dict and list formats (for backward compatibility)
+                    if isinstance(order_state, dict):
+                        # Expected format: {SKU: {'packed': N, 'required': M}, ...}
+                        total_packed = sum(s['packed'] for s in order_state.values())
+                        total_required = sum(s['required'] for s in order_state.values())
+                    elif isinstance(order_state, list):
+                        # Old format: might be a list of packed items
+                        total_packed = len(order_state)
+                        total_required = self.order_summary_df.iloc[row_index]['Total_Quantity']
+                    else:
+                        logger.warning(f"Unexpected order_state type for {order_number}: {type(order_state)}")
+                        total_packed = 0
+                        total_required = self.order_summary_df.iloc[row_index]['Total_Quantity']
+
                     self.order_summary_df.iloc[row_index, progress_col_index] = f"{total_packed} / {total_required}"
 
             self.table_model.dataChanged.emit(
@@ -1203,8 +1228,21 @@ class MainWindow(QMainWindow):
             if selected_session:
                 logger.info(f"User selected session to restore: {selected_session}")
 
+                # Determine session root directory
+                # For new structure: selected_session = .../packing/Test_ALL/
+                # For legacy structure: selected_session = .../Session_2025-11-11_1/
+
+                # Check if this is new structure (has "packing" in path)
+                session_path = Path(selected_session)
+                if "packing" in session_path.parts:
+                    # New structure: go up 2 levels to get session root
+                    session_root = session_path.parent.parent
+                else:
+                    # Legacy structure: selected_session IS the session root
+                    session_root = session_path
+
                 # Get session info to find packing list path
-                session_info_path = selected_session / "session_info.json"
+                session_info_path = session_root / "session_info.json"
                 try:
                     import json
                     with open(session_info_path, 'r', encoding='utf-8') as f:
