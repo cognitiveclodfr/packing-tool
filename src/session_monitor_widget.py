@@ -67,9 +67,9 @@ class SessionMonitorWidget(QWidget):
 
         # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
-            "Client", "Session", "User", "Computer", "Started", "Last Heartbeat"
+            "Client", "Session", "Packing List", "User", "Computer", "Started", "Last Heartbeat"
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -108,6 +108,12 @@ class SessionMonitorWidget(QWidget):
                     session_name = session_info['session_name']
                     self.table.setItem(row, 1, QTableWidgetItem(session_name))
 
+                    # Packing List
+                    packing_list_name = session_info.get('packing_list_name', 'Legacy')
+                    if not packing_list_name:
+                        packing_list_name = 'Legacy'
+                    self.table.setItem(row, 2, QTableWidgetItem(packing_list_name))
+
                     # Lock info
                     lock_info = session_info.get('lock_info', {})
                     user_name = lock_info.get('user_name', 'Unknown')
@@ -127,10 +133,10 @@ class SessionMonitorWidget(QWidget):
                     except:
                         pass
 
-                    self.table.setItem(row, 2, QTableWidgetItem(user_name))
-                    self.table.setItem(row, 3, QTableWidgetItem(pc_name))
-                    self.table.setItem(row, 4, QTableWidgetItem(lock_time))
-                    self.table.setItem(row, 5, QTableWidgetItem(heartbeat))
+                    self.table.setItem(row, 3, QTableWidgetItem(user_name))
+                    self.table.setItem(row, 4, QTableWidgetItem(pc_name))
+                    self.table.setItem(row, 5, QTableWidgetItem(lock_time))
+                    self.table.setItem(row, 6, QTableWidgetItem(heartbeat))
 
                     row += 1
 

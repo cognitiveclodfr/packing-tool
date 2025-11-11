@@ -89,62 +89,154 @@ class RestoreSessionDialog(QDialog):
         self.session_list.itemSelectionChanged.connect(self._on_selection_changed)
 
     def _load_sessions(self):
-        """Load incomplete sessions and display with lock status."""
+        """
+        Load incomplete sessions and display with lock status.
+
+        Now supports BOTH old and new structures:
+        - OLD: Show session directly
+        - NEW: Show each incomplete packing list separately
+        """
         self.session_list.clear()
 
         try:
-            sessions = self.profile_manager.get_incomplete_sessions(self.client_id)
+            # Get sessions root for this client
+            sessions_root = self.profile_manager.get_sessions_root() / f"CLIENT_{self.client_id}"
 
-            if not sessions:
+            if not sessions_root.exists():
+                item = QListWidgetItem("No sessions found for this client")
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.session_list.addItem(item)
+                return
+
+            found_items = False
+
+            # Scan all session directories
+            for session_dir in sorted(sessions_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if not session_dir.is_dir():
+                    continue
+
+                # Check if NEW structure (has packing/ directory)
+                packing_dir = session_dir / "packing"
+                if packing_dir.exists() and packing_dir.is_dir():
+                    # NEW STRUCTURE: Check each packing list
+                    for packing_list_dir in packing_dir.iterdir():
+                        if not packing_list_dir.is_dir():
+                            continue
+
+                        # Check if packing list has state file (incomplete)
+                        state_file = packing_list_dir / "barcodes" / "packing_state.json"
+                        summary_file = packing_list_dir / "session_summary.json"
+
+                        # Skip if completed (has summary, no state)
+                        if summary_file.exists() and not state_file.exists():
+                            continue
+
+                        # Skip if no state file at all
+                        if not state_file.exists():
+                            continue
+
+                        found_items = True
+
+                        # Check lock status
+                        is_locked, lock_info = self.lock_manager.is_locked(packing_list_dir)
+
+                        if is_locked:
+                            if self.lock_manager.is_lock_stale(lock_info):
+                                icon = "⚠️"
+                                user_info = lock_info.get('user_name', 'Unknown')
+                                pc_info = lock_info.get('locked_by', 'Unknown')
+                                status = f"Stale lock - {user_info} on {pc_info}"
+                                stale = True
+                            else:
+                                icon = "🔒"
+                                user_info = lock_info.get('user_name', 'Unknown')
+                                pc_info = lock_info.get('locked_by', 'Unknown')
+                                status = f"Active - {user_info} on {pc_info}"
+                                stale = False
+                        else:
+                            icon = "📦"
+                            status = "Available"
+                            stale = False
+                            lock_info = None
+
+                        # Format: SessionID / PackingList - Status
+                        item_text = f"{icon}  {session_dir.name} / {packing_list_dir.name}  -  {status}"
+
+                        item = QListWidgetItem(item_text)
+                        item.setData(Qt.ItemDataRole.UserRole, {
+                            'session_dir': packing_list_dir,
+                            'locked': is_locked,
+                            'stale': stale,
+                            'lock_info': lock_info,
+                            'packing_list_name': packing_list_dir.name,
+                            'is_legacy': False
+                        })
+
+                        # Disable locked (non-stale) items
+                        if is_locked and not stale:
+                            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                            item.setForeground(Qt.GlobalColor.gray)
+
+                        self.session_list.addItem(item)
+
+                else:
+                    # LEGACY STRUCTURE: Check for session_info.json (incomplete marker)
+                    session_info_path = session_dir / "session_info.json"
+                    if not session_info_path.exists():
+                        continue
+
+                    found_items = True
+
+                    # Check lock status
+                    is_locked, lock_info = self.lock_manager.is_locked(session_dir)
+
+                    if is_locked:
+                        if self.lock_manager.is_lock_stale(lock_info):
+                            icon = "⚠️"
+                            user_info = lock_info.get('user_name', 'Unknown')
+                            pc_info = lock_info.get('locked_by', 'Unknown')
+                            status = f"Stale lock - {user_info} on {pc_info}"
+                            stale = True
+                        else:
+                            icon = "🔒"
+                            user_info = lock_info.get('user_name', 'Unknown')
+                            pc_info = lock_info.get('locked_by', 'Unknown')
+                            status = f"Active - {user_info} on {pc_info}"
+                            stale = False
+                    else:
+                        icon = "📦"
+                        status = "Available"
+                        stale = False
+                        lock_info = None
+
+                    # Format session name with timestamp
+                    session_name = session_dir.name
+                    item_text = f"{icon}  {session_name} (Legacy)  -  {status}"
+
+                    item = QListWidgetItem(item_text)
+                    item.setData(Qt.ItemDataRole.UserRole, {
+                        'session_dir': session_dir,
+                        'locked': is_locked,
+                        'stale': stale,
+                        'lock_info': lock_info,
+                        'packing_list_name': None,
+                        'is_legacy': True
+                    })
+
+                    # Disable locked (non-stale) items
+                    if is_locked and not stale:
+                        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        item.setForeground(Qt.GlobalColor.gray)
+
+                    self.session_list.addItem(item)
+
+            if not found_items:
                 item = QListWidgetItem("No incomplete sessions found")
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
                 self.session_list.addItem(item)
                 return
 
-            for session_dir in sessions:
-                # Check lock status
-                is_locked, lock_info = self.lock_manager.is_locked(session_dir)
-
-                if is_locked:
-                    # Check if stale
-                    if self.lock_manager.is_lock_stale(lock_info):
-                        icon = "⚠️"
-                        user_info = lock_info.get('user_name', 'Unknown')
-                        pc_info = lock_info.get('locked_by', 'Unknown')
-                        status = f"Stale lock - {user_info} on {pc_info}"
-                        stale = True
-                    else:
-                        icon = "🔒"
-                        user_info = lock_info.get('user_name', 'Unknown')
-                        pc_info = lock_info.get('locked_by', 'Unknown')
-                        status = f"Active - {user_info} on {pc_info}"
-                        stale = False
-                else:
-                    icon = "📦"
-                    status = "Available"
-                    stale = False
-                    lock_info = None
-
-                # Format session name with timestamp
-                session_name = session_dir.name
-                item_text = f"{icon}  {session_name}  -  {status}"
-
-                item = QListWidgetItem(item_text)
-                item.setData(Qt.ItemDataRole.UserRole, {
-                    'session_dir': session_dir,
-                    'locked': is_locked,
-                    'stale': stale,
-                    'lock_info': lock_info
-                })
-
-                # Disable locked (non-stale) items
-                if is_locked and not stale:
-                    item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                    item.setForeground(Qt.GlobalColor.gray)
-
-                self.session_list.addItem(item)
-
-            logger.info(f"Loaded {len(sessions)} incomplete sessions for client {self.client_id}")
+            logger.info(f"Loaded incomplete sessions/packing lists for client {self.client_id}")
 
         except Exception as e:
             logger.error(f"Failed to load sessions: {e}", exc_info=True)
