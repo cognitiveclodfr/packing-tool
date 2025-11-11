@@ -34,6 +34,8 @@ class SessionHistoryRecord:
         pc_name: Computer name where session was executed
         packing_list_path: Original packing list file path
         session_path: Full path to session directory
+        packing_list_name: Name of packing list (for JSON-based sessions)
+        is_legacy: True if old Excel-based structure, False if new JSON-based
     """
     session_id: str
     client_id: str
@@ -47,6 +49,8 @@ class SessionHistoryRecord:
     pc_name: Optional[str]
     packing_list_path: Optional[str]
     session_path: str
+    packing_list_name: Optional[str] = None
+    is_legacy: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with datetime objects as ISO strings."""
@@ -147,27 +151,60 @@ class SessionHistoryManager:
 
                 logger.debug(f"Parsing session directory: {session_dir.name}")
                 try:
-                    record = self._parse_session_directory(client_id, session_dir)
+                    # Check if NEW structure (has packing/ directory)
+                    packing_dir = session_dir / "packing"
+                    if packing_dir.exists() and packing_dir.is_dir():
+                        # NEW STRUCTURE: Scan each packing list subdirectory
+                        logger.debug(f"Session {session_dir.name} uses NEW structure, scanning packing lists...")
+                        for packing_list_dir in packing_dir.iterdir():
+                            if not packing_list_dir.is_dir():
+                                continue
 
-                    if record is None:
-                        logger.debug(f"Skipping session {session_dir.name}: _parse_session_directory returned None")
-                        continue
+                            packing_list_record = self._parse_packing_list_session(
+                                client_id=client_id,
+                                session_dir=session_dir,
+                                packing_list_dir=packing_list_dir
+                            )
 
-                    # Apply filters
-                    if not include_incomplete and record.in_progress_orders > 0:
-                        logger.debug(f"Skipping incomplete session: {session_dir.name}")
-                        continue
+                            if packing_list_record is None:
+                                continue
 
-                    if start_date and record.start_time and record.start_time < start_date:
-                        logger.debug(f"Skipping session {session_dir.name}: before start_date")
-                        continue
+                            # Apply filters
+                            if not include_incomplete and packing_list_record.in_progress_orders > 0:
+                                logger.debug(f"Skipping incomplete packing list: {packing_list_dir.name}")
+                                continue
 
-                    if end_date and record.start_time and record.start_time > end_date:
-                        logger.debug(f"Skipping session {session_dir.name}: after end_date")
-                        continue
+                            if start_date and packing_list_record.start_time and packing_list_record.start_time < start_date:
+                                continue
 
-                    logger.debug(f"Adding session {session_dir.name} to results")
-                    sessions.append(record)
+                            if end_date and packing_list_record.start_time and packing_list_record.start_time > end_date:
+                                continue
+
+                            sessions.append(packing_list_record)
+
+                    else:
+                        # LEGACY STRUCTURE: Parse as before
+                        record = self._parse_session_directory(client_id, session_dir)
+
+                        if record is None:
+                            logger.debug(f"Skipping session {session_dir.name}: _parse_session_directory returned None")
+                            continue
+
+                        # Apply filters
+                        if not include_incomplete and record.in_progress_orders > 0:
+                            logger.debug(f"Skipping incomplete session: {session_dir.name}")
+                            continue
+
+                        if start_date and record.start_time and record.start_time < start_date:
+                            logger.debug(f"Skipping session {session_dir.name}: before start_date")
+                            continue
+
+                        if end_date and record.start_time and record.start_time > end_date:
+                            logger.debug(f"Skipping session {session_dir.name}: after end_date")
+                            continue
+
+                        logger.debug(f"Adding session {session_dir.name} to results")
+                        sessions.append(record)
 
                 except Exception as e:
                     logger.warning(f"Error parsing session {session_dir.name}: {e}", exc_info=True)
@@ -191,44 +228,45 @@ class SessionHistoryManager:
         """
         Parse a session directory and extract metrics.
 
+        This method now supports BOTH old and new session structures:
+        - OLD (legacy Excel): session_dir/barcodes/packing_state.json
+        - NEW (Shopify JSON): session_dir/packing/{list_name}/barcodes/packing_state.json
+
+        For new structure, this will be called multiple times (once per packing list).
+
         Args:
             client_id: Client identifier
-            session_dir: Path to session directory
+            session_dir: Path to session directory OR packing list directory
 
         Returns:
             SessionHistoryRecord or None if parsing fails
         """
         session_id = session_dir.name
 
-        # Phase 1.3: Try to load session_summary.json first (completed sessions)
+        # Check if this is a NEW structure session (has packing/ directory)
+        packing_dir = session_dir / "packing"
+        if packing_dir.exists() and packing_dir.is_dir():
+            # NEW STRUCTURE: Scan each packing list subdirectory
+            logger.debug(f"Session {session_id} uses NEW structure (packing/ directory found)")
+            # This session will be handled by get_client_sessions which calls
+            # _parse_packing_list_session for each packing list
+            return None
+
+        # LEGACY STRUCTURE: Old Excel-based sessions
+        # Try to load session_summary.json first (completed sessions)
         summary_file = session_dir / "session_summary.json"
         if summary_file.exists():
-            logger.debug(f"Found session_summary.json for session {session_id}, parsing...")
-            return self._parse_session_summary(client_id, session_dir, summary_file)
+            logger.debug(f"Found session_summary.json for LEGACY session {session_id}, parsing...")
+            return self._parse_session_summary(client_id, session_dir, summary_file, is_legacy=True)
 
         # Fallback: Try packing_state.json (incomplete/active sessions)
         state_file = session_dir / "barcodes" / "packing_state.json"
 
-        # DEBUG: Log directory contents
-        try:
-            if session_dir.exists():
-                dir_contents = list(session_dir.iterdir())
-                logger.debug(f"Session {session_id} directory contents: {[f.name for f in dir_contents]}")
-
-                barcodes_dir = session_dir / "barcodes"
-                if barcodes_dir.exists():
-                    barcodes_contents = list(barcodes_dir.iterdir())
-                    logger.debug(f"Session {session_id} barcodes/ contents: {[f.name for f in barcodes_contents]}")
-                else:
-                    logger.debug(f"Session {session_id}: barcodes/ directory does NOT exist")
-        except Exception as e:
-            logger.warning(f"Error listing directory contents for {session_id}: {e}")
-
         if not state_file.exists():
-            logger.info(f"No session_summary.json or packing_state.json found for session {session_id} - session will be skipped")
+            logger.debug(f"No session data found for session {session_id} (legacy structure)")
             return None
 
-        logger.debug(f"Found packing_state.json for session {session_id}, parsing incomplete session...")
+        logger.debug(f"Found packing_state.json for LEGACY session {session_id}, parsing incomplete session...")
         try:
             # Load packing state
             with open(state_file, 'r', encoding='utf-8') as f:
@@ -291,26 +329,157 @@ class SessionHistoryManager:
                 total_items_packed=total_items_packed,
                 pc_name=pc_name,
                 packing_list_path=packing_list_path,
-                session_path=str(session_dir)
+                session_path=str(session_dir),
+                packing_list_name=None,
+                is_legacy=True
             )
 
         except Exception as e:
-            logger.error(f"Error parsing session directory {session_id}: {e}")
+            logger.error(f"Error parsing LEGACY session directory {session_id}: {e}")
+            return None
+
+    def _parse_packing_list_session(
+        self,
+        client_id: str,
+        session_dir: Path,
+        packing_list_dir: Path
+    ) -> Optional[SessionHistoryRecord]:
+        """
+        Parse a single packing list session from NEW structure.
+
+        NEW structure: Sessions/CLIENT_M/2025-11-10_1/packing/DHL_Orders/
+        This function parses one packing list directory.
+
+        Args:
+            client_id: Client identifier
+            session_dir: Parent session directory
+            packing_list_dir: Packing list directory (e.g., packing/DHL_Orders/)
+
+        Returns:
+            SessionHistoryRecord or None if parsing fails
+        """
+        session_id = session_dir.name
+        packing_list_name = packing_list_dir.name
+
+        logger.debug(f"Parsing packing list session: {session_id}/{packing_list_name}")
+
+        # Check for session_summary.json (completed)
+        summary_file = packing_list_dir / "session_summary.json"
+        if summary_file.exists():
+            logger.debug(f"Found session_summary.json for {session_id}/{packing_list_name}")
+            return self._parse_session_summary(
+                client_id=client_id,
+                session_dir=session_dir,
+                summary_file=summary_file,
+                packing_list_name=packing_list_name,
+                is_legacy=False
+            )
+
+        # Check for packing_state.json (incomplete/in-progress)
+        state_file = packing_list_dir / "barcodes" / "packing_state.json"
+        if not state_file.exists():
+            logger.debug(f"No session data found for {session_id}/{packing_list_name}")
+            return None
+
+        logger.debug(f"Found packing_state.json for {session_id}/{packing_list_name}, parsing...")
+
+        try:
+            # Load packing state
+            with open(state_file, 'r', encoding='utf-8') as f:
+                packing_state = json.load(f)
+
+            # Parse session ID to extract timestamp
+            start_time = self._parse_session_timestamp(session_id)
+
+            # Calculate metrics from packing state
+            data = packing_state.get('data', {})
+            in_progress = data.get('in_progress', {})
+            completed = data.get('completed_orders', [])
+
+            total_orders = len(in_progress) + len(completed)
+            completed_orders = len(completed)
+            in_progress_orders = len(in_progress)
+
+            # Count total items packed
+            total_items_packed = self._count_packed_items(in_progress, completed)
+
+            # Try to determine end time from state timestamp or file modification time
+            end_time = None
+            duration_seconds = None
+
+            state_timestamp = packing_state.get('timestamp')
+            if state_timestamp:
+                try:
+                    end_time = datetime.fromisoformat(state_timestamp)
+                    if start_time and end_time:
+                        duration_seconds = (end_time - start_time).total_seconds()
+                except ValueError:
+                    pass
+
+            # If no end time from state, use file modification time
+            if not end_time:
+                try:
+                    mtime = state_file.stat().st_mtime
+                    end_time = datetime.fromtimestamp(mtime)
+                    if start_time:
+                        duration_seconds = (end_time - start_time).total_seconds()
+                except Exception:
+                    pass
+
+            # Try to get PC name from lock file or state
+            pc_name = packing_state.get('pc_name')
+            if not pc_name:
+                # Try to get from lock file
+                lock_file = packing_list_dir / ".session.lock"
+                if lock_file.exists():
+                    try:
+                        with open(lock_file, 'r', encoding='utf-8') as f:
+                            lock_data = json.load(f)
+                            pc_name = lock_data.get('locked_by')
+                    except Exception:
+                        pass
+
+            # Construct packing list path
+            packing_list_path = str(session_dir / "packing_lists" / f"{packing_list_name}.json")
+
+            return SessionHistoryRecord(
+                session_id=session_id,
+                client_id=client_id,
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=duration_seconds,
+                total_orders=total_orders,
+                completed_orders=completed_orders,
+                in_progress_orders=in_progress_orders,
+                total_items_packed=total_items_packed,
+                pc_name=pc_name,
+                packing_list_path=packing_list_path,
+                session_path=str(packing_list_dir),
+                packing_list_name=packing_list_name,
+                is_legacy=False
+            )
+
+        except Exception as e:
+            logger.error(f"Error parsing packing list session {session_id}/{packing_list_name}: {e}")
             return None
 
     def _parse_session_summary(
         self,
         client_id: str,
         session_dir: Path,
-        summary_file: Path
+        summary_file: Path,
+        packing_list_name: Optional[str] = None,
+        is_legacy: bool = False
     ) -> Optional[SessionHistoryRecord]:
         """
         Parse session_summary.json for completed sessions.
 
         Args:
             client_id: Client identifier
-            session_dir: Path to session directory
+            session_dir: Path to session directory (parent for new structure)
             summary_file: Path to session_summary.json file
+            packing_list_name: Optional packing list name (for new structure)
+            is_legacy: True if old structure, False if new structure
 
         Returns:
             SessionHistoryRecord or None if parsing fails
@@ -343,6 +512,13 @@ class SessionHistoryManager:
             elif start_time and end_time:
                 duration_seconds = (end_time - start_time).total_seconds()
 
+            # Determine session_path based on structure
+            if is_legacy:
+                session_path = str(session_dir)
+            else:
+                # For new structure, session_path points to packing list directory
+                session_path = str(summary_file.parent)
+
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
@@ -355,7 +531,9 @@ class SessionHistoryManager:
                 total_items_packed=summary.get('items_packed', 0),
                 pc_name=summary.get('pc_name'),
                 packing_list_path=summary.get('packing_list_path'),
-                session_path=str(session_dir)
+                session_path=session_path,
+                packing_list_name=packing_list_name,
+                is_legacy=is_legacy
             )
 
         except Exception as e:
@@ -576,6 +754,7 @@ class SessionHistoryManager:
             {
                 'Session ID': s.session_id,
                 'Client ID': s.client_id,
+                'Packing List': s.packing_list_name or 'Legacy',
                 'Start Time': s.start_time.strftime('%Y-%m-%d %H:%M:%S') if s.start_time else '',
                 'End Time': s.end_time.strftime('%Y-%m-%d %H:%M:%S') if s.end_time else '',
                 'Duration (minutes)': round(s.duration_seconds / 60, 2) if s.duration_seconds else 0,
@@ -584,7 +763,7 @@ class SessionHistoryManager:
                 'In Progress': s.in_progress_orders,
                 'Items Packed': s.total_items_packed,
                 'PC Name': s.pc_name or '',
-                'Packing List': s.packing_list_path or ''
+                'Packing List Path': s.packing_list_path or ''
             }
             for s in sessions
         ]

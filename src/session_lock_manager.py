@@ -497,6 +497,10 @@ class SessionLockManager:
         """
         Get all active sessions across all clients.
 
+        Now supports BOTH old and new structures:
+        - OLD: Lock at session_dir/.session.lock
+        - NEW: Lock at session_dir/packing/{list_name}/.session.lock
+
         Returns:
             Dictionary mapping client_id to list of active session info dicts:
             {
@@ -504,7 +508,9 @@ class SessionLockManager:
                     {
                         'session_name': 'Session_2025-10-28_143045',
                         'session_dir': Path(...),
-                        'lock_info': {...}
+                        'packing_list_name': 'DHL_Orders' or None for legacy,
+                        'lock_info': {...},
+                        'is_legacy': True/False
                     },
                     ...
                 ],
@@ -518,19 +524,52 @@ class SessionLockManager:
             clients = self.profile_manager.list_clients()
 
             for client_id in clients:
-                sessions = self.profile_manager.get_incomplete_sessions(client_id)
+                # Get sessions root for this client
+                sessions_root = self.profile_manager.get_sessions_root() / f"CLIENT_{client_id}"
+
+                if not sessions_root.exists():
+                    continue
+
                 active_sessions = []
 
-                for session_dir in sessions:
-                    is_locked, lock_info = self.is_locked(session_dir)
+                # Scan all session directories
+                for session_dir in sessions_root.iterdir():
+                    if not session_dir.is_dir():
+                        continue
 
-                    if is_locked and not self.is_lock_stale(lock_info):
-                        # Active (non-stale) lock
-                        active_sessions.append({
-                            'session_name': session_dir.name,
-                            'session_dir': session_dir,
-                            'lock_info': lock_info
-                        })
+                    # Check if NEW structure (has packing/ directory)
+                    packing_dir = session_dir / "packing"
+                    if packing_dir.exists() and packing_dir.is_dir():
+                        # NEW STRUCTURE: Scan each packing list subdirectory
+                        for packing_list_dir in packing_dir.iterdir():
+                            if not packing_list_dir.is_dir():
+                                continue
+
+                            is_locked, lock_info = self.is_locked(packing_list_dir)
+
+                            if is_locked and not self.is_lock_stale(lock_info):
+                                # Active (non-stale) lock
+                                active_sessions.append({
+                                    'session_name': session_dir.name,
+                                    'session_dir': packing_list_dir,
+                                    'packing_list_name': packing_list_dir.name,
+                                    'lock_info': lock_info,
+                                    'is_legacy': False
+                                })
+
+                    else:
+                        # LEGACY STRUCTURE: Check for lock at session root
+                        is_locked, lock_info = self.is_locked(session_dir)
+
+                        if is_locked and not self.is_lock_stale(lock_info):
+                            # Active (non-stale) lock
+                            active_sessions.append({
+                                'session_name': session_dir.name,
+                                'session_dir': session_dir,
+                                'packing_list_name': None,
+                                'lock_info': lock_info,
+                                'is_legacy': True
+                            })
 
                 if active_sessions:
                     all_sessions[client_id] = active_sessions
