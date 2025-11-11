@@ -1232,11 +1232,11 @@ class MainWindow(QMainWindow):
         """
         Open Shopify session and select packing list to work on.
 
-        New workflow:
-        1. User selects Shopify session directory
-        2. App scans session/packing_lists/ for JSON files
-        3. User selects which packing list to pack
-        4. App creates work directory and loads data
+        Phase 1.8 Enhanced workflow:
+        1. Use SessionSelectorDialog to browse Shopify sessions
+        2. Automatically scan packing_lists/ folder
+        3. User can select specific packing list or load entire session
+        4. Create work directory: packing/{list_name}/ for selected lists
         """
         logger.info("Opening Shopify session selector")
 
@@ -1262,69 +1262,35 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Step 1: Select Shopify session directory
-        sessions_base = str(self.profile_manager.get_sessions_root())
+        # Step 1: Use SessionSelectorDialog to select session and packing list
+        selector_dialog = SessionSelectorDialog(self.profile_manager, self)
 
-        session_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select Shopify Session Directory",
-            sessions_base,
-            QFileDialog.ShowDirsOnly
-        )
-
-        if not session_dir:
+        if not selector_dialog.exec():
             logger.info("Shopify session selection cancelled")
             return
 
-        session_path = Path(session_dir)
+        session_path = selector_dialog.get_selected_session()
+        packing_list_path = selector_dialog.get_selected_packing_list()
+
+        if not session_path:
+            logger.warning("No session selected")
+            return
+
         logger.info(f"Selected Shopify session: {session_path}")
 
-        # Step 2: Find available packing lists
-        packing_lists_dir = session_path / "packing_lists"
+        # Step 2: Determine loading mode
+        if packing_list_path:
+            # User selected a specific packing list
+            selected_name = packing_list_path.stem
+            logger.info(f"Selected packing list: {selected_name}")
+            load_mode = "packing_list"
+        else:
+            # User wants to load entire session (analysis_data.json)
+            logger.info("Loading entire session (analysis_data.json)")
+            selected_name = "full_session"
+            load_mode = "full_session"
 
-        if not packing_lists_dir.exists():
-            logger.warning(f"No packing_lists directory in {session_path.name}")
-            QMessageBox.warning(
-                self,
-                "No Packing Lists",
-                f"No packing lists found in:\n{session_path.name}\n\n"
-                "Generate packing lists in Shopify Tool first."
-            )
-            return
-
-        # Find JSON files
-        json_files = list(packing_lists_dir.glob("*.json"))
-
-        if not json_files:
-            logger.warning(f"No JSON packing lists found in {packing_lists_dir}")
-            QMessageBox.warning(
-                self,
-                "No Packing Lists",
-                "No JSON packing lists found.\n"
-                "Generate packing lists in Shopify Tool first."
-            )
-            return
-
-        # Step 3: User selects packing list
-        packing_list_names = [f.stem for f in json_files]
-
-        from PySide6.QtWidgets import QInputDialog
-        selected_name, ok = QInputDialog.getItem(
-            self,
-            "Select Packing List",
-            "Choose packing list to pack:",
-            packing_list_names,
-            0,
-            False
-        )
-
-        if not ok:
-            logger.info("Packing list selection cancelled")
-            return
-
-        logger.info(f"Selected packing list: {selected_name}")
-
-        # Step 4: Load and setup
+        # Step 3: Create work directory structure
         try:
             # Create SessionManager for this client (not initialized yet)
             if not self.session_manager:
@@ -1334,44 +1300,28 @@ class MainWindow(QMainWindow):
                     lock_manager=self.lock_manager
                 )
 
-            # Load packing list data
-            logger.info(f"Loading packing list data: {selected_name}")
-            packing_data = self.session_manager.load_packing_list(
-                str(session_path),
-                selected_name
-            )
+            # Create work directory: packing/{list_name}/ for specific lists
+            if load_mode == "packing_list":
+                work_dir = session_path / "packing" / selected_name
+            else:
+                # For full session, use legacy structure
+                work_dir = session_path / "packing_full_session"
 
-            # Get work directory
-            work_dir = self.session_manager.get_packing_work_dir(
-                str(session_path),
-                selected_name
-            )
+            work_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create barcodes subdirectory
+            barcodes_dir = work_dir / "barcodes"
+            barcodes_dir.mkdir(parents=True, exist_ok=True)
 
             # Store current session info
             self.current_session_path = str(session_path)
             self.current_packing_list = selected_name
             self.current_work_dir = str(work_dir)
-            self.packing_data = packing_data
 
-            # Log loaded data
-            total_orders = packing_data.get('total_orders', len(packing_data.get('orders', [])))
-            total_items = packing_data.get('total_items', 0)
+            logger.info(f"Work directory created: {work_dir}")
+            logger.info(f"Barcodes directory: {barcodes_dir}")
 
-            logger.info(f"Loaded: {session_path.name} / {selected_name}")
-            logger.info(f"Orders: {total_orders}, Items: {total_items}")
-            logger.info(f"Work directory: {work_dir}")
-
-            # Update session metadata with packing progress
-            self.session_manager.update_session_metadata(
-                self.current_session_path,
-                self.current_packing_list,
-                'in_progress'
-            )
-
-            # Create PackerLogic instance with unified work directory
-            barcodes_dir = work_dir / "barcodes"
-            logger.info(f"Creating PackerLogic with barcode_dir: {barcodes_dir}")
-
+            # Step 4: Create PackerLogic instance
             self.logic = PackerLogic(
                 client_id=self.current_client_id,
                 profile_manager=self.profile_manager,
@@ -1381,9 +1331,30 @@ class MainWindow(QMainWindow):
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)
 
-            # Load Shopify packing list data
-            logger.info("Processing Shopify packing list data")
-            order_count = self._process_shopify_packing_data(packing_data)
+            # Step 5: Load data based on mode
+            if load_mode == "packing_list":
+                # Load specific packing list JSON
+                logger.info(f"Loading packing list from: {packing_list_path}")
+                order_count, list_name = self.logic.load_packing_list_json(packing_list_path)
+
+                logger.info(f"Loaded packing list '{list_name}': {order_count} orders")
+            else:
+                # Load entire session (analysis_data.json)
+                logger.info(f"Loading full session from: {session_path}")
+                order_count, analyzed_at = self.logic.load_from_shopify_analysis(session_path)
+
+                logger.info(f"Loaded full session: {order_count} orders (analyzed at {analyzed_at})")
+
+            # Update session metadata with packing progress
+            if hasattr(self.session_manager, 'update_session_metadata'):
+                try:
+                    self.session_manager.update_session_metadata(
+                        self.current_session_path,
+                        self.current_packing_list,
+                        'in_progress'
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not update session metadata: {e}")
 
             # Setup order table
             self.setup_order_table()
@@ -1391,7 +1362,7 @@ class MainWindow(QMainWindow):
             # Update UI with loaded data
             self.status_label.setText(
                 f"Loaded: {session_path.name} / {selected_name}\n"
-                f"Orders: {order_count}, Items: {total_items}\n"
+                f"Orders: {order_count}\n"
                 f"Barcodes generated successfully"
             )
 
@@ -1402,9 +1373,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Session Loaded",
                 f"Session: {session_path.name}\n"
-                f"Packing List: {selected_name}\n"
-                f"Orders: {total_orders}\n"
-                f"Items: {total_items}\n\n"
+                f"{'Packing List' if load_mode == 'packing_list' else 'Mode'}: {selected_name}\n"
+                f"Orders: {order_count}\n\n"
                 f"Work directory:\n{work_dir}"
             )
 
