@@ -102,3 +102,214 @@ class TestSessionManager(unittest.TestCase):
 
             self.assertFalse(self.manager.is_active())
             self.assertIsNone(self.manager.session_id)
+
+    def test_load_packing_list_success(self):
+        """
+        Verify that load_packing_list correctly loads a valid packing list JSON.
+        """
+        # Create test session directory structure
+        session_path = self.base_dir / "2025-11-10_1"
+        packing_lists_dir = session_path / "packing_lists"
+        packing_lists_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create test packing list JSON
+        test_data = {
+            "session_id": "2025-11-10_1",
+            "report_name": "DHL Orders",
+            "created_at": "2025-11-10T10:00:00",
+            "total_orders": 2,
+            "total_items": 5,
+            "filters_applied": [
+                {"field": "Shipping_Provider", "operator": "==", "value": "DHL"}
+            ],
+            "orders": [
+                {
+                    "order_number": "#1001",
+                    "order_type": "single",
+                    "destination": "Bulgaria",
+                    "courier": "DHL",
+                    "tags": [],
+                    "items": [
+                        {
+                            "sku": "01-DM-0379-110-L",
+                            "product_name": "Python Camo Denim - Size Large",
+                            "quantity": 1
+                        }
+                    ]
+                },
+                {
+                    "order_number": "#1002",
+                    "order_type": "single",
+                    "destination": "Germany",
+                    "courier": "DHL",
+                    "tags": [],
+                    "items": [
+                        {
+                            "sku": "02-DM-0380-120-M",
+                            "product_name": "Urban Camo Jacket - Size Medium",
+                            "quantity": 2
+                        }
+                    ]
+                }
+            ]
+        }
+
+        packing_list_file = packing_lists_dir / "DHL_Orders.json"
+        with open(packing_list_file, 'w', encoding='utf-8') as f:
+            json.dump(test_data, f, indent=2)
+
+        # Test loading with .json extension
+        result = self.manager.load_packing_list(str(session_path), "DHL_Orders.json")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result['session_id'], "2025-11-10_1")
+        self.assertEqual(result['report_name'], "DHL Orders")
+        self.assertEqual(result['total_orders'], 2)
+        self.assertEqual(len(result['orders']), 2)
+        self.assertEqual(result['orders'][0]['order_number'], "#1001")
+
+        # Test loading without .json extension
+        result2 = self.manager.load_packing_list(str(session_path), "DHL_Orders")
+
+        self.assertIsNotNone(result2)
+        self.assertEqual(result2['total_orders'], 2)
+
+        # Cleanup
+        packing_list_file.unlink()
+        packing_lists_dir.rmdir()
+        session_path.rmdir()
+
+    def test_load_packing_list_file_not_found(self):
+        """
+        Verify that load_packing_list raises FileNotFoundError for missing file.
+        """
+        session_path = self.base_dir / "2025-11-10_1"
+        session_path.mkdir(parents=True, exist_ok=True)
+        packing_lists_dir = session_path / "packing_lists"
+        packing_lists_dir.mkdir(exist_ok=True)
+
+        with self.assertRaises(FileNotFoundError) as context:
+            self.manager.load_packing_list(str(session_path), "NonExistent_Orders")
+
+        self.assertIn("Packing list not found", str(context.exception))
+
+        # Cleanup
+        packing_lists_dir.rmdir()
+        session_path.rmdir()
+
+    def test_load_packing_list_invalid_json(self):
+        """
+        Verify that load_packing_list raises JSONDecodeError for malformed JSON.
+        """
+        session_path = self.base_dir / "2025-11-10_1"
+        packing_lists_dir = session_path / "packing_lists"
+        packing_lists_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create invalid JSON file
+        invalid_json_file = packing_lists_dir / "Invalid_Orders.json"
+        with open(invalid_json_file, 'w', encoding='utf-8') as f:
+            f.write("{ invalid json content }")
+
+        with self.assertRaises(json.JSONDecodeError):
+            self.manager.load_packing_list(str(session_path), "Invalid_Orders")
+
+        # Cleanup
+        invalid_json_file.unlink()
+        packing_lists_dir.rmdir()
+        session_path.rmdir()
+
+    def test_load_packing_list_missing_orders_key(self):
+        """
+        Verify that load_packing_list raises KeyError if 'orders' key is missing.
+        """
+        session_path = self.base_dir / "2025-11-10_1"
+        packing_lists_dir = session_path / "packing_lists"
+        packing_lists_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create JSON without 'orders' key
+        invalid_data = {
+            "session_id": "2025-11-10_1",
+            "report_name": "Missing Orders"
+        }
+
+        invalid_file = packing_lists_dir / "Missing_Orders.json"
+        with open(invalid_file, 'w', encoding='utf-8') as f:
+            json.dump(invalid_data, f)
+
+        with self.assertRaises(KeyError) as context:
+            self.manager.load_packing_list(str(session_path), "Missing_Orders")
+
+        self.assertIn("orders", str(context.exception))
+
+        # Cleanup
+        invalid_file.unlink()
+        packing_lists_dir.rmdir()
+        session_path.rmdir()
+
+    def test_get_packing_work_dir_creates_structure(self):
+        """
+        Verify that get_packing_work_dir creates proper directory structure.
+        """
+        session_path = self.base_dir / "2025-11-10_1"
+        session_path.mkdir(parents=True, exist_ok=True)
+
+        # Test with .json extension
+        work_dir = self.manager.get_packing_work_dir(str(session_path), "DHL_Orders.json")
+
+        self.assertTrue(work_dir.exists())
+        self.assertEqual(work_dir.name, "DHL_Orders")
+        self.assertTrue((work_dir / "barcodes").exists())
+        self.assertTrue((work_dir / "reports").exists())
+
+        # Cleanup
+        (work_dir / "barcodes").rmdir()
+        (work_dir / "reports").rmdir()
+        work_dir.rmdir()
+        (session_path / "packing").rmdir()
+        session_path.rmdir()
+
+    def test_get_packing_work_dir_removes_extensions(self):
+        """
+        Verify that get_packing_work_dir removes various file extensions.
+        """
+        session_path = self.base_dir / "2025-11-10_1"
+        session_path.mkdir(parents=True, exist_ok=True)
+
+        # Test with different extensions
+        for extension in ['.json', '.xlsx', '.xls', '']:
+            packing_list_name = f"Test_Orders{extension}"
+            work_dir = self.manager.get_packing_work_dir(str(session_path), packing_list_name)
+
+            self.assertEqual(work_dir.name, "Test_Orders")
+            self.assertTrue(work_dir.exists())
+
+            # Cleanup
+            (work_dir / "barcodes").rmdir()
+            (work_dir / "reports").rmdir()
+            work_dir.rmdir()
+
+        (session_path / "packing").rmdir()
+        session_path.rmdir()
+
+    def test_get_packing_work_dir_idempotent(self):
+        """
+        Verify that get_packing_work_dir is idempotent (can be called multiple times).
+        """
+        session_path = self.base_dir / "2025-11-10_1"
+        session_path.mkdir(parents=True, exist_ok=True)
+
+        # Call multiple times
+        work_dir1 = self.manager.get_packing_work_dir(str(session_path), "DHL_Orders")
+        work_dir2 = self.manager.get_packing_work_dir(str(session_path), "DHL_Orders")
+
+        self.assertEqual(work_dir1, work_dir2)
+        self.assertTrue(work_dir1.exists())
+        self.assertTrue((work_dir1 / "barcodes").exists())
+        self.assertTrue((work_dir1 / "reports").exists())
+
+        # Cleanup
+        (work_dir1 / "barcodes").rmdir()
+        (work_dir1 / "reports").rmdir()
+        work_dir1.rmdir()
+        (session_path / "packing").rmdir()
+        session_path.rmdir()
