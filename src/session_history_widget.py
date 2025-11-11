@@ -130,13 +130,13 @@ class SessionHistoryWidget(QWidget):
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
-        # Sessions table
+        # Sessions table (Phase 2.0: Added Worker column)
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
-            "Session ID", "Client", "Start Time", "Duration (min)",
-            "Total Orders", "Completed", "In Progress", "Items Packed",
-            "PC Name", "Status"
+            "Session ID", "Client", "Packing List", "Worker",
+            "Start Time", "Duration (min)", "Total Orders", "Completed",
+            "In Progress", "Items Packed", "Status"
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -239,28 +239,33 @@ class SessionHistoryWidget(QWidget):
             # Client
             self.table.setItem(row, 1, QTableWidgetItem(session.client_id))
 
+            # Packing List (Phase 2.0)
+            packing_list = session.packing_list_name or '-'
+            self.table.setItem(row, 2, QTableWidgetItem(packing_list))
+
+            # Worker (Phase 2.0)
+            worker_display = session.worker_name or session.worker_id or '-'
+            self.table.setItem(row, 3, QTableWidgetItem(worker_display))
+
             # Start time
             start_time_str = session.start_time.strftime('%Y-%m-%d %H:%M:%S') if session.start_time else ''
-            self.table.setItem(row, 2, QTableWidgetItem(start_time_str))
+            self.table.setItem(row, 4, QTableWidgetItem(start_time_str))
 
             # Duration
             duration_str = f"{session.duration_seconds / 60:.1f}" if session.duration_seconds else ''
-            self.table.setItem(row, 3, QTableWidgetItem(duration_str))
+            self.table.setItem(row, 5, QTableWidgetItem(duration_str))
 
             # Total orders
-            self.table.setItem(row, 4, QTableWidgetItem(str(session.total_orders)))
+            self.table.setItem(row, 6, QTableWidgetItem(str(session.total_orders)))
 
             # Completed
-            self.table.setItem(row, 5, QTableWidgetItem(str(session.completed_orders)))
+            self.table.setItem(row, 7, QTableWidgetItem(str(session.completed_orders)))
 
             # In progress
-            self.table.setItem(row, 6, QTableWidgetItem(str(session.in_progress_orders)))
+            self.table.setItem(row, 8, QTableWidgetItem(str(session.in_progress_orders)))
 
             # Items packed
-            self.table.setItem(row, 7, QTableWidgetItem(str(session.total_items_packed)))
-
-            # PC name
-            self.table.setItem(row, 8, QTableWidgetItem(session.pc_name or ''))
+            self.table.setItem(row, 9, QTableWidgetItem(str(session.total_items_packed)))
 
             # Status
             status = "Completed" if session.in_progress_orders == 0 else "Incomplete"
@@ -269,7 +274,7 @@ class SessionHistoryWidget(QWidget):
                 status_item.setForeground(Qt.GlobalColor.darkGreen)
             else:
                 status_item.setForeground(Qt.GlobalColor.darkYellow)
-            self.table.setItem(row, 9, status_item)
+            self.table.setItem(row, 10, status_item)
 
         self.status_label.setText(f"Showing {len(sessions)} session(s)")
 
