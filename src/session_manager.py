@@ -650,3 +650,49 @@ class SessionManager:
 
         # 6. Return work directory path
         return work_dir
+
+    def update_session_metadata(self, session_path: str, packing_list_name: str, status: str):
+        """
+        Update Shopify session metadata with packing progress.
+
+        Updates session_info.json with packing status for tracking.
+        This is a non-critical operation - failures are logged but don't stop execution.
+
+        Args:
+            session_path: Path to Shopify session
+            packing_list_name: Name of packing list
+            status: Status ('in_progress', 'completed', 'paused')
+        """
+        session_info_file = Path(session_path) / SESSION_INFO_FILE
+
+        if not session_info_file.exists():
+            logger.warning(f"session_info.json not found: {session_path}")
+            return
+
+        try:
+            # Load existing session info
+            with open(session_info_file, 'r', encoding='utf-8') as f:
+                session_info = json.load(f)
+
+            # Add packing progress section if not exists
+            if 'packing_progress' not in session_info:
+                session_info['packing_progress'] = {}
+
+            # Update for this packing list
+            if packing_list_name not in session_info['packing_progress']:
+                session_info['packing_progress'][packing_list_name] = {
+                    'started_at': datetime.now().isoformat(),
+                    'status': status
+                }
+            else:
+                session_info['packing_progress'][packing_list_name]['status'] = status
+                session_info['packing_progress'][packing_list_name]['updated_at'] = datetime.now().isoformat()
+
+            # Save updated session info
+            with open(session_info_file, 'w', encoding='utf-8') as f:
+                json.dump(session_info, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Updated session metadata: {packing_list_name} -> {status}")
+
+        except Exception as e:
+            logger.warning(f"Could not update session metadata: {e}")
