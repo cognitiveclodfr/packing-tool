@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -6,6 +7,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class PackerModeWidget(QWidget):
     """
