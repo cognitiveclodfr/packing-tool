@@ -32,6 +32,8 @@ from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from dashboard_widget import DashboardWidget
 from session_history_widget import SessionHistoryWidget
+from worker_selector_dialog import WorkerSelectorDialog
+from worker_manager import WorkerManager
 
 logger = get_logger(__name__)
 
@@ -119,6 +121,11 @@ class MainWindow(QMainWindow):
         # Initialize SessionLockManager
         self.lock_manager = SessionLockManager(self.profile_manager)
         logger.info("SessionLockManager initialized successfully")
+
+        # Initialize WorkerManager
+        workers_dir = self.profile_manager.base_path / "Workers"
+        self.worker_manager = WorkerManager(workers_dir)
+        logger.info("WorkerManager initialized successfully")
 
         # Current client state
         self.current_client_id = None
@@ -1233,10 +1240,11 @@ class MainWindow(QMainWindow):
         Open Shopify session and select packing list to work on.
 
         Phase 1.8 Enhanced workflow:
-        1. Use SessionSelectorDialog to browse Shopify sessions
-        2. Automatically scan packing_lists/ folder
-        3. User can select specific packing list or load entire session
-        4. Create work directory: packing/{list_name}/ for selected lists
+        1. Select worker who will be packing
+        2. Use SessionSelectorDialog to browse Shopify sessions
+        3. Automatically scan packing_lists/ folder
+        4. User can select specific packing list or load entire session
+        5. Create work directory: packing/{list_name}/ for selected lists
         """
         logger.info("Opening Shopify session selector")
 
@@ -1251,6 +1259,30 @@ class MainWindow(QMainWindow):
             )
             QTimer.singleShot(2000, lambda: self.client_combo.setStyleSheet(""))
             return
+
+        # Phase 2: Step 1 - Select worker first
+        logger.info("Opening worker selector dialog")
+        worker_dialog = WorkerSelectorDialog(self.worker_manager, self)
+
+        if not worker_dialog.exec():
+            logger.info("Worker selection cancelled")
+            return
+
+        selected_worker = worker_dialog.get_selected_worker()
+
+        if not selected_worker:
+            logger.warning("No worker selected")
+            QMessageBox.warning(
+                self,
+                "No Worker Selected",
+                "Please select a worker to continue."
+            )
+            return
+
+        # Store selected worker info
+        worker_id = selected_worker.get('worker_id')
+        worker_name = selected_worker.get('name')
+        logger.info(f"Worker selected: {worker_id} - {worker_name}")
 
         # Check if session already active
         if self.session_manager and self.session_manager.is_active():
@@ -1327,6 +1359,12 @@ class MainWindow(QMainWindow):
                 profile_manager=self.profile_manager,
                 barcode_dir=str(barcodes_dir)
             )
+
+            # Phase 2: Set worker info in logic
+            self.logic.worker_id = worker_id
+            self.logic.worker_name = worker_name
+            self.logic.packing_list_name = selected_name
+            logger.info(f"PackerLogic initialized with worker: {worker_id} - {worker_name}")
 
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)

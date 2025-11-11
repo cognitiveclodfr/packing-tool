@@ -102,6 +102,11 @@ class PackerLogic(QObject):
         self.current_order_state = {}
         self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
+        # Phase 2: Worker tracking fields
+        self.worker_id = None
+        self.worker_name = None
+        self.packing_list_name = None  # Name of current packing list
+
         # Load SKU mapping from ProfileManager
         self.sku_map = self._load_sku_mapping()
 
