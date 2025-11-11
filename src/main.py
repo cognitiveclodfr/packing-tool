@@ -125,6 +125,12 @@ class MainWindow(QMainWindow):
         self.session_manager = None  # Will be instantiated per client
         self.logic = None  # Will be instantiated per session
 
+        # Shopify session state (new workflow)
+        self.current_session_path = None  # Path to current Shopify session
+        self.current_packing_list = None  # Name of selected packing list
+        self.current_work_dir = None      # Work directory for packing results
+        self.packing_data = None          # Loaded packing list data
+
         # Phase 1.3: StatisticsManager with centralized storage on file server
         self.stats_manager = StatisticsManager(profile_manager=self.profile_manager)
 
@@ -197,10 +203,10 @@ class MainWindow(QMainWindow):
         self.start_session_button.clicked.connect(self.start_session)
         control_layout.addWidget(self.start_session_button)
 
-        self.load_shopify_button = QPushButton("Load Shopify Session")
-        self.load_shopify_button.clicked.connect(self.load_shopify_session)
+        self.load_shopify_button = QPushButton("Open Shopify Session")
+        self.load_shopify_button.clicked.connect(self.open_shopify_session)
         self.load_shopify_button.setStyleSheet("background-color: #4CAF50; color: white;")
-        self.load_shopify_button.setToolTip("Load orders from a Shopify Tool analysis session")
+        self.load_shopify_button.setToolTip("Open Shopify session and select packing list to work on")
         control_layout.addWidget(self.load_shopify_button)
 
         self.restore_session_button = QPushButton("Restore Session")
@@ -1058,32 +1064,33 @@ class MainWindow(QMainWindow):
                         f"Failed to read session information:\n\n{e}"
                     )
 
-    def load_shopify_session(self):
+    def open_shopify_session(self):
         """
-        Load orders from a Shopify Tool session.
+        Open Shopify session and select packing list to work on.
 
-        Phase 1.3.2: Integration with Shopify Tool
-        - Opens SessionSelectorDialog to choose a Shopify session
-        - Loads analysis_data.json from selected session
-        - Creates new packing session with Shopify data
+        New workflow:
+        1. User selects Shopify session directory
+        2. App scans session/packing_lists/ for JSON files
+        3. User selects which packing list to pack
+        4. App creates work directory and loads data
         """
         logger.info("Opening Shopify session selector")
 
         # Check if client is selected
         if not self.current_client_id:
-            logger.warning("Attempted to load Shopify session without selecting client")
+            logger.warning("Attempted to open Shopify session without selecting client")
             self.client_combo.setStyleSheet("border: 2px solid red;")
             QMessageBox.warning(
                 self,
                 "No Client Selected",
-                "Please select a client before loading a Shopify session!"
+                "Please select a client before opening a Shopify session!"
             )
             QTimer.singleShot(2000, lambda: self.client_combo.setStyleSheet(""))
             return
 
         # Check if session already active
         if self.session_manager and self.session_manager.is_active():
-            logger.warning("Attempted to load Shopify session while one is already active")
+            logger.warning("Attempted to open Shopify session while one is already active")
             QMessageBox.warning(
                 self,
                 "Session Active",
@@ -1091,105 +1098,187 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Open session selector dialog
-        dialog = SessionSelectorDialog(self.profile_manager, self)
+        # Step 1: Select Shopify session directory
+        sessions_base = str(self.profile_manager.get_sessions_root())
 
-        if dialog.exec() != QDialog.Accepted:
+        session_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Shopify Session Directory",
+            sessions_base,
+            QFileDialog.ShowDirsOnly
+        )
+
+        if not session_dir:
             logger.info("Shopify session selection cancelled")
             return
 
-        selected_session_path = dialog.get_selected_session()
-        session_data = dialog.get_session_data()
+        session_path = Path(session_dir)
+        logger.info(f"Selected Shopify session: {session_path}")
 
-        if not selected_session_path or not session_data:
-            logger.warning("No session selected or invalid data")
+        # Step 2: Find available packing lists
+        packing_lists_dir = session_path / "packing_lists"
+
+        if not packing_lists_dir.exists():
+            logger.warning(f"No packing_lists directory in {session_path.name}")
+            QMessageBox.warning(
+                self,
+                "No Packing Lists",
+                f"No packing lists found in:\n{session_path.name}\n\n"
+                "Generate packing lists in Shopify Tool first."
+            )
             return
 
-        logger.info(f"Loading Shopify session: {selected_session_path}")
+        # Find JSON files
+        json_files = list(packing_lists_dir.glob("*.json"))
 
+        if not json_files:
+            logger.warning(f"No JSON packing lists found in {packing_lists_dir}")
+            QMessageBox.warning(
+                self,
+                "No Packing Lists",
+                "No JSON packing lists found.\n"
+                "Generate packing lists in Shopify Tool first."
+            )
+            return
+
+        # Step 3: User selects packing list
+        packing_list_names = [f.stem for f in json_files]
+
+        from PySide6.QtWidgets import QInputDialog
+        selected_name, ok = QInputDialog.getItem(
+            self,
+            "Select Packing List",
+            "Choose packing list to pack:",
+            packing_list_names,
+            0,
+            False
+        )
+
+        if not ok:
+            logger.info("Packing list selection cancelled")
+            return
+
+        logger.info(f"Selected packing list: {selected_name}")
+
+        # Step 4: Load and setup
         try:
-            # Clear existing table
-            self.orders_table.setModel(None)
+            # Create SessionManager for this client (not initialized yet)
+            if not self.session_manager:
+                self.session_manager = SessionManager(
+                    client_id=self.current_client_id,
+                    profile_manager=self.profile_manager,
+                    lock_manager=self.lock_manager
+                )
 
-            # Create SessionManager for this client
-            self.session_manager = SessionManager(
-                client_id=self.current_client_id,
-                profile_manager=self.profile_manager,
-                lock_manager=self.lock_manager
+            # Load packing list data
+            logger.info(f"Loading packing list data: {selected_name}")
+            packing_data = self.session_manager.load_packing_list(
+                str(session_path),
+                selected_name
             )
 
-            # Start session (no actual packing list file, use session path as identifier)
-            session_id = self.session_manager.start_session(
-                packing_list_path=str(selected_session_path / "analysis" / "analysis_data.json"),
-                restore_dir=None
-            )
-            logger.info(f"Packing session started: {session_id}")
-
-            # Get barcode directory
-            barcodes_dir = self.session_manager.get_barcodes_dir()
-
-            # Create PackerLogic instance
-            self.logic = PackerLogic(
-                client_id=self.current_client_id,
-                profile_manager=self.profile_manager,
-                barcode_dir=barcodes_dir
+            # Get work directory
+            work_dir = self.session_manager.get_packing_work_dir(
+                str(session_path),
+                selected_name
             )
 
-            # Connect signals
-            self.logic.item_packed.connect(self._on_item_packed)
+            # Store current session info
+            self.current_session_path = str(session_path)
+            self.current_packing_list = selected_name
+            self.current_work_dir = str(work_dir)
+            self.packing_data = packing_data
 
-            # Load data from Shopify analysis
-            self.status_label.setText(f"Loading Shopify session: {selected_session_path.name}...")
-            QApplication.processEvents()  # Update UI
+            # Log loaded data
+            total_orders = packing_data.get('total_orders', len(packing_data.get('orders', [])))
+            total_items = packing_data.get('total_items', 0)
 
-            order_count, analyzed_at = self.logic.load_from_shopify_analysis(selected_session_path)
+            logger.info(f"Loaded: {session_path.name} / {selected_name}")
+            logger.info(f"Orders: {total_orders}, Items: {total_items}")
+            logger.info(f"Work directory: {work_dir}")
 
-            # Setup order table
-            self.setup_order_table()
-
-            # Record orders in statistics
-            order_ids = self.order_summary_df['Order_Number'].tolist()
-            self.stats_manager.record_new_orders(order_ids)
-            self._update_dashboard()
-
-            # Update UI
+            # Update UI with loaded data
             self.status_label.setText(
-                f"Successfully loaded Shopify session '{selected_session_path.name}'\n"
-                f"Analyzed at: {analyzed_at}\n"
-                f"Orders: {order_count}"
+                f"Loaded: {session_path.name} / {selected_name}\n"
+                f"Orders: {total_orders}, Items: {total_items}"
             )
 
-            self.start_session_button.setEnabled(False)
-            self.load_shopify_button.setEnabled(False)
-            self.restore_session_button.setEnabled(False)
-            self.end_session_button.setEnabled(True)
-            self.print_button.setEnabled(True)
-            self.packer_mode_button.setEnabled(True)
-
-            logger.info(f"Successfully loaded Shopify session with {order_count} orders")
+            # Enable packing UI
+            self.enable_packing_mode()
 
             QMessageBox.information(
                 self,
-                "Shopify Session Loaded",
-                f"Successfully loaded {order_count} orders from Shopify session.\n\n"
-                f"Session: {selected_session_path.name}\n"
-                f"Analyzed: {analyzed_at}\n\n"
-                f"You can now start packing!"
+                "Session Loaded",
+                f"Session: {session_path.name}\n"
+                f"Packing List: {selected_name}\n"
+                f"Orders: {total_orders}\n"
+                f"Items: {total_items}\n\n"
+                f"Work directory:\n{work_dir}"
             )
 
+        except FileNotFoundError as e:
+            logger.error(f"Packing list file not found: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "File Not Found",
+                f"Packing list file not found:\n{str(e)}"
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in packing list: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Invalid Data",
+                f"Packing list contains invalid JSON:\n{str(e)}"
+            )
+        except KeyError as e:
+            logger.error(f"Missing required key in packing list: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Invalid Format",
+                f"Packing list is missing required data:\n{str(e)}"
+            )
         except Exception as e:
-            logger.error(f"Failed to load Shopify session: {e}", exc_info=True)
+            logger.error(f"Failed to load packing list: {e}", exc_info=True)
             QMessageBox.critical(
                 self,
                 "Error",
-                f"Failed to load Shopify session:\n\n{e}"
+                f"Failed to load packing list:\n{str(e)}"
             )
 
             # Cleanup on failure
             if self.session_manager:
-                self.session_manager.end_session()
-            self.session_manager = None
+                self.session_manager = None
             self.logic = None
+
+    def enable_packing_mode(self):
+        """
+        Enable packing UI after session data is loaded.
+
+        This method:
+        - Disables session start buttons
+        - Enables packing operation buttons
+        - Updates status message
+        - Prepares UI for packing operations
+        """
+        logger.info("Enabling packing mode UI")
+
+        # Disable session start buttons
+        self.start_session_button.setEnabled(False)
+        self.load_shopify_button.setEnabled(False)
+        self.restore_session_button.setEnabled(False)
+
+        # Enable packing operation buttons
+        self.end_session_button.setEnabled(True)
+        self.print_button.setEnabled(True)
+        self.packer_mode_button.setEnabled(True)
+
+        # Update status
+        self.status_label.setText(
+            f"Ready to pack: {self.current_packing_list}\n"
+            f"Orders: {self.packing_data.get('total_orders', 0)}"
+        )
+
+        logger.info("Packing mode UI enabled successfully")
 
     def open_session_monitor(self):
         """Open the session monitor window."""
