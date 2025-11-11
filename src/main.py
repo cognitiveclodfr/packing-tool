@@ -595,15 +595,38 @@ class MainWindow(QMainWindow):
 
         This involves saving a final report, cleaning up session files, and
         resetting the UI to its initial state.
+
+        For Shopify sessions (unified work directory):
+        - Report saved to: current_work_dir/reports/packing_completed.xlsx
+
+        For Excel sessions (legacy):
+        - Report saved to: session_dir/[original_filename]_completed.xlsx
         """
-        if not self.session_manager.is_active():
+        # Check if any session is active (Excel or Shopify)
+        is_excel_session = self.session_manager and self.session_manager.is_active()
+        is_shopify_session = hasattr(self, 'current_work_dir') and self.current_work_dir
+
+        if not (is_excel_session or is_shopify_session):
+            logger.warning("end_session called but no active session found")
             return
 
         try:
-            output_dir = self.session_manager.get_output_dir()
-            original_filename = os.path.basename(self.session_manager.packing_list_path)
-            new_filename = f"{os.path.splitext(original_filename)[0]}_completed.xlsx"
-            output_path = os.path.join(output_dir, new_filename)
+            # Determine output path based on session type
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                # Shopify session - save to unified work directory
+                from pathlib import Path
+                report_dir = Path(self.current_work_dir) / "reports"
+                report_dir.mkdir(exist_ok=True, parents=True)
+                new_filename = "packing_completed.xlsx"
+                output_path = str(report_dir / new_filename)
+                logger.info(f"Saving Shopify session report to: {output_path}")
+            else:
+                # Excel session - save to session directory (legacy behavior)
+                output_dir = self.session_manager.get_output_dir()
+                original_filename = os.path.basename(self.session_manager.packing_list_path)
+                new_filename = f"{os.path.splitext(original_filename)[0]}_completed.xlsx"
+                output_path = os.path.join(output_dir, new_filename)
+                logger.info(f"Saving Excel session report to: {output_path}")
 
             status_map = self.order_summary_df.set_index('Order_Number')['Status'].to_dict()
             completed_at_map = self.order_summary_df.set_index('Order_Number')['Completed At'].to_dict()
@@ -692,12 +715,24 @@ class MainWindow(QMainWindow):
                     total_orders = 0
                     total_items = 0
 
+                # Get session identifier and packing list path based on session type
+                if is_shopify_session:
+                    # Shopify session - use current_packing_list as identifier
+                    session_id = f"{self.current_session_path}_{self.current_packing_list}" if hasattr(self, 'current_session_path') else "shopify_session"
+                    packing_list_path = self.current_packing_list if hasattr(self, 'current_packing_list') else "Unknown"
+                    summary_output_dir = self.current_work_dir
+                else:
+                    # Excel session - use session_manager data
+                    session_id = self.session_manager.session_id
+                    packing_list_path = self.session_manager.packing_list_path
+                    summary_output_dir = output_dir
+
                 # Record session completion in statistics
                 try:
                     if start_time:  # Only record if we have start_time
                         self.stats_manager.record_session_completion(
                             client_id=self.current_client_id,
-                            session_id=self.session_manager.session_id,
+                            session_id=session_id,
                             start_time=start_time,
                             end_time=end_time,
                             orders_completed=completed_orders,
@@ -709,15 +744,16 @@ class MainWindow(QMainWindow):
 
                 # Phase 1.3: ALWAYS save session summary for History
                 try:
-                    summary_path = os.path.join(output_dir, "session_summary.json")
+                    summary_path = os.path.join(summary_output_dir, "session_summary.json")
                     session_summary = {
                         "version": "1.0",
-                        "session_id": self.session_manager.session_id,
+                        "session_id": session_id,
+                        "session_type": "shopify" if is_shopify_session else "excel",
                         "client_id": self.current_client_id,
                         "started_at": start_time.isoformat() if start_time else None,
                         "completed_at": end_time.isoformat(),
                         "duration_seconds": int((end_time - start_time).total_seconds()) if start_time else None,
-                        "packing_list_path": self.session_manager.packing_list_path,
+                        "packing_list_path": packing_list_path,
                         "completed_file_path": output_path,
                         "pc_name": session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown'),
                         "user_name": os.environ.get('USERNAME', 'Unknown'),
@@ -738,12 +774,13 @@ class MainWindow(QMainWindow):
                     try:
                         minimal_summary = {
                             "version": "1.0",
-                            "session_id": self.session_manager.session_id,
+                            "session_id": session_id,
+                            "session_type": "shopify" if is_shopify_session else "excel",
                             "client_id": self.current_client_id,
                             "completed_at": datetime.now().isoformat(),
                             "error": str(e)
                         }
-                        with open(os.path.join(output_dir, "session_summary.json"), 'w') as f:
+                        with open(os.path.join(summary_output_dir, "session_summary.json"), 'w') as f:
                             json.dump(minimal_summary, f, indent=2)
                         logger.warning("Saved minimal session summary due to errors")
                     except Exception as e2:
@@ -756,11 +793,24 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Could not save the report. Error: {e}")
             logger.error(f"Error during end_session: {e}")
 
+        # Cleanup PackerLogic state
         if self.logic:
             self.logic.end_session_cleanup()
+            self.logic = None
 
-        self.session_manager.end_session()
-        self.logic = None
+        # End Excel session if active
+        if self.session_manager and self.session_manager.is_active():
+            self.session_manager.end_session()
+
+        # Clear Shopify session variables
+        if hasattr(self, 'current_work_dir'):
+            self.current_work_dir = None
+        if hasattr(self, 'current_session_path'):
+            self.current_session_path = None
+        if hasattr(self, 'current_packing_list'):
+            self.current_packing_list = None
+        if hasattr(self, 'packing_data'):
+            self.packing_data = None
 
         self.start_session_button.setEnabled(True)
         self.load_shopify_button.setEnabled(True)
@@ -770,6 +820,8 @@ class MainWindow(QMainWindow):
         self.packer_mode_button.setEnabled(False)
         self.orders_table.setModel(None)
         self.status_label.setText("Session ended. Start a new session to begin.")
+
+        logger.info("Session ended and all variables cleared")
 
     def load_and_process_file(self, file_path: str):
         """
@@ -943,6 +995,108 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.scanner_input.setEnabled(False)
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+
+    def _process_shopify_packing_data(self, packing_data: dict) -> int:
+        """
+        Process Shopify packing list data and generate barcodes.
+
+        This method converts the JSON packing list format from Shopify Tool
+        into the DataFrame format expected by PackerLogic, then generates barcodes.
+
+        Args:
+            packing_data: Dictionary containing orders data with structure:
+                {
+                    'orders': [
+                        {
+                            'order_number': str,
+                            'items': [{'sku': str, 'quantity': int, 'product_name': str}],
+                            'courier': str,
+                            ...other fields...
+                        }
+                    ],
+                    'total_orders': int,
+                    'total_items': int,
+                    ...
+                }
+
+        Returns:
+            int: Number of orders processed
+
+        Raises:
+            ValueError: If packing data is invalid or missing required fields
+            RuntimeError: If barcode generation fails
+        """
+        import pandas as pd
+
+        logger.info("Converting Shopify packing data to DataFrame")
+
+        # Extract orders list
+        orders_list = packing_data.get('orders', [])
+        if not orders_list:
+            error_msg = "No orders found in packing data"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Convert to DataFrame (packing list format)
+        # Each order may have multiple items, need to flatten
+        rows = []
+
+        for order in orders_list:
+            order_number = order.get('order_number', 'UNKNOWN')
+            courier = order.get('courier', 'Unknown')
+            items = order.get('items', [])
+
+            for item in items:
+                row = {
+                    'Order_Number': order_number,
+                    'SKU': item.get('sku', ''),
+                    'Product_Name': item.get('product_name', ''),
+                    'Quantity': str(item.get('quantity', 1)),  # Convert to string for consistency
+                    'Courier': courier
+                }
+
+                # Add any extra fields from order
+                for key, value in order.items():
+                    if key not in ['order_number', 'courier', 'items']:
+                        # Capitalize key to match packing list style
+                        formatted_key = key.replace('_', ' ').title().replace(' ', '_')
+                        row[formatted_key] = str(value)
+
+                rows.append(row)
+
+        # Create DataFrame
+        df = pd.DataFrame(rows)
+
+        if df.empty:
+            logger.warning("No order items to process")
+            return 0
+
+        # Validate required columns
+        from packer_logic import REQUIRED_COLUMNS
+        missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_cols:
+            error_msg = f"Missing required columns in packing data: {missing_cols}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Store as packing_list_df and processed_df in logic
+        self.logic.packing_list_df = df
+        self.logic.processed_df = df.copy()
+
+        logger.info(f"Converted {len(df)} items from {len(orders_list)} orders to DataFrame")
+
+        # Generate barcodes
+        try:
+            order_count = self.logic.process_data_and_generate_barcodes(column_mapping=None)
+            logger.info(f"Successfully generated barcodes for {order_count} orders")
+            logger.info(f"Barcodes saved to: {self.logic.barcode_dir}")
+
+            return order_count
+
+        except Exception as e:
+            error_msg = f"Error generating barcodes from Shopify data: {e}"
+            logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg)
 
     def _on_item_packed(self, order_number: str, packed_count: int, required_count: int):
         """
@@ -1197,10 +1351,31 @@ class MainWindow(QMainWindow):
             logger.info(f"Orders: {total_orders}, Items: {total_items}")
             logger.info(f"Work directory: {work_dir}")
 
+            # Create PackerLogic instance with unified work directory
+            barcodes_dir = work_dir / "barcodes"
+            logger.info(f"Creating PackerLogic with barcode_dir: {barcodes_dir}")
+
+            self.logic = PackerLogic(
+                client_id=self.current_client_id,
+                profile_manager=self.profile_manager,
+                barcode_dir=str(barcodes_dir)
+            )
+
+            # Connect signals
+            self.logic.item_packed.connect(self._on_item_packed)
+
+            # Load Shopify packing list data
+            logger.info("Processing Shopify packing list data")
+            order_count = self._process_shopify_packing_data(packing_data)
+
+            # Setup order table
+            self.setup_order_table()
+
             # Update UI with loaded data
             self.status_label.setText(
                 f"Loaded: {session_path.name} / {selected_name}\n"
-                f"Orders: {total_orders}, Items: {total_items}"
+                f"Orders: {order_count}, Items: {total_items}\n"
+                f"Barcodes generated successfully"
             )
 
             # Enable packing UI
@@ -1237,6 +1412,26 @@ class MainWindow(QMainWindow):
                 "Invalid Format",
                 f"Packing list is missing required data:\n{str(e)}"
             )
+        except ValueError as e:
+            logger.error(f"Invalid packing data: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Invalid Data",
+                f"Packing data validation failed:\n{str(e)}"
+            )
+            # Cleanup on failure
+            if self.logic:
+                self.logic = None
+        except RuntimeError as e:
+            logger.error(f"Barcode generation failed: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Generation Failed",
+                f"Failed to generate barcodes:\n{str(e)}"
+            )
+            # Cleanup on failure
+            if self.logic:
+                self.logic = None
         except Exception as e:
             logger.error(f"Failed to load packing list: {e}", exc_info=True)
             QMessageBox.critical(
