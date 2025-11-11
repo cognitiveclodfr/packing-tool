@@ -321,3 +321,229 @@ def test_packing_with_duplicate_sku_rows(packer_logic, dummy_file_path):
     # Test extra scan
     result, status = packer_logic.process_sku_scan('SKU-A')
     assert status == "SKU_EXTRA"
+
+
+# ============================================================================
+# Phase 1.8: Tests for load_packing_list_json
+# ============================================================================
+
+def test_load_packing_list_json_valid(packer_logic, test_dir):
+    """Test loading a valid packing list JSON file."""
+    import json
+    from pathlib import Path
+
+    # Create valid packing list JSON
+    packing_list_data = {
+        "list_name": "DHL_Orders",
+        "created_at": "2025-11-11T10:00:00",
+        "courier": "DHL",
+        "total_orders": 2,
+        "orders": [
+            {
+                "order_number": "ORDER-001",
+                "courier": "DHL",
+                "items": [
+                    {"sku": "SKU-123", "quantity": 2, "product_name": "Product A"},
+                    {"sku": "SKU-456", "quantity": 1, "product_name": "Product B"}
+                ]
+            },
+            {
+                "order_number": "ORDER-002",
+                "courier": "DHL",
+                "items": [
+                    {"sku": "SKU-789", "quantity": 1, "product_name": "Product C"}
+                ]
+            }
+        ]
+    }
+
+    # Write to JSON file
+    json_path = Path(test_dir) / "DHL_Orders.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+
+    # Load packing list
+    order_count, list_name = packer_logic.load_packing_list_json(json_path)
+
+    # Verify results
+    assert order_count == 2
+    assert list_name == "DHL_Orders"
+
+    # Verify data loaded correctly
+    assert packer_logic.processed_df is not None
+    assert len(packer_logic.processed_df) == 3  # 3 items total
+    assert 'ORDER-001' in packer_logic.orders_data
+    assert 'ORDER-002' in packer_logic.orders_data
+
+    # Verify barcodes generated
+    assert len(packer_logic.orders_data) == 2
+    assert os.path.exists(packer_logic.orders_data['ORDER-001']['barcode_path'])
+    assert os.path.exists(packer_logic.orders_data['ORDER-002']['barcode_path'])
+
+
+def test_load_packing_list_json_invalid_json(packer_logic, test_dir):
+    """Test loading an invalid JSON file."""
+    from pathlib import Path
+
+    # Create invalid JSON file
+    json_path = Path(test_dir) / "invalid.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        f.write("{invalid json content")
+
+    # Should raise ValueError for invalid JSON
+    with pytest.raises(ValueError, match="Invalid JSON in packing list file"):
+        packer_logic.load_packing_list_json(json_path)
+
+
+def test_load_packing_list_json_missing_file(packer_logic, test_dir):
+    """Test loading a non-existent packing list file."""
+    from pathlib import Path
+
+    # Try to load non-existent file
+    json_path = Path(test_dir) / "nonexistent.json"
+
+    # Should raise ValueError for missing file
+    with pytest.raises(ValueError, match="Packing list file not found"):
+        packer_logic.load_packing_list_json(json_path)
+
+
+def test_load_packing_list_json_missing_required_fields(packer_logic, test_dir):
+    """Test loading JSON with missing required fields."""
+    import json
+    from pathlib import Path
+
+    # Create JSON with missing courier field
+    packing_list_data = {
+        "list_name": "Invalid_List",
+        "orders": [
+            {
+                "order_number": "ORDER-001",
+                # Missing courier field
+                "items": [
+                    {"sku": "SKU-123", "quantity": 1, "product_name": "Product A"}
+                ]
+            }
+        ]
+    }
+
+    json_path = Path(test_dir) / "invalid_fields.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+
+    # Should raise ValueError for missing required fields
+    with pytest.raises(ValueError, match="Missing required fields in order data"):
+        packer_logic.load_packing_list_json(json_path)
+
+
+def test_load_packing_list_json_empty_orders(packer_logic, test_dir):
+    """Test loading JSON with no orders."""
+    import json
+    from pathlib import Path
+
+    # Create JSON with empty orders list
+    packing_list_data = {
+        "list_name": "Empty_List",
+        "orders": []
+    }
+
+    json_path = Path(test_dir) / "empty.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+
+    # Should return 0 orders
+    order_count, list_name = packer_logic.load_packing_list_json(json_path)
+
+    assert order_count == 0
+    assert list_name == "Empty_List"
+
+
+def test_load_packing_list_json_with_extra_fields(packer_logic, test_dir):
+    """Test loading JSON with extra fields (should be preserved)."""
+    import json
+    from pathlib import Path
+
+    # Create JSON with extra fields
+    packing_list_data = {
+        "list_name": "Extended_Orders",
+        "created_at": "2025-11-11T10:00:00",
+        "courier": "PostOne",
+        "total_orders": 1,
+        "orders": [
+            {
+                "order_number": "ORDER-001",
+                "courier": "PostOne",
+                "customer_name": "John Doe",  # Extra field
+                "tracking_number": "TRACK123",  # Extra field
+                "items": [
+                    {"sku": "SKU-123", "quantity": 1, "product_name": "Product A"}
+                ]
+            }
+        ]
+    }
+
+    json_path = Path(test_dir) / "extended.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+
+    # Load packing list
+    order_count, list_name = packer_logic.load_packing_list_json(json_path)
+
+    assert order_count == 1
+
+    # Verify extra fields were preserved in DataFrame
+    assert 'Customer_Name' in packer_logic.processed_df.columns
+    assert 'Tracking_Number' in packer_logic.processed_df.columns
+    assert packer_logic.processed_df['Customer_Name'].iloc[0] == "John Doe"
+
+
+def test_packing_workflow_with_json_list(packer_logic, test_dir):
+    """Test complete packing workflow using JSON packing list."""
+    import json
+    from pathlib import Path
+
+    # Create packing list JSON
+    packing_list_data = {
+        "list_name": "Test_Workflow",
+        "total_orders": 1,
+        "orders": [
+            {
+                "order_number": "ORD-100",
+                "courier": "Speedy",
+                "items": [
+                    {"sku": "SKU-A", "quantity": 2, "product_name": "Product A"},
+                    {"sku": "SKU-B", "quantity": 1, "product_name": "Product B"}
+                ]
+            }
+        ]
+    }
+
+    json_path = Path(test_dir) / "workflow_test.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+
+    # Load packing list
+    order_count, list_name = packer_logic.load_packing_list_json(json_path)
+    assert order_count == 1
+
+    # Start packing
+    items, status = packer_logic.start_order_packing('ORD-100')
+    assert status == "ORDER_LOADED"
+    assert len(items) == 2
+
+    # Pack first item
+    result, status = packer_logic.process_sku_scan('SKU-A')
+    assert status == "SKU_OK"
+    assert result['packed'] == 1
+
+    # Pack second item of SKU-A
+    result, status = packer_logic.process_sku_scan('SKU-A')
+    assert status == "SKU_OK"
+    assert result['packed'] == 2
+    assert result['is_complete'] is True
+
+    # Pack SKU-B
+    result, status = packer_logic.process_sku_scan('SKU-B')
+    assert status == "ORDER_COMPLETE"
+
+    # Verify order completed
+    assert 'ORD-100' in packer_logic.session_packing_state['completed_orders']
