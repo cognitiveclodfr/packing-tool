@@ -768,6 +768,16 @@ class MainWindow(QMainWindow):
                         json.dump(session_summary, f, indent=2, ensure_ascii=False)
 
                     logger.info(f"Saved session summary: {completed_orders}/{total_orders} orders, {items_packed}/{total_items} items to {summary_path}")
+
+                    # Update session metadata with completion status
+                    if hasattr(self, 'current_session_path') and hasattr(self, 'current_packing_list'):
+                        if self.current_session_path and self.current_packing_list:
+                            self.session_manager.update_session_metadata(
+                                self.current_session_path,
+                                self.current_packing_list,
+                                'completed'
+                            )
+
                 except Exception as e:
                     logger.error(f"CRITICAL: Error saving session summary: {e}", exc_info=True)
                     # Try to save minimal summary
@@ -1350,6 +1360,13 @@ class MainWindow(QMainWindow):
             logger.info(f"Loaded: {session_path.name} / {selected_name}")
             logger.info(f"Orders: {total_orders}, Items: {total_items}")
             logger.info(f"Work directory: {work_dir}")
+
+            # Update session metadata with packing progress
+            self.session_manager.update_session_metadata(
+                self.current_session_path,
+                self.current_packing_list,
+                'in_progress'
+            )
 
             # Create PackerLogic instance with unified work directory
             barcodes_dir = work_dir / "barcodes"
