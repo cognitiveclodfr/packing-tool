@@ -1338,12 +1338,40 @@ class MainWindow(QMainWindow):
                 order_count, list_name = self.logic.load_packing_list_json(packing_list_path)
 
                 logger.info(f"Loaded packing list '{list_name}': {order_count} orders")
+
+                # Load JSON data for UI display (read the file to get metadata)
+                try:
+                    with open(packing_list_path, 'r', encoding='utf-8') as f:
+                        self.packing_data = json.load(f)
+                    logger.debug(f"Loaded packing data metadata: {self.packing_data.get('total_orders', 0)} orders")
+                except Exception as e:
+                    logger.warning(f"Could not load packing data metadata: {e}")
+                    # Set minimal packing_data for UI
+                    self.packing_data = {
+                        'list_name': list_name,
+                        'total_orders': order_count,
+                        'orders': []
+                    }
             else:
                 # Load entire session (analysis_data.json)
                 logger.info(f"Loading full session from: {session_path}")
                 order_count, analyzed_at = self.logic.load_from_shopify_analysis(session_path)
 
                 logger.info(f"Loaded full session: {order_count} orders (analyzed at {analyzed_at})")
+
+                # Load analysis_data.json for UI display
+                try:
+                    analysis_file = session_path / "analysis" / "analysis_data.json"
+                    with open(analysis_file, 'r', encoding='utf-8') as f:
+                        self.packing_data = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Could not load analysis data: {e}")
+                    # Set minimal packing_data for UI
+                    self.packing_data = {
+                        'analyzed_at': analyzed_at,
+                        'total_orders': order_count,
+                        'orders': []
+                    }
 
             # Update session metadata with packing progress
             if hasattr(self.session_manager, 'update_session_metadata'):
