@@ -32,6 +32,8 @@ from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from dashboard_widget import DashboardWidget
 from session_history_widget import SessionHistoryWidget
+from worker_manager import WorkerManager
+from worker_selector_dialog import WorkerSelectorDialog
 
 logger = get_logger(__name__)
 
@@ -120,10 +122,19 @@ class MainWindow(QMainWindow):
         self.lock_manager = SessionLockManager(self.profile_manager)
         logger.info("SessionLockManager initialized successfully")
 
+        # Initialize WorkerManager
+        workers_dir = self.profile_manager.get_base_path() / "Workers"
+        self.worker_manager = WorkerManager(workers_dir)
+        logger.info("WorkerManager initialized successfully")
+
         # Current client state
         self.current_client_id = None
         self.session_manager = None  # Will be instantiated per client
         self.logic = None  # Will be instantiated per session
+
+        # Worker state
+        self.current_worker_id = None
+        self.current_worker_name = None
 
         # Shopify session state (new workflow)
         self.current_session_path = None  # Path to current Shopify session
@@ -742,14 +753,40 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error recording session metrics to stats: {e}", exc_info=True)
 
-                # Phase 1.3: ALWAYS save session summary for History
+                # Phase 2: Generate detailed packing history (v2.0)
+                packing_history_file = None
+                try:
+                    if self.logic:
+                        packing_history_file = self.logic.generate_packing_history(session_start_time=start_time)
+                        if packing_history_file:
+                            logger.info(f"Generated packing history: {packing_history_file}")
+                except Exception as e:
+                    logger.error(f"Error generating packing history: {e}", exc_info=True)
+
+                # Phase 2: ALWAYS save session summary (v2.0 format)
                 try:
                     summary_path = os.path.join(summary_output_dir, "session_summary.json")
+
+                    # Get relative path to packing_history if it exists
+                    packing_history_relative = None
+                    if packing_history_file:
+                        try:
+                            from pathlib import Path
+                            summary_dir = Path(summary_output_dir)
+                            history_path = Path(packing_history_file)
+                            packing_history_relative = str(history_path.relative_to(summary_dir))
+                        except ValueError:
+                            # If relative path fails, use absolute
+                            packing_history_relative = packing_history_file
+
                     session_summary = {
-                        "version": "1.0",
+                        "version": "2.0",
                         "session_id": session_id,
                         "session_type": "shopify" if is_shopify_session else "excel",
                         "client_id": self.current_client_id,
+                        "packing_list_name": self.current_packing_list if hasattr(self, 'current_packing_list') else None,
+                        "worker_id": self.current_worker_id if hasattr(self, 'current_worker_id') else None,
+                        "worker_name": self.current_worker_name if hasattr(self, 'current_worker_name') else None,
                         "started_at": start_time.isoformat() if start_time else None,
                         "completed_at": end_time.isoformat(),
                         "duration_seconds": int((end_time - start_time).total_seconds()) if start_time else None,
@@ -757,17 +794,21 @@ class MainWindow(QMainWindow):
                         "completed_file_path": output_path,
                         "pc_name": session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown'),
                         "user_name": os.environ.get('USERNAME', 'Unknown'),
-                        "total_orders": total_orders,
-                        "completed_orders": completed_orders,
-                        "in_progress_orders": in_progress_orders,
-                        "total_items": total_items,
-                        "items_packed": items_packed
+                        "statistics": {
+                            "total_orders": total_orders,
+                            "completed_orders": completed_orders,
+                            "in_progress_orders": in_progress_orders,
+                            "total_items": total_items,
+                            "items_packed": items_packed,
+                            "completion_rate": round((completed_orders / total_orders * 100) if total_orders > 0 else 0, 2)
+                        },
+                        "packing_history_file": packing_history_relative
                     }
 
                     with open(summary_path, 'w', encoding='utf-8') as f:
                         json.dump(session_summary, f, indent=2, ensure_ascii=False)
 
-                    logger.info(f"Saved session summary: {completed_orders}/{total_orders} orders, {items_packed}/{total_items} items to {summary_path}")
+                    logger.info(f"Saved session summary v2.0: {completed_orders}/{total_orders} orders, {items_packed}/{total_items} items to {summary_path}")
 
                     # Update session metadata with completion status
                     if hasattr(self, 'current_session_path') and hasattr(self, 'current_packing_list'):
@@ -1278,7 +1319,31 @@ class MainWindow(QMainWindow):
 
         logger.info(f"Selected Shopify session: {session_path}")
 
-        # Step 2: Determine loading mode
+        # Step 2: Worker selection
+        logger.info("Prompting worker selection")
+        worker_dialog = WorkerSelectorDialog(self.worker_manager, self)
+
+        if not worker_dialog.exec():
+            logger.info("Worker selection cancelled")
+            return
+
+        selected_worker = worker_dialog.get_selected_worker()
+
+        if not selected_worker:
+            logger.warning("No worker selected")
+            QMessageBox.warning(
+                self,
+                "No Worker Selected",
+                "You must select a worker to start packing!"
+            )
+            return
+
+        # Store worker info
+        self.current_worker_id = selected_worker.get('worker_id')
+        self.current_worker_name = selected_worker.get('name')
+        logger.info(f"Selected worker: {self.current_worker_id} - {self.current_worker_name}")
+
+        # Step 3: Determine loading mode
         if packing_list_path:
             # User selected a specific packing list
             selected_name = packing_list_path.stem
@@ -1290,7 +1355,7 @@ class MainWindow(QMainWindow):
             selected_name = "full_session"
             load_mode = "full_session"
 
-        # Step 3: Create work directory structure
+        # Step 4: Create work directory structure
         try:
             # Create SessionManager for this client (not initialized yet)
             if not self.session_manager:
@@ -1321,17 +1386,22 @@ class MainWindow(QMainWindow):
             logger.info(f"Work directory created: {work_dir}")
             logger.info(f"Barcodes directory: {barcodes_dir}")
 
-            # Step 4: Create PackerLogic instance
+            # Step 5: Create PackerLogic instance
             self.logic = PackerLogic(
                 client_id=self.current_client_id,
                 profile_manager=self.profile_manager,
                 barcode_dir=str(barcodes_dir)
             )
 
+            # Set worker info in PackerLogic
+            self.logic.worker_id = self.current_worker_id
+            self.logic.worker_name = self.current_worker_name
+            self.logic.packing_list_name = selected_name
+
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)
 
-            # Step 5: Load data based on mode
+            # Step 6: Load data based on mode
             if load_mode == "packing_list":
                 # Load specific packing list JSON
                 logger.info(f"Loading packing list from: {packing_list_path}")

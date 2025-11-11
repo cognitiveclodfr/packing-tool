@@ -46,9 +46,12 @@ class WorkerManager:
         # Ensure workers directory exists
         self.workers_dir.mkdir(parents=True, exist_ok=True)
 
-    def list_workers(self) -> List[Dict]:
+    def list_workers(self, active_only: bool = True) -> List[Dict]:
         """
         Get list of all workers.
+
+        Args:
+            active_only: If True, only return active workers (default: True)
 
         Returns:
             List of worker dictionaries with basic info
@@ -72,6 +75,11 @@ class WorkerManager:
                 try:
                     with open(profile_path, 'r', encoding='utf-8') as f:
                         profile = json.load(f)
+
+                        # Apply active filter
+                        if active_only and not profile.get('active', True):
+                            continue
+
                         workers.append(profile)
                 except Exception as e:
                     logger.error(f"Error loading worker profile {profile_path}: {e}")
@@ -79,7 +87,7 @@ class WorkerManager:
             # Sort by name
             workers.sort(key=lambda w: w.get('name', ''))
 
-            logger.debug(f"Found {len(workers)} workers")
+            logger.debug(f"Found {len(workers)} workers (active_only={active_only})")
             return workers
 
         except Exception as e:
@@ -383,3 +391,22 @@ class WorkerManager:
 
         profile['active'] = active
         return self.update_worker_profile(worker_id, profile)
+
+    def get_worker_display_name(self, worker_id: str) -> str:
+        """
+        Get formatted display name for a worker.
+
+        Args:
+            worker_id: Worker identifier
+
+        Returns:
+            Formatted name string (e.g., "001 - Петро Іванов")
+            Returns "Unknown Worker" if profile not found
+        """
+        profile = self.get_worker_profile(worker_id)
+
+        if not profile:
+            return f"Unknown Worker ({worker_id})"
+
+        worker_name = profile.get('name', 'Unknown')
+        return f"{worker_id} - {worker_name}"

@@ -34,6 +34,10 @@ class SessionHistoryRecord:
         pc_name: Computer name where session was executed
         packing_list_path: Original packing list file path
         session_path: Full path to session directory
+        packing_list_name: Name of packing list (v2.0)
+        worker_id: Worker identifier (v2.0)
+        worker_name: Worker name (v2.0)
+        packing_history_file: Relative path to packing_history.json (v2.0)
     """
     session_id: str
     client_id: str
@@ -47,6 +51,10 @@ class SessionHistoryRecord:
     pc_name: Optional[str]
     packing_list_path: Optional[str]
     session_path: str
+    packing_list_name: Optional[str] = None
+    worker_id: Optional[str] = None
+    worker_name: Optional[str] = None
+    packing_history_file: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with datetime objects as ISO strings."""
@@ -307,6 +315,8 @@ class SessionHistoryManager:
         """
         Parse session_summary.json for completed sessions.
 
+        Supports both v1.0 and v2.0 formats for backward compatibility.
+
         Args:
             client_id: Client identifier
             session_dir: Path to session directory
@@ -320,6 +330,9 @@ class SessionHistoryManager:
         try:
             with open(summary_file, 'r', encoding='utf-8') as f:
                 summary = json.load(f)
+
+            # Detect version
+            version = summary.get('version', '1.0')
 
             # Parse timestamps
             start_time = None
@@ -343,19 +356,38 @@ class SessionHistoryManager:
             elif start_time and end_time:
                 duration_seconds = (end_time - start_time).total_seconds()
 
+            # Extract statistics (v2.0 has nested structure, v1.0 has flat)
+            if version == '2.0' and 'statistics' in summary:
+                stats = summary['statistics']
+                total_orders = stats.get('total_orders', 0)
+                completed_orders = stats.get('completed_orders', 0)
+                in_progress_orders = stats.get('in_progress_orders', 0)
+                total_items_packed = stats.get('items_packed', 0)
+            else:
+                # v1.0 format
+                total_orders = summary.get('total_orders', 0)
+                completed_orders = summary.get('completed_orders', 0)
+                in_progress_orders = summary.get('in_progress_orders', 0)
+                total_items_packed = summary.get('items_packed', 0)
+
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
                 start_time=start_time,
                 end_time=end_time,
                 duration_seconds=duration_seconds,
-                total_orders=summary.get('total_orders', 0),
-                completed_orders=summary.get('completed_orders', 0),
-                in_progress_orders=summary.get('in_progress_orders', 0),
-                total_items_packed=summary.get('items_packed', 0),
+                total_orders=total_orders,
+                completed_orders=completed_orders,
+                in_progress_orders=in_progress_orders,
+                total_items_packed=total_items_packed,
                 pc_name=summary.get('pc_name'),
                 packing_list_path=summary.get('packing_list_path'),
-                session_path=str(session_dir)
+                session_path=str(session_dir),
+                # v2.0 fields
+                packing_list_name=summary.get('packing_list_name'),
+                worker_id=summary.get('worker_id'),
+                worker_name=summary.get('worker_name'),
+                packing_history_file=summary.get('packing_history_file')
             )
 
         except Exception as e:
@@ -584,7 +616,106 @@ class SessionHistoryManager:
                 'In Progress': s.in_progress_orders,
                 'Items Packed': s.total_items_packed,
                 'PC Name': s.pc_name or '',
-                'Packing List': s.packing_list_path or ''
+                'Packing List': s.packing_list_path or '',
+                'Worker': s.worker_name or ''
             }
             for s in sessions
         ]
+
+    def load_detailed_history(
+        self,
+        session_path: str,
+        packing_list_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Load detailed packing history for a specific session and packing list.
+
+        Args:
+            session_path: Path to session directory
+            packing_list_name: Name of packing list
+
+        Returns:
+            Dictionary with complete packing history, or None if not found
+        """
+        try:
+            # Try to find packing_history.json in work directory
+            session_dir = Path(session_path)
+            history_file = session_dir / "packing" / packing_list_name / "packing_history.json"
+
+            if not history_file.exists():
+                logger.warning(f"Packing history not found: {history_file}")
+                return None
+
+            with open(history_file, 'r', encoding='utf-8') as f:
+                history_data = json.load(f)
+
+            logger.info(f"Loaded detailed history from: {history_file}")
+            return history_data
+
+        except Exception as e:
+            logger.error(f"Error loading detailed history: {e}", exc_info=True)
+            return None
+
+    def get_order_scan_timeline(
+        self,
+        session_path: str,
+        packing_list_name: str,
+        order_number: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Get scan timeline for a specific order.
+
+        Args:
+            session_path: Path to session directory
+            packing_list_name: Name of packing list
+            order_number: Order number to get timeline for
+
+        Returns:
+            List of scan records with timestamps, sorted chronologically
+        """
+        try:
+            # Load detailed history
+            history = self.load_detailed_history(session_path, packing_list_name)
+
+            if not history:
+                return None
+
+            # Find the order in history
+            orders = history.get('orders', [])
+            target_order = None
+
+            for order in orders:
+                if order.get('order_number') == order_number:
+                    target_order = order
+                    break
+
+            if not target_order:
+                logger.warning(f"Order {order_number} not found in history")
+                return None
+
+            # Extract all scans from all items
+            timeline = []
+            for item in target_order.get('items', []):
+                for scan in item.get('scans', []):
+                    timeline.append({
+                        'timestamp': scan['timestamp'],
+                        'sku': item['sku'],
+                        'product_name': item['product_name'],
+                        'scan_number': scan['scan_number']
+                    })
+
+            # Sort by timestamp
+            timeline.sort(key=lambda x: x['timestamp'])
+
+            # Calculate time since order start
+            if timeline and target_order.get('started_at'):
+                order_start = datetime.fromisoformat(target_order['started_at'])
+                for scan in timeline:
+                    scan_time = datetime.fromisoformat(scan['timestamp'])
+                    scan['time_since_start_seconds'] = (scan_time - order_start).total_seconds()
+
+            return timeline
+
+        except Exception as e:
+            logger.error(f"Error getting order scan timeline: {e}", exc_info=True)
+            return None
