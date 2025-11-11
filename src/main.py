@@ -32,6 +32,8 @@ from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from dashboard_widget import DashboardWidget
 from session_history_widget import SessionHistoryWidget
+from worker_selector_dialog import WorkerSelectorDialog
+from worker_manager import WorkerManager
 
 logger = get_logger(__name__)
 
@@ -119,6 +121,11 @@ class MainWindow(QMainWindow):
         # Initialize SessionLockManager
         self.lock_manager = SessionLockManager(self.profile_manager)
         logger.info("SessionLockManager initialized successfully")
+
+        # Initialize WorkerManager
+        workers_dir = self.profile_manager.base_path / "Workers"
+        self.worker_manager = WorkerManager(workers_dir)
+        logger.info("WorkerManager initialized successfully")
 
         # Current client state
         self.current_client_id = None
@@ -742,14 +749,34 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error recording session metrics to stats: {e}", exc_info=True)
 
-                # Phase 1.3: ALWAYS save session summary for History
+                # Phase 2: Generate detailed packing history BEFORE summary
+                packing_history_path = None
+                try:
+                    if self.logic:
+                        # Set session start time if not set
+                        if not self.logic.session_start_time and start_time:
+                            self.logic.session_start_time = start_time
+
+                        # Generate detailed packing history
+                        packing_history_file = os.path.join(summary_output_dir, "packing_history.json")
+                        self.logic.generate_packing_history(output_path=packing_history_file)
+                        packing_history_path = "packing_history.json"  # Relative path for reference
+                        logger.info(f"Generated detailed packing history: {packing_history_file}")
+                except Exception as e:
+                    logger.error(f"Error generating packing history: {e}", exc_info=True)
+                    # Continue even if packing history fails
+
+                # Phase 2: ALWAYS save session summary for History (v2.0 with worker info)
                 try:
                     summary_path = os.path.join(summary_output_dir, "session_summary.json")
                     session_summary = {
-                        "version": "1.0",
+                        "version": "2.0",
                         "session_id": session_id,
                         "session_type": "shopify" if is_shopify_session else "excel",
                         "client_id": self.current_client_id,
+                        "packing_list_name": self.logic.packing_list_name if self.logic else None,
+                        "worker_id": self.logic.worker_id if self.logic else None,
+                        "worker_name": self.logic.worker_name if self.logic else None,
                         "started_at": start_time.isoformat() if start_time else None,
                         "completed_at": end_time.isoformat(),
                         "duration_seconds": int((end_time - start_time).total_seconds()) if start_time else None,
@@ -761,7 +788,8 @@ class MainWindow(QMainWindow):
                         "completed_orders": completed_orders,
                         "in_progress_orders": in_progress_orders,
                         "total_items": total_items,
-                        "items_packed": items_packed
+                        "items_packed": items_packed,
+                        "packing_history_file": packing_history_path  # Reference to detailed history
                     }
 
                     with open(summary_path, 'w', encoding='utf-8') as f:
@@ -1233,10 +1261,11 @@ class MainWindow(QMainWindow):
         Open Shopify session and select packing list to work on.
 
         Phase 1.8 Enhanced workflow:
-        1. Use SessionSelectorDialog to browse Shopify sessions
-        2. Automatically scan packing_lists/ folder
-        3. User can select specific packing list or load entire session
-        4. Create work directory: packing/{list_name}/ for selected lists
+        1. Select worker who will be packing
+        2. Use SessionSelectorDialog to browse Shopify sessions
+        3. Automatically scan packing_lists/ folder
+        4. User can select specific packing list or load entire session
+        5. Create work directory: packing/{list_name}/ for selected lists
         """
         logger.info("Opening Shopify session selector")
 
@@ -1251,6 +1280,30 @@ class MainWindow(QMainWindow):
             )
             QTimer.singleShot(2000, lambda: self.client_combo.setStyleSheet(""))
             return
+
+        # Phase 2: Step 1 - Select worker first
+        logger.info("Opening worker selector dialog")
+        worker_dialog = WorkerSelectorDialog(self.worker_manager, self)
+
+        if not worker_dialog.exec():
+            logger.info("Worker selection cancelled")
+            return
+
+        selected_worker = worker_dialog.get_selected_worker()
+
+        if not selected_worker:
+            logger.warning("No worker selected")
+            QMessageBox.warning(
+                self,
+                "No Worker Selected",
+                "Please select a worker to continue."
+            )
+            return
+
+        # Store selected worker info
+        worker_id = selected_worker.get('worker_id')
+        worker_name = selected_worker.get('name')
+        logger.info(f"Worker selected: {worker_id} - {worker_name}")
 
         # Check if session already active
         if self.session_manager and self.session_manager.is_active():
@@ -1327,6 +1380,12 @@ class MainWindow(QMainWindow):
                 profile_manager=self.profile_manager,
                 barcode_dir=str(barcodes_dir)
             )
+
+            # Phase 2: Set worker info in logic
+            self.logic.worker_id = worker_id
+            self.logic.worker_name = worker_name
+            self.logic.packing_list_name = selected_name
+            logger.info(f"PackerLogic initialized with worker: {worker_id} - {worker_name}")
 
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)

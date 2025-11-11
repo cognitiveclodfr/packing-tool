@@ -34,6 +34,10 @@ class SessionHistoryRecord:
         pc_name: Computer name where session was executed
         packing_list_path: Original packing list file path
         session_path: Full path to session directory
+        packing_list_name: Name of packing list (Phase 2)
+        worker_id: Worker who performed the packing (Phase 2)
+        worker_name: Worker name (Phase 2)
+        packing_history_file: Path to detailed packing_history.json (Phase 2)
     """
     session_id: str
     client_id: str
@@ -47,6 +51,10 @@ class SessionHistoryRecord:
     pc_name: Optional[str]
     packing_list_path: Optional[str]
     session_path: str
+    packing_list_name: Optional[str] = None
+    worker_id: Optional[str] = None
+    worker_name: Optional[str] = None
+    packing_history_file: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with datetime objects as ISO strings."""
@@ -307,6 +315,8 @@ class SessionHistoryManager:
         """
         Parse session_summary.json for completed sessions.
 
+        Supports both v1.0 and v2.0 formats.
+
         Args:
             client_id: Client identifier
             session_dir: Path to session directory
@@ -343,6 +353,12 @@ class SessionHistoryManager:
             elif start_time and end_time:
                 duration_seconds = (end_time - start_time).total_seconds()
 
+            # Phase 2: Extract new fields (worker info, packing list name)
+            packing_list_name = summary.get('packing_list_name')
+            worker_id = summary.get('worker_id')
+            worker_name = summary.get('worker_name')
+            packing_history_file = summary.get('packing_history_file')
+
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
@@ -355,7 +371,11 @@ class SessionHistoryManager:
                 total_items_packed=summary.get('items_packed', 0),
                 pc_name=summary.get('pc_name'),
                 packing_list_path=summary.get('packing_list_path'),
-                session_path=str(session_dir)
+                session_path=str(session_dir),
+                packing_list_name=packing_list_name,
+                worker_id=worker_id,
+                worker_name=worker_name,
+                packing_history_file=packing_history_file
             )
 
         except Exception as e:
@@ -559,12 +579,116 @@ class SessionHistoryManager:
             logger.error(f"Error getting session details: {e}")
             return None
 
+    def load_detailed_history(
+        self,
+        session_path: str,
+        packing_list_name: str = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Load detailed packing history from packing_history.json.
+
+        Phase 2: Loads comprehensive scan-level data with timestamps.
+
+        Args:
+            session_path: Path to session directory
+            packing_list_name: Name of packing list (for Shopify sessions with multiple lists)
+
+        Returns:
+            Dictionary with complete packing history, or None if not found
+        """
+        session_path = Path(session_path)
+
+        # Try different possible locations for packing_history.json
+        possible_paths = []
+
+        if packing_list_name:
+            # Shopify session with specific packing list
+            possible_paths.append(session_path / "packing" / packing_list_name / "packing_history.json")
+
+        # Default locations
+        possible_paths.extend([
+            session_path / "packing_history.json",
+            session_path / "barcodes" / "packing_history.json",
+            session_path / "packing" / "packing_history.json"
+        ])
+
+        for history_file in possible_paths:
+            if history_file.exists():
+                logger.debug(f"Loading detailed history from: {history_file}")
+                try:
+                    with open(history_file, 'r', encoding='utf-8') as f:
+                        history = json.load(f)
+                    logger.info(f"Loaded detailed history: {history.get('summary', {}).get('total_orders', 0)} orders")
+                    return history
+                except Exception as e:
+                    logger.error(f"Error loading packing history from {history_file}: {e}")
+                    continue
+
+        logger.warning(f"No packing_history.json found for session {session_path.name}")
+        return None
+
+    def get_order_scan_timeline(
+        self,
+        session_path: str,
+        packing_list_name: str,
+        order_number: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get detailed scan timeline for a specific order.
+
+        Phase 2: Extracts all scans for an order from detailed history.
+
+        Args:
+            session_path: Path to session directory
+            packing_list_name: Name of packing list
+            order_number: Order number to get timeline for
+
+        Returns:
+            List of scan dictionaries with timestamps, sorted chronologically
+        """
+        history = self.load_detailed_history(session_path, packing_list_name)
+
+        if not history:
+            return []
+
+        # Find the order in history
+        orders = history.get('orders', [])
+
+        for order in orders:
+            if order.get('order_number') == order_number:
+                # Extract all scans from all items
+                all_scans = []
+
+                for item in order.get('items', []):
+                    sku = item.get('sku', '')
+                    product_name = item.get('product_name', '')
+
+                    for scan in item.get('scans', []):
+                        scan_data = {
+                            'timestamp': scan.get('timestamp'),
+                            'sku': sku,
+                            'product_name': product_name,
+                            'scan_number': scan.get('scan_number')
+                        }
+                        all_scans.append(scan_data)
+
+                # Sort by timestamp
+                all_scans.sort(key=lambda s: s.get('timestamp', ''))
+
+                logger.debug(f"Found {len(all_scans)} scans for order {order_number}")
+                return all_scans
+
+        logger.warning(f"Order {order_number} not found in history")
+        return []
+
     def export_sessions_to_dict(
         self,
         sessions: List[SessionHistoryRecord]
     ) -> List[Dict[str, Any]]:
         """
         Export sessions to a list of dictionaries suitable for pandas DataFrame.
+
+        Phase 2: Includes worker and packing list information.
 
         Args:
             sessions: List of SessionHistoryRecord objects
@@ -576,6 +700,8 @@ class SessionHistoryManager:
             {
                 'Session ID': s.session_id,
                 'Client ID': s.client_id,
+                'Packing List': s.packing_list_name or s.packing_list_path or '',
+                'Worker': s.worker_name or s.worker_id or '',
                 'Start Time': s.start_time.strftime('%Y-%m-%d %H:%M:%S') if s.start_time else '',
                 'End Time': s.end_time.strftime('%Y-%m-%d %H:%M:%S') if s.end_time else '',
                 'Duration (minutes)': round(s.duration_seconds / 60, 2) if s.duration_seconds else 0,
@@ -583,8 +709,7 @@ class SessionHistoryManager:
                 'Completed Orders': s.completed_orders,
                 'In Progress': s.in_progress_orders,
                 'Items Packed': s.total_items_packed,
-                'PC Name': s.pc_name or '',
-                'Packing List': s.packing_list_path or ''
+                'PC Name': s.pc_name or ''
             }
             for s in sessions
         ]
