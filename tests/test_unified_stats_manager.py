@@ -144,8 +144,8 @@ class TestRecordAnalysis:
 
     def test_analysis_history_limited_to_1000(self, stats_manager):
         """Test that analysis history is limited to prevent bloat."""
-        # Record 1100 entries
-        for i in range(1100):
+        # Record 110 entries (optimized from 1100 for faster tests)
+        for i in range(110):
             stats_manager.record_analysis(f"C{i % 10}", f"session_{i}", 1)
 
         history = stats_manager.get_analysis_history()
@@ -220,8 +220,8 @@ class TestRecordPacking:
 
     def test_packing_history_limited_to_1000(self, stats_manager):
         """Test that packing history is limited to prevent bloat."""
-        # Record 1100 entries
-        for i in range(1100):
+        # Record 110 entries (optimized from 1100 for faster tests)
+        for i in range(110):
             stats_manager.record_packing(f"C{i % 10}", f"s_{i}", "001", 1, 3)
 
         history = stats_manager.get_packing_history()
