@@ -510,14 +510,15 @@ class MainWindow(QMainWindow):
             session_id = self.session_manager.start_session(file_path, restore_dir=restore_dir)
             logger.info(f"Session started: {session_id}")
 
-            # Get barcode directory
+            # Get barcode directory (for Excel workflow backward compatibility)
+            # This will be detected as legacy workflow in PackerLogic
             barcodes_dir = self.session_manager.get_barcodes_dir()
 
             # Create PackerLogic instance
             self.logic = PackerLogic(
                 client_id=self.current_client_id,
                 profile_manager=self.profile_manager,
-                barcode_dir=barcodes_dir
+                work_dir=barcodes_dir
             )
 
             # Connect signals
@@ -1365,25 +1366,22 @@ class MainWindow(QMainWindow):
                 # For full session, use legacy structure
                 work_dir = session_path / "packing_full_session"
 
+            # Create work directory (PackerLogic will create subdirectories)
             work_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create barcodes subdirectory
-            barcodes_dir = work_dir / "barcodes"
-            barcodes_dir.mkdir(parents=True, exist_ok=True)
 
             # Store current session info
             self.current_session_path = str(session_path)
             self.current_packing_list = selected_name
             self.current_work_dir = str(work_dir)
 
-            logger.info(f"Work directory created: {work_dir}")
-            logger.info(f"Barcodes directory: {barcodes_dir}")
+            logger.info(f"Work directory: {work_dir}")
 
-            # Step 4: Create PackerLogic instance
+            # Step 4: Create PackerLogic instance with unified work_dir
+            # PackerLogic will create barcodes/ and reports/ subdirectories
             self.logic = PackerLogic(
                 client_id=self.current_client_id,
                 profile_manager=self.profile_manager,
-                barcode_dir=str(barcodes_dir)
+                work_dir=str(work_dir)
             )
 
             # Connect signals

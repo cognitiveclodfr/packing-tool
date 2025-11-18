@@ -323,7 +323,7 @@ class TestMigrationWorkflow:
         packer_logic = PackerLogic(
             client_id="TEST",
             profile_manager=profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load Shopify analysis data
@@ -359,7 +359,7 @@ class TestMigrationWorkflow:
         packer_logic = PackerLogic(
             client_id="TEST",
             profile_manager=profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load data
@@ -398,7 +398,7 @@ class TestMigrationWorkflow:
         packer_logic = PackerLogic(
             client_id="TEST",
             profile_manager=profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load data
@@ -471,7 +471,7 @@ class TestMigrationWorkflow:
         packer_logic = PackerLogic(
             client_id="TEST",
             profile_manager=profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load data
@@ -573,7 +573,7 @@ class TestMigrationWorkflow:
         packer_logic = PackerLogic(
             client_id="TEST",
             profile_manager=profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         order_count, _ = packer_logic.load_from_shopify_analysis(session_path)
@@ -653,7 +653,7 @@ class TestMigrationEdgeCases:
             packer_logic = PackerLogic(
                 client_id="TEST",
                 profile_manager=profile_manager,
-                barcode_dir=str(barcode_dir)
+                work_dir=str(barcode_dir)
             )
 
             # Should raise error

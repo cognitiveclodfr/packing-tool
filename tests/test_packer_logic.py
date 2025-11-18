@@ -38,7 +38,7 @@ def packer_logic(mock_profile_manager, test_dir):
     return PackerLogic(
         client_id="TEST",
         profile_manager=mock_profile_manager,
-        barcode_dir=test_dir
+        work_dir=test_dir
     )
 
 

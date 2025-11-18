@@ -112,7 +112,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         # Load from Shopify analysis
@@ -157,7 +157,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         # Should raise ValueError
@@ -180,7 +180,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         # Should raise ValueError
@@ -209,7 +209,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         # Should return 0 orders
@@ -252,7 +252,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         # Should raise ValueError due to missing Courier column
@@ -295,7 +295,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         # Should successfully load and include extra fields
@@ -317,7 +317,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         logic.load_from_shopify_analysis(session_dir)
@@ -344,7 +344,7 @@ class TestShopifyIntegration:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=barcode_dir
+            work_dir=barcode_dir
         )
 
         logic.load_from_shopify_analysis(session_dir)
