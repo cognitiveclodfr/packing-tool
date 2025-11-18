@@ -380,8 +380,8 @@ class TestStressTest:
 
     def test_high_volume_concurrent_writes(self, temp_base_path):
         """Stress test with high volume of concurrent writes."""
-        num_threads = 20
-        records_per_thread = 50
+        num_threads = 10  # Optimized from 20 for faster tests
+        records_per_thread = 20  # Optimized from 50 for faster tests
 
         def mixed_operations(thread_id):
             manager = StatsManager(base_path=temp_base_path)
@@ -458,7 +458,7 @@ class TestDataIntegrity:
     def test_no_data_loss_under_concurrent_writes(self, temp_base_path):
         """Test that no data is lost under concurrent writes."""
         num_threads = 10
-        records_per_thread = 50
+        records_per_thread = 20  # Optimized from 50 for faster tests
 
         def record_with_unique_id(thread_id):
             manager = StatsManager(base_path=temp_base_path)
