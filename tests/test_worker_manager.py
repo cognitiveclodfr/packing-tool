@@ -239,10 +239,14 @@ class TestActivityLogging:
 
     def test_get_worker_activities_sorted_by_timestamp(self, worker_manager):
         """Test that activities are sorted by timestamp (most recent first)."""
+        import time
+
         worker_manager.create_worker_profile("001", "John Doe")
 
         worker_manager.log_activity("001", "first", {})
+        time.sleep(0.01)  # 10ms delay to ensure distinct timestamps
         worker_manager.log_activity("001", "second", {})
+        time.sleep(0.01)
         worker_manager.log_activity("001", "third", {})
 
         activities = worker_manager.get_worker_activities("001")

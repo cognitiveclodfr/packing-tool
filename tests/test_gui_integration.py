@@ -80,7 +80,8 @@ def mock_session_lock_manager():
 @pytest.fixture
 def mock_stats_manager():
     """Mock StatisticsManager to avoid file server dependencies."""
-    with patch('main.StatisticsManager') as mock_stats_class:
+    # Patch the unified StatsManager from shared module
+    with patch('shared.stats_manager.StatsManager') as mock_stats_class:
         mock_stats = Mock()
         mock_stats.get_display_stats.return_value = {
             'Total Unique Orders': 0,

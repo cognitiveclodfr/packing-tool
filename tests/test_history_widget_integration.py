@@ -145,7 +145,8 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
         self.assertEqual(self.widget.table.rowCount(), 1)
 
         # Check items_packed is displayed correctly
-        items_item = self.widget.table.item(0, 6)  # Items Packed column
+        # Column 7 is "Items Packed" (0:Session ID, 1:Client, 2:Start, 3:Duration, 4:Total, 5:Completed, 6:In Progress, 7:Items Packed)
+        items_item = self.widget.table.item(0, 7)  # Items Packed column (was 6, corrected to 7)
         self.assertIsNotNone(items_item)
         self.assertEqual(items_item.text(), "15")
 
@@ -211,7 +212,9 @@ class TestHistoryWidgetFilters(unittest.TestCase):
                     "version": "1.0",
                     "session_id": f"2025102{i}_100000",
                     "client_id": client_id.replace("CLIENT_", ""),
+                    "started_at": f"2025-10-2{i}T10:00:00",  # Added for proper parsing
                     "completed_at": f"2025-10-2{i}T10:30:00",
+                    "duration_seconds": 1800,  # 30 minutes
                     "total_orders": 5,
                     "completed_orders": 5,
                     "items_packed": 25
