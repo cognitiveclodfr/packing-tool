@@ -469,9 +469,9 @@ def test_reload_in_progress_order_restores_ui_state(app_duplicates):
     assert packer_widget.table.item(1, 3).text() == "Pending" # SKU-Y
     assert packer_widget.table.item(2, 3).text() == "Pending" # Second SKU-X
 
-    # --- Step 2: Exit to main menu ---
+    # --- Step 2: Exit to main menu (now tab_widget in Phase 1.3) ---
     qtbot.mouseClick(packer_widget.exit_button, Qt.LeftButton)
-    assert window.stacked_widget.currentWidget() == window.main_menu_widget
+    assert window.stacked_widget.currentWidget() == window.tab_widget
 
     # --- Step 3: Re-enter packer mode and reload the same order ---
     qtbot.mouseClick(window.packer_mode_button, Qt.LeftButton)
