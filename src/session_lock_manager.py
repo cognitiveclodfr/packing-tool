@@ -291,16 +291,17 @@ class SessionLockManager:
         for attempt in range(max_retries):
             try:
                 with open(lock_path, 'r+', encoding='utf-8') as f:
-                    # Acquire exclusive lock
-                    try:
-                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                    except IOError:
-                        # File is locked by another process, retry
-                        if attempt < max_retries - 1:
-                            time.sleep(0.1)
-                            continue
-                        else:
-                            raise
+                    # Acquire exclusive lock (Windows only)
+                    if WINDOWS_LOCKING_AVAILABLE:
+                        try:
+                            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                        except IOError:
+                            # File is locked by another process, retry
+                            if attempt < max_retries - 1:
+                                time.sleep(0.1)
+                                continue
+                            else:
+                                raise
 
                     try:
                         # Read current data
@@ -331,8 +332,9 @@ class SessionLockManager:
                         return True
 
                     finally:
-                        # Release lock
-                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                        # Release lock (Windows only)
+                        if WINDOWS_LOCKING_AVAILABLE:
+                            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
 
             except (IOError, OSError, json.JSONDecodeError) as e:
                 # Network issue or file error - don't crash
