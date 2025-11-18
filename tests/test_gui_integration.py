@@ -52,6 +52,9 @@ def mock_profile_manager(tmp_path):
     with patch('main.ProfileManager') as mock_pm_class:
         mock_pm = Mock()
 
+        # CRITICAL: base_path must return actual path, not Mock
+        mock_pm.base_path = tmp_path
+
         # Setup basic mock behavior
         mock_pm.get_available_clients.return_value = ['TEST_CLIENT']
         mock_pm.load_client_config.return_value = {
@@ -80,7 +83,8 @@ def mock_session_lock_manager():
 @pytest.fixture
 def mock_stats_manager():
     """Mock StatisticsManager to avoid file server dependencies."""
-    with patch('main.StatisticsManager') as mock_stats_class:
+    # Patch the unified StatsManager from shared module
+    with patch('shared.stats_manager.StatsManager') as mock_stats_class:
         mock_stats = Mock()
         mock_stats.get_display_stats.return_value = {
             'Total Unique Orders': 0,
@@ -136,9 +140,32 @@ def app_basic(qtbot, test_excel_file_basic, mock_profile_manager, mock_session_l
         # Mock PackerLogic
         mock_packer_logic = Mock()
         mock_packer_logic.session_packing_state = {'completed_orders': [], 'in_progress': {}}
+        mock_packer_logic.current_order_number = None
+        mock_packer_logic.current_order_state = []
+
+        # Configure barcode_to_order_number mapping
+        mock_packer_logic.barcode_to_order_number = {
+            "ORD-001": "#ORD-001",
+            "ORD-002": "ORD-002"
+        }
+
+        # Configure orders_data
+        test_df = pd.read_excel(test_excel_file_basic)
+        mock_packer_logic.orders_data = {
+            "#ORD-001": {
+                'items': [
+                    {"Order_Number": "#ORD-001", "Product_Name": "Product A", "SKU": "SKU-A-123", "Quantity": 1},
+                    {"Order_Number": "#ORD-001", "Product_Name": "Product B", "SKU": "SKU-B-456", "Quantity": 2}
+                ]
+            },
+            "ORD-002": {
+                'items': [
+                    {"Order_Number": "ORD-002", "Product_Name": "Product C", "SKU": "SKU-C-789", "Quantity": 3}
+                ]
+            }
+        }
 
         # Configure load_packing_list_from_file to return a DataFrame
-        test_df = pd.read_excel(test_excel_file_basic)
         mock_packer_logic.load_packing_list_from_file.return_value = test_df
 
         # Configure process_data_and_generate_barcodes to return order count
@@ -148,20 +175,40 @@ def app_basic(qtbot, test_excel_file_basic, mock_profile_manager, mock_session_l
         mock_packer_logic.processed_df = test_df
 
         # Configure process_sku_scan to return proper tuple (result_dict, status)
-        mock_packer_logic.process_sku_scan.return_value = (
-            {"row": 0, "packed": 1, "is_complete": True},
-            "SKU_OK"
-        )
+        def mock_process_sku_scan(sku_text):
+            # Find first unpacked matching SKU in current_order_state
+            for state_item in mock_packer_logic.current_order_state:
+                if state_item.get('original_sku') == sku_text and state_item['packed'] < state_item['required']:
+                    row = state_item['row']
+                    state_item['packed'] += 1
+                    is_complete = state_item['packed'] >= state_item['required']
+                    return {"row": row, "packed": state_item['packed'], "is_complete": is_complete}, "SKU_OK"
+            return None, "SKU_NOT_FOUND"
 
-        # Configure start_packing_order to return order data
-        mock_packer_logic.start_packing_order.return_value = {
-            "order_number": "#ORD-001",
-            "items": [
-                {"Product_Name": "Product A", "SKU": "SKU-A-123", "Quantity": 1, "packed": 0},
-                {"Product_Name": "Product B", "SKU": "SKU-B-456", "Quantity": 2, "packed": 0}
+        mock_packer_logic.process_sku_scan.side_effect = mock_process_sku_scan
+
+        # Configure start_order_packing to return items and status
+        def mock_start_order_packing(scanned_text):
+            if scanned_text not in mock_packer_logic.barcode_to_order_number:
+                return None, "ORDER_NOT_FOUND"
+            order_num = mock_packer_logic.barcode_to_order_number[scanned_text]
+            mock_packer_logic.current_order_number = order_num
+            items = mock_packer_logic.orders_data[order_num]['items']
+            # Initialize current_order_state
+            mock_packer_logic.current_order_state = [
+                {'row': i, 'packed': 0, 'required': item['Quantity'], 'original_sku': item['SKU']}
+                for i, item in enumerate(items)
             ]
-        }
-        mock_packer_logic.current_order_number = "#ORD-001"
+            return items, "ORDER_LOADED"
+
+        mock_packer_logic.start_order_packing.side_effect = mock_start_order_packing
+
+        # Add clear_current_order method
+        def mock_clear_current_order():
+            mock_packer_logic.current_order_number = None
+            mock_packer_logic.current_order_state = []
+
+        mock_packer_logic.clear_current_order.side_effect = mock_clear_current_order
 
         mock_packer_logic_class.return_value = mock_packer_logic
 
@@ -200,9 +247,27 @@ def app_duplicates(qtbot, test_excel_file_duplicates, mock_profile_manager, mock
         # Mock PackerLogic
         mock_packer_logic = Mock()
         mock_packer_logic.session_packing_state = {'completed_orders': [], 'in_progress': {}}
+        mock_packer_logic.current_order_number = None
+        mock_packer_logic.current_order_state = []
+
+        # Configure barcode_to_order_number mapping
+        mock_packer_logic.barcode_to_order_number = {
+            "ORD-100": "ORD-100"
+        }
+
+        # Configure orders_data
+        test_df = pd.read_excel(test_excel_file_duplicates)
+        mock_packer_logic.orders_data = {
+            "ORD-100": {
+                'items': [
+                    {"Order_Number": "ORD-100", "Product_Name": "Product X", "SKU": "SKU-X", "Quantity": 1},
+                    {"Order_Number": "ORD-100", "Product_Name": "Product Y", "SKU": "SKU-Y", "Quantity": 2},
+                    {"Order_Number": "ORD-100", "Product_Name": "Product X", "SKU": "SKU-X", "Quantity": 1}
+                ]
+            }
+        }
 
         # Configure load_packing_list_from_file to return a DataFrame
-        test_df = pd.read_excel(test_excel_file_duplicates)
         mock_packer_logic.load_packing_list_from_file.return_value = test_df
 
         # Configure process_data_and_generate_barcodes to return order count
@@ -212,21 +277,45 @@ def app_duplicates(qtbot, test_excel_file_duplicates, mock_profile_manager, mock
         mock_packer_logic.processed_df = test_df
 
         # Configure process_sku_scan to return proper tuple (result_dict, status)
-        mock_packer_logic.process_sku_scan.return_value = (
-            {"row": 0, "packed": 1, "is_complete": False},
-            "SKU_OK"
-        )
+        def mock_process_sku_scan(sku_text):
+            # Find first unpacked matching SKU in current_order_state
+            for state_item in mock_packer_logic.current_order_state:
+                if state_item.get('original_sku') == sku_text and state_item['packed'] < state_item['required']:
+                    row = state_item['row']
+                    state_item['packed'] += 1
+                    is_complete = state_item['packed'] >= state_item['required']
+                    return {"row": row, "packed": state_item['packed'], "is_complete": is_complete}, "SKU_OK"
+            return None, "SKU_NOT_FOUND"
 
-        # Configure start_packing_order to return order data
-        mock_packer_logic.start_packing_order.return_value = {
-            "order_number": "ORD-100",
-            "items": [
-                {"Product_Name": "Product X", "SKU": "SKU-X", "Quantity": 1, "packed": 0},
-                {"Product_Name": "Product Y", "SKU": "SKU-Y", "Quantity": 2, "packed": 0},
-                {"Product_Name": "Product X", "SKU": "SKU-X", "Quantity": 1, "packed": 0}
-            ]
-        }
-        mock_packer_logic.current_order_number = "ORD-100"
+        mock_packer_logic.process_sku_scan.side_effect = mock_process_sku_scan
+
+        # Configure start_order_packing to return items and status
+        def mock_start_order_packing(scanned_text):
+            if scanned_text not in mock_packer_logic.barcode_to_order_number:
+                return None, "ORDER_NOT_FOUND"
+            order_num = mock_packer_logic.barcode_to_order_number[scanned_text]
+            mock_packer_logic.current_order_number = order_num
+            items = mock_packer_logic.orders_data[order_num]['items']
+            # Check if order has existing state in in_progress
+            if order_num in mock_packer_logic.session_packing_state['in_progress']:
+                mock_packer_logic.current_order_state = mock_packer_logic.session_packing_state['in_progress'][order_num]
+            else:
+                # Initialize current_order_state
+                mock_packer_logic.current_order_state = [
+                    {'row': i, 'packed': 0, 'required': item['Quantity'], 'original_sku': item['SKU']}
+                    for i, item in enumerate(items)
+                ]
+                mock_packer_logic.session_packing_state['in_progress'][order_num] = mock_packer_logic.current_order_state
+            return items, "ORDER_LOADED"
+
+        mock_packer_logic.start_order_packing.side_effect = mock_start_order_packing
+
+        # Add clear_current_order method
+        def mock_clear_current_order():
+            mock_packer_logic.current_order_number = None
+            mock_packer_logic.current_order_state = []
+
+        mock_packer_logic.clear_current_order.side_effect = mock_clear_current_order
 
         mock_packer_logic_class.return_value = mock_packer_logic
 
@@ -380,9 +469,9 @@ def test_reload_in_progress_order_restores_ui_state(app_duplicates):
     assert packer_widget.table.item(1, 3).text() == "Pending" # SKU-Y
     assert packer_widget.table.item(2, 3).text() == "Pending" # Second SKU-X
 
-    # --- Step 2: Exit to main menu ---
+    # --- Step 2: Exit to main menu (now tab_widget in Phase 1.3) ---
     qtbot.mouseClick(packer_widget.exit_button, Qt.LeftButton)
-    assert window.stacked_widget.currentWidget() == window.main_menu_widget
+    assert window.stacked_widget.currentWidget() == window.tab_widget
 
     # --- Step 3: Re-enter packer mode and reload the same order ---
     qtbot.mouseClick(window.packer_mode_button, Qt.LeftButton)

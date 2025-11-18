@@ -80,6 +80,8 @@ Environment = test
         """Test switching to Packer Mode and back to Session View."""
         # Mock ProfileManager
         mock_pm = Mock()
+        # CRITICAL: base_path must return actual path, not Mock
+        mock_pm.base_path = self.temp_dir
         mock_pm.get_available_clients.return_value = ['TEST']
         mock_pm.load_client_config.return_value = {'client_name': 'Test'}
         mock_pm.get_global_stats_path.return_value = self.temp_dir / "stats.json"
@@ -127,6 +129,8 @@ Environment = test
         """Test navigation between tabs (Session, Dashboard, History)."""
         # Mock ProfileManager
         mock_pm = Mock()
+        # CRITICAL: base_path must return actual path, not Mock
+        mock_pm.base_path = self.temp_dir
         mock_pm.get_available_clients.return_value = ['TEST']
         mock_pm.load_client_config.return_value = {'client_name': 'Test'}
         mock_pm.get_global_stats_path.return_value = self.temp_dir / "stats.json"

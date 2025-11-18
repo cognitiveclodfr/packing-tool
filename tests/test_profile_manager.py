@@ -100,6 +100,10 @@ def test_profile_manager_initialization(profile_manager, temp_base_path):
     assert profile_manager.is_network_available is True
 
 
+@pytest.mark.skipif(
+    sys.platform == 'win32',
+    reason="Network path validation differs on Windows"
+)
 def test_initialization_with_invalid_path(tmp_path):
     """Test error handling when config file has invalid path."""
     # Create config with non-existent path that cannot be created
@@ -500,6 +504,10 @@ def test_network_connection_test(profile_manager):
     assert is_connected is True
 
 
+@pytest.mark.skipif(
+    sys.platform == 'win32',
+    reason="Network path validation differs on Windows"
+)
 def test_network_error_on_inaccessible_path(tmp_path):
     """Test NetworkError raised when file server is inaccessible."""
     # Create config with path that exists but will be made inaccessible

@@ -399,8 +399,12 @@ def test_lock_on_read_only_directory(lock_manager, temp_session_dir):
     Note: This test is skipped when running as root since root can write
     to read-only directories on Linux.
     """
+    # Skip on Windows - different permission model
+    if sys.platform == 'win32':
+        pytest.skip("Read-only directory test not applicable on Windows")
+
     # Skip test if running as root (root can write to read-only dirs)
-    if os.geteuid() == 0:
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
         pytest.skip("Test not applicable when running as root")
 
     # Make directory read-only
