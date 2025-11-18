@@ -52,6 +52,9 @@ def mock_profile_manager(tmp_path):
     with patch('main.ProfileManager') as mock_pm_class:
         mock_pm = Mock()
 
+        # CRITICAL: base_path must return actual path, not Mock
+        mock_pm.base_path = tmp_path
+
         # Setup basic mock behavior
         mock_pm.get_available_clients.return_value = ['TEST_CLIENT']
         mock_pm.load_client_config.return_value = {

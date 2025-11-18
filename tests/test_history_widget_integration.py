@@ -228,6 +228,12 @@ class TestHistoryWidgetFilters(unittest.TestCase):
         self.mock_profile_manager.get_sessions_root.return_value = self.sessions_root
         clients_root = Path(self.temp_dir) / "CLIENTS"
         clients_root.mkdir(parents=True)
+
+        # Create client directories so "All Clients" filter can find them
+        for client_id in ["CLIENT_A", "CLIENT_B"]:
+            client_dir = clients_root / client_id
+            client_dir.mkdir(parents=True)
+
         self.mock_profile_manager.get_clients_root.return_value = clients_root
 
         self.widget = SessionHistoryWidget(self.mock_profile_manager)
