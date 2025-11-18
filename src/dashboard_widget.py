@@ -8,10 +8,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 
 from logger import get_logger
-from statistics_manager import StatisticsManager
+from shared.stats_manager import StatsManager
 from session_history_manager import SessionHistoryManager
 
 logger = get_logger(__name__)
@@ -217,16 +218,109 @@ class DashboardWidget(QWidget):
         for client_id in client_ids:
             self.client_combo.addItem(f"Client {client_id}", client_id)
 
+    def _calculate_performance_metrics(
+        self,
+        client_id: Optional[str] = None,
+        days: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Calculate performance metrics from packing history.
+
+        Args:
+            client_id: Filter by client ID (None for all clients)
+            days: Number of days to include (None for all time)
+
+        Returns:
+            Dictionary with performance metrics
+        """
+        try:
+            # Get packing history
+            history = self.stats_manager.get_packing_history(
+                client_id=client_id,
+                worker_id=None,
+                limit=None
+            )
+
+            # Filter by date if specified
+            if days:
+                cutoff_date = datetime.now() - timedelta(days=days)
+                history = [
+                    h for h in history
+                    if datetime.fromisoformat(h.get('timestamp', '')) >= cutoff_date
+                ]
+
+            if not history:
+                return {
+                    'total_sessions': 0,
+                    'total_orders': 0,
+                    'total_items': 0,
+                    'average_orders_per_session': 0.0,
+                    'average_items_per_session': 0.0,
+                    'average_duration_minutes': 0.0,
+                    'orders_per_hour': 0.0,
+                    'items_per_hour': 0.0
+                }
+
+            # Calculate metrics
+            total_sessions = len(history)
+            total_orders = sum(h.get('orders_count', 0) for h in history)
+            total_items = sum(h.get('items_count', 0) for h in history)
+
+            # Calculate durations (if available in metadata)
+            total_duration_seconds = 0
+            sessions_with_duration = 0
+            for h in history:
+                metadata = h.get('metadata', {})
+                duration = metadata.get('duration_seconds', 0)
+                if duration:
+                    total_duration_seconds += duration
+                    sessions_with_duration += 1
+
+            # Calculate averages
+            avg_orders = total_orders / total_sessions if total_sessions > 0 else 0.0
+            avg_items = total_items / total_sessions if total_sessions > 0 else 0.0
+            avg_duration_minutes = (total_duration_seconds / 60.0 / sessions_with_duration
+                                   if sessions_with_duration > 0 else 0.0)
+
+            # Calculate rates (orders/hour, items/hour)
+            total_duration_hours = total_duration_seconds / 3600.0
+            orders_per_hour = total_orders / total_duration_hours if total_duration_hours > 0 else 0.0
+            items_per_hour = total_items / total_duration_hours if total_duration_hours > 0 else 0.0
+
+            return {
+                'total_sessions': total_sessions,
+                'total_orders': total_orders,
+                'total_items': total_items,
+                'average_orders_per_session': round(avg_orders, 2),
+                'average_items_per_session': round(avg_items, 2),
+                'average_duration_minutes': round(avg_duration_minutes, 2),
+                'orders_per_hour': round(orders_per_hour, 2),
+                'items_per_hour': round(items_per_hour, 2)
+            }
+
+        except Exception as e:
+            logger.error(f"Error calculating performance metrics: {e}", exc_info=True)
+            return {
+                'total_sessions': 0,
+                'total_orders': 0,
+                'total_items': 0,
+                'average_orders_per_session': 0.0,
+                'average_items_per_session': 0.0,
+                'average_duration_minutes': 0.0,
+                'orders_per_hour': 0.0,
+                'items_per_hour': 0.0
+            }
+
     def _refresh_metrics(self):
         """Refresh all metrics based on current filters."""
         try:
             client_id = self.client_combo.currentData()
             days = self.period_combo.currentData()
 
-            # Get performance metrics
-            metrics = self.stats_manager.get_performance_metrics(
+            # Phase 1.4: Calculate performance metrics from unified stats
+            metrics = self._calculate_performance_metrics(
                 client_id=client_id,
-                days=days if days else 36500  # ~100 years for "all time"
+                days=days
             )
 
             # Update overall statistics
@@ -248,9 +342,10 @@ class DashboardWidget(QWidget):
                 self.client_specific_group.setVisible(True)
                 client_stats = self.stats_manager.get_client_stats(client_id)
 
-                self.client_sessions_card.set_value(client_stats['total_sessions'])
-                self.client_orders_card.set_value(client_stats['total_orders'])
-                self.client_items_card.set_value(client_stats['total_items'])
+                self.client_sessions_card.set_value(client_stats.get('sessions', 0))
+                self.client_orders_card.set_value(client_stats.get('orders_packed', 0))
+                # items_packed not in unified client_stats, calculate from total
+                self.client_items_card.set_value(metrics['total_items'])
             else:
                 self.client_specific_group.setVisible(False)
 
@@ -265,7 +360,7 @@ class DashboardWidget(QWidget):
             logger.info(f"Dashboard metrics refreshed for {client_text}, {period_text}")
 
         except Exception as e:
-            logger.error(f"Error refreshing metrics: {e}")
+            logger.error(f"Error refreshing metrics: {e}", exc_info=True)
             self.status_label.setText(f"Error: {e}")
 
     def refresh(self):

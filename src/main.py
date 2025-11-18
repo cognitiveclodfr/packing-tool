@@ -26,7 +26,7 @@ from packer_mode_widget import PackerModeWidget
 from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
 from order_table_model import OrderTableModel
-from statistics_manager import StatisticsManager
+from shared.stats_manager import StatsManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
@@ -131,8 +131,9 @@ class MainWindow(QMainWindow):
         self.current_work_dir = None      # Work directory for packing results
         self.packing_data = None          # Loaded packing list data
 
-        # Phase 1.3: StatisticsManager with centralized storage on file server
-        self.stats_manager = StatisticsManager(profile_manager=self.profile_manager)
+        # Phase 1.4: Unified StatsManager for integration with Shopify Tool statistics
+        base_path = self.profile_manager.base_path
+        self.stats_manager = StatsManager(base_path=str(base_path))
 
         # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
         self.sku_manager = SKUMappingManager()
@@ -320,9 +321,19 @@ class MainWindow(QMainWindow):
 
     def _update_dashboard(self):
         """Update the statistics dashboard with the latest data."""
-        stats = self.stats_manager.get_display_stats()
-        self.total_orders_label.setText(f"Total Unique Orders: {stats['Total Unique Orders']}")
-        self.completed_label.setText(f"Total Completed: {stats['Total Completed']}")
+        # Phase 1.4: Use unified StatsManager API
+        global_stats = self.stats_manager.get_global_stats()
+        total_packed = global_stats.get('total_orders_packed', 0)
+
+        # Get client-specific stats if client is selected
+        if self.current_client_id:
+            client_stats = self.stats_manager.get_client_stats(self.current_client_id)
+            client_packed = client_stats.get('orders_packed', 0)
+            self.total_orders_label.setText(f"Total Orders Packed: {total_packed}")
+            self.completed_label.setText(f"Client {self.current_client_id} Orders: {client_packed}")
+        else:
+            self.total_orders_label.setText(f"Total Orders Packed: {total_packed}")
+            self.completed_label.setText(f"Total Sessions: {global_stats.get('total_sessions', 0)}")
 
     # ========================================================================
     # CLIENT MANAGEMENT (NEW)
@@ -750,20 +761,36 @@ class MainWindow(QMainWindow):
                     packing_list_path = self.session_manager.packing_list_path
                     summary_output_dir = output_dir
 
-                # Record session completion in statistics
+                # Phase 1.4: Record packing session to unified statistics
                 try:
                     if start_time:  # Only record if we have start_time
-                        self.stats_manager.record_session_completion(
+                        # Get worker PC name
+                        worker_id = session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown')
+
+                        # Calculate duration
+                        duration_seconds = int((end_time - start_time).total_seconds()) if start_time else None
+
+                        # Record to unified stats
+                        self.stats_manager.record_packing(
                             client_id=self.current_client_id,
                             session_id=session_id,
-                            start_time=start_time,
-                            end_time=end_time,
-                            orders_completed=completed_orders,
-                            items_packed=items_packed
+                            worker_id=worker_id,
+                            orders_count=completed_orders,
+                            items_count=items_packed,
+                            metadata={
+                                "duration_seconds": duration_seconds,
+                                "packing_list_name": os.path.basename(packing_list_path) if packing_list_path else "Unknown",
+                                "started_at": start_time.isoformat(),
+                                "completed_at": end_time.isoformat(),
+                                "total_orders": total_orders,
+                                "in_progress_orders": in_progress_orders,
+                                "session_type": "shopify" if is_shopify_session else "excel",
+                                "user_name": os.environ.get('USERNAME', 'Unknown')
+                            }
                         )
-                        logger.info(f"Recorded session completion: {completed_orders} orders, {items_packed} items")
+                        logger.info(f"Recorded packing session to unified stats: {completed_orders} orders, {items_packed} items")
                 except Exception as e:
-                    logger.error(f"Error recording session metrics to stats: {e}", exc_info=True)
+                    logger.error(f"Error recording packing session to unified stats: {e}", exc_info=True)
 
                 # Phase 1.3: ALWAYS save session summary for History
                 try:
@@ -922,8 +949,7 @@ class MainWindow(QMainWindow):
 
             self.setup_order_table()
 
-            order_ids = self.order_summary_df['Order_Number'].tolist()
-            self.stats_manager.record_new_orders(order_ids)
+            # Phase 1.4: No need to record new orders - only record at session completion
             self._update_dashboard()
 
             self.status_label.setText(f"Successfully processed {order_count} orders for session '{session_id}'.")
@@ -1054,8 +1080,7 @@ class MainWindow(QMainWindow):
                 self.flash_border("red")
             elif status == "ORDER_COMPLETE":
                 current_order_num = self.logic.current_order_number
-                self.stats_manager.record_order_completion(current_order_num)
-                self._update_dashboard()
+                # Phase 1.4: No need to record individual order completion - only record at session completion
 
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "green")
