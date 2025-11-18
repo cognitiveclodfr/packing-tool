@@ -281,7 +281,22 @@ class PackerLogic(QObject):
 
             # Load core packing state
             self.session_packing_state['in_progress'] = state_data.get('in_progress', {})
-            self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
+
+            # Handle both new format (completed: list of dicts) and old format (completed_orders: list of strings)
+            if 'completed' in state_data:
+                # New format: list of dicts with metadata
+                completed_list = state_data.get('completed', [])
+                if completed_list and isinstance(completed_list[0], dict):
+                    # Extract order numbers from metadata dicts
+                    self.session_packing_state['completed_orders'] = [
+                        item['order_number'] for item in completed_list if 'order_number' in item
+                    ]
+                else:
+                    # Fallback if completed is just a list of strings
+                    self.session_packing_state['completed_orders'] = completed_list
+            else:
+                # Old format: simple list of order numbers
+                self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
 
             # Load metadata if present (new format)
             if 'session_id' in state_data:
