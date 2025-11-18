@@ -186,7 +186,7 @@ class TestShopifyPackingWorkflow:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load analysis data
@@ -227,7 +227,7 @@ class TestShopifyPackingWorkflow:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load and process
@@ -257,7 +257,7 @@ class TestShopifyPackingWorkflow:
         logic_dhl = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=str(dhl_barcode_dir)
+            work_dir=str(dhl_barcode_dir)
         )
         logic_dhl.load_from_shopify_analysis(session_dir)
 
@@ -265,7 +265,7 @@ class TestShopifyPackingWorkflow:
         logic_postone = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=str(postone_barcode_dir)
+            work_dir=str(postone_barcode_dir)
         )
         logic_postone.load_from_shopify_analysis(session_dir)
 
@@ -294,7 +294,7 @@ class TestShopifyPackingWorkflow:
         logic = PackerLogic(
             client_id="TEST",
             profile_manager=mock_profile_manager,
-            barcode_dir=str(barcode_dir)
+            work_dir=str(barcode_dir)
         )
 
         # Load data

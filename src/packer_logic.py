@@ -70,8 +70,10 @@ class PackerLogic(QObject):
                               real-time progress updates.
         client_id (str): Client identifier for this session
         profile_manager (ProfileManager): Manager for client profiles and SKU mappings
-        barcode_dir (str): The directory where generated barcodes and session
-                           state files are stored.
+        work_dir (Path): Work directory for this packing list
+                        (e.g., Sessions/CLIENT_M/2025-11-10_1/packing/DHL_Orders/)
+        barcode_dir (Path): Subdirectory for generated barcodes (work_dir/barcodes/)
+        reports_dir (Path): Subdirectory for packing reports (work_dir/reports/)
         packing_list_df (pd.DataFrame): The original, unprocessed DataFrame
                                         loaded from the Excel file.
         processed_df (pd.DataFrame): The DataFrame after column mapping and
@@ -89,20 +91,39 @@ class PackerLogic(QObject):
     """
     item_packed = Signal(str, int, int)  # order_number, packed_count, required_count
 
-    def __init__(self, client_id: str, profile_manager, barcode_dir: str):
+    def __init__(self, client_id: str, profile_manager, work_dir: str):
         """
         Initialize PackerLogic instance for a specific client.
 
         Args:
             client_id: Client identifier (e.g., "M", "R")
             profile_manager: ProfileManager instance for loading/saving SKU mappings
-            barcode_dir: Directory for storing session files and barcodes
+            work_dir: Work directory for this packing list
+                     (e.g., Sessions/CLIENT_M/2025-11-10_1/packing/DHL_Orders/)
+                     For legacy Excel workflow, this will be the barcodes directory
         """
         super().__init__()
 
         self.client_id = client_id
         self.profile_manager = profile_manager
-        self.barcode_dir = barcode_dir
+        self.work_dir = Path(work_dir)
+
+        # Create subdirectories for unified structure
+        # For Excel workflow compatibility, check if work_dir already ends with "barcodes"
+        if self.work_dir.name == "barcodes":
+            # Legacy Excel workflow: work_dir IS the barcodes directory
+            # Keep backward compatibility
+            self.barcode_dir = self.work_dir
+            # For Excel workflow, we don't have separate reports dir
+            self.reports_dir = self.work_dir.parent / "reports" if self.work_dir.parent else self.work_dir
+        else:
+            # Unified workflow: work_dir is packing/{list_name}/
+            self.barcode_dir = self.work_dir / "barcodes"
+            self.reports_dir = self.work_dir / "reports"
+
+        # Ensure directories exist
+        self.barcode_dir.mkdir(parents=True, exist_ok=True)
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
 
         self.packing_list_df = None
         self.processed_df = None
@@ -131,7 +152,9 @@ class PackerLogic(QObject):
         self._load_session_state()
 
         logger.info(f"PackerLogic initialized for client {client_id}")
-        logger.debug(f"Barcode directory: {barcode_dir}")
+        logger.debug(f"Work directory: {self.work_dir}")
+        logger.debug(f"Barcode directory: {self.barcode_dir}")
+        logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
@@ -200,8 +223,34 @@ class PackerLogic(QObject):
             logger.error(f"Failed to save SKU mapping: {e}")
 
     def _get_state_file_path(self) -> str:
-        """Returns the absolute path for the session state file."""
-        return os.path.join(self.barcode_dir, STATE_FILE_NAME)
+        """
+        Return path to packing_state.json in work_dir root.
+
+        For unified workflow: work_dir/packing_state.json
+        For Excel workflow: barcodes/packing_state.json (backward compatible)
+        """
+        # For unified workflow, state file goes in work_dir root
+        # For Excel workflow (work_dir == barcodes), state file is still in barcodes dir
+        if self.work_dir.name == "barcodes":
+            # Excel workflow: keep state in barcodes directory
+            return str(self.work_dir / STATE_FILE_NAME)
+        else:
+            # Unified workflow: state in work_dir root
+            return str(self.work_dir / STATE_FILE_NAME)
+
+    def _get_summary_file_path(self) -> str:
+        """
+        Return path to session_summary.json in work_dir root.
+
+        For unified workflow: work_dir/session_summary.json
+        For Excel workflow: barcodes/session_summary.json (backward compatible)
+        """
+        if self.work_dir.name == "barcodes":
+            # Excel workflow: keep summary in barcodes directory
+            return str(self.work_dir / SUMMARY_FILE_NAME)
+        else:
+            # Unified workflow: summary in work_dir root
+            return str(self.work_dir / SUMMARY_FILE_NAME)
 
     def _load_session_state(self):
         """
@@ -1390,7 +1439,7 @@ class PackerLogic(QObject):
         Generate and save session summary to JSON file.
 
         Args:
-            summary_path: Optional path to save summary. If None, saves to barcode_dir/session_summary.json
+            summary_path: Optional path to save summary. If None, saves to work_dir/session_summary.json
 
         Returns:
             Path to saved summary file
@@ -1403,7 +1452,7 @@ class PackerLogic(QObject):
 
         # Determine output path
         if not summary_path:
-            summary_path = os.path.join(self.barcode_dir, SUMMARY_FILE_NAME)
+            summary_path = self._get_summary_file_path()
 
         # Save to file
         try:
