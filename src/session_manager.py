@@ -39,6 +39,10 @@ logger = get_logger(__name__)
 # Contains: client_id, packing_list_path, started_at, pc_name
 SESSION_INFO_FILE = "session_info.json"
 
+# Filename for session summary (created upon session completion)
+# This file contains aggregated statistics and performance metrics
+SUMMARY_FILE_NAME = "session_summary.json"
+
 
 class SessionManager:
     """
@@ -352,6 +356,37 @@ class SessionManager:
 
         barcodes_dir = self.output_dir / "barcodes"
         return str(barcodes_dir)
+
+    def get_session_summary_path(self, work_dir: Path = None) -> Path:
+        """
+        Get path to session_summary.json file.
+
+        Args:
+            work_dir: Optional work directory path. If not provided, uses current output_dir/barcodes
+
+        Returns:
+            Path to session_summary.json file
+
+        Examples:
+            # For Shopify sessions with unified work directory:
+            work_dir = Path("Sessions/CLIENT_M/2025-11-10_1/packing/DHL_Orders")
+            summary_path = sm.get_session_summary_path(work_dir)
+            # Returns: .../packing/DHL_Orders/session_summary.json
+
+            # For legacy Excel sessions (uses barcodes dir):
+            summary_path = sm.get_session_summary_path()
+            # Returns: .../session_dir/barcodes/session_summary.json
+        """
+        if work_dir:
+            # Shopify session: work_dir is packing/{list_name}/
+            return work_dir / SUMMARY_FILE_NAME
+        elif self.output_dir:
+            # Legacy Excel session: use barcodes subdirectory
+            barcodes_dir = self.output_dir / "barcodes"
+            return barcodes_dir / SUMMARY_FILE_NAME
+        else:
+            # No session active - should not happen
+            raise ValueError("Cannot get summary path: no active session or work_dir provided")
 
     def get_session_info(self) -> Optional[dict]:
         """

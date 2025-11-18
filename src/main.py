@@ -650,8 +650,30 @@ class MainWindow(QMainWindow):
 
             self.status_label.setText(f"Session ended. Report saved to {output_path}")
 
+            # REDESIGNED STATE MANAGEMENT: Generate session summary from PackerLogic
+            # PackerLogic now maintains full session state with metadata and generates summary
+            if self.logic:
+                try:
+                    # Determine summary output path based on session type
+                    if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                        # Shopify session - save to work directory
+                        summary_output_path = os.path.join(self.current_work_dir, "session_summary.json")
+                    else:
+                        # Excel session - save to barcodes directory
+                        barcodes_dir = self.session_manager.get_barcodes_dir()
+                        summary_output_path = os.path.join(barcodes_dir, "session_summary.json")
+
+                    # Generate and save summary via PackerLogic
+                    self.logic.save_session_summary(summary_output_path)
+                    logger.info(f"PackerLogic session summary saved to: {summary_output_path}")
+
+                except Exception as e:
+                    logger.error(f"Failed to save PackerLogic session summary: {e}", exc_info=True)
+                    # Non-critical error - continue with existing summary logic below
+
             # Phase 1.3: Record session completion metrics and save session summary
             # ALWAYS save session summary, even if errors occur
+            # NOTE: This is the legacy summary logic (kept for compatibility)
             try:
                 session_info = self.session_manager.get_session_info()
 
@@ -832,6 +854,42 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Session ended. Start a new session to begin.")
 
         logger.info("Session ended and all variables cleared")
+
+    def view_session_history(self):
+        """
+        View completed packing sessions history.
+
+        TODO: Implement UI for viewing historical session data:
+        - List all completed sessions from Sessions/CLIENT_*/
+        - Show session_summary.json data (orders completed, duration, performance)
+        - Filter by date range, client, packing list name
+        - Display statistics: average orders/hour, total sessions, etc.
+        - Link to packing_state.json for detailed review
+
+        This feature will use:
+        - session_summary.json: Aggregated statistics and performance metrics
+        - packing_state.json: Detailed per-order packing history
+        - session_info.json: Session metadata (PC name, start time, etc.)
+
+        Planned UI:
+        - Table view with sortable columns
+        - Date range picker
+        - Export to CSV/Excel
+        - Charts for performance trends
+        """
+        logger.info("view_session_history called (placeholder - not yet implemented)")
+
+        QMessageBox.information(
+            self,
+            "Feature Coming Soon",
+            "Session History viewer is coming soon!\n\n"
+            "This feature will show:\n"
+            "• Completed packing sessions\n"
+            "• Performance metrics (orders/hour, items/hour)\n"
+            "• Historical trends and statistics\n"
+            "• Detailed session data\n\n"
+            "Stay tuned!"
+        )
 
     def load_and_process_file(self, file_path: str):
         """

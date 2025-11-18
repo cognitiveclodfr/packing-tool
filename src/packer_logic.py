@@ -46,6 +46,16 @@ REQUIRED_COLUMNS = ['Order_Number', 'SKU', 'Product_Name', 'Quantity', 'Courier'
 # to enable crash recovery and session restoration
 STATE_FILE_NAME = "packing_state.json"
 
+# Filename for session summary (created upon completion)
+# This file contains aggregated statistics and performance metrics
+# for the completed packing session
+SUMMARY_FILE_NAME = "session_summary.json"
+
+# Deprecated: Backup suffix for old state file behavior
+# In previous versions, packing_state.json was renamed to .backup on completion
+# This is now deprecated - we keep the original state file as history
+BACKUP_SUFFIX = ".backup"  # deprecated, not used in new workflow
+
 class PackerLogic(QObject):
     """
     Handles the core business logic of the Packer's Assistant application.
@@ -100,7 +110,19 @@ class PackerLogic(QObject):
         self.barcode_to_order_number = {}
         self.current_order_number = None
         self.current_order_state = {}
-        self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+
+        # Session metadata (for new state structure)
+        self.session_id = None  # Will be set when loading packing list
+        self.packing_list_name = None  # Name of the packing list being packed
+        self.started_at = None  # Session start timestamp
+        self.worker_pc = os.environ.get('COMPUTERNAME', 'Unknown')  # PC name
+
+        # Initialize session packing state with new structure
+        # This will be populated when loading an existing state or starting new
+        self.session_packing_state = {
+            'in_progress': {},
+            'completed_orders': []
+        }
 
         # Load SKU mapping from ProfileManager
         self.sku_map = self._load_sku_mapping()
@@ -182,7 +204,13 @@ class PackerLogic(QObject):
         return os.path.join(self.barcode_dir, STATE_FILE_NAME)
 
     def _load_session_state(self):
-        """Load the packing state for the session from JSON file."""
+        """
+        Load the packing state for the session from JSON file.
+
+        This method supports both old and new state file formats for backward compatibility:
+        - Old format: {'in_progress': {...}, 'completed_orders': [...]}
+        - New format: Full state with metadata (session_id, timestamps, progress, etc.)
+        """
         state_file = self._get_state_file_path()
 
         if not os.path.exists(state_file):
@@ -196,14 +224,23 @@ class PackerLogic(QObject):
 
             # Handle both old and new format (with version)
             if isinstance(data, dict) and 'data' in data:
-                # New format with version
+                # Legacy format with version wrapper
                 state_data = data['data']
             else:
-                # Old format (direct state)
+                # Could be new format (with metadata) or old direct format
                 state_data = data
 
+            # Load core packing state
             self.session_packing_state['in_progress'] = state_data.get('in_progress', {})
             self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
+
+            # Load metadata if present (new format)
+            if 'session_id' in state_data:
+                self.session_id = state_data.get('session_id')
+                self.packing_list_name = state_data.get('packing_list_name')
+                self.started_at = state_data.get('started_at')
+                # worker_pc is set from environment in __init__, but can be overridden from state
+                logger.debug(f"Loaded session metadata: {self.session_id}")
 
             in_progress_count = len(self.session_packing_state['in_progress'])
             completed_count = len(self.session_packing_state['completed_orders'])
@@ -218,28 +255,95 @@ class PackerLogic(QObject):
         """
         Save the current session's packing state to JSON file with atomic write.
 
-        Uses atomic write pattern to prevent corruption during crashes.
-        Creates backup before overwriting.
+        New behavior (redesigned state management):
+        - Saves complete state with metadata (session_id, timestamps, progress)
+        - Does NOT create .backup files (deprecated)
+        - State file is kept as permanent history after session completion
+        - Uses atomic write pattern to prevent corruption during crashes
+
+        State structure:
+        {
+            "session_id": "2025-11-10_1",
+            "client_id": "M",
+            "packing_list_name": "DHL_Orders",
+            "started_at": "2025-11-10T14:30:00",
+            "last_updated": "2025-11-10T15:45:23",
+            "status": "in_progress",
+            "worker_pc": "WAREHOUSE-PC-01",
+            "progress": {...},
+            "in_progress": {...},
+            "completed": [...]
+        }
         """
         state_file = self._get_state_file_path()
 
-        # Create data with version and timestamp
-        data = {
-            'version': '1.0',
-            'timestamp': datetime.now().isoformat(),
-            'client_id': self.client_id,
-            'data': self.session_packing_state
+        # Calculate progress metrics
+        total_orders = len(self.orders_data) if self.orders_data else 0
+        completed_orders_count = len(self.session_packing_state.get('completed_orders', []))
+        in_progress_count = len(self.session_packing_state.get('in_progress', {}))
+
+        # Calculate total and packed items
+        total_items = 0
+        packed_items = 0
+
+        # Count items from processed_df if available
+        if self.processed_df is not None:
+            try:
+                import pandas as pd
+                total_items = int(pd.to_numeric(self.processed_df['Quantity'], errors='coerce').sum())
+            except Exception as e:
+                logger.warning(f"Could not calculate total_items: {e}")
+
+        # Count packed items from completed orders
+        if self.processed_df is not None and self.session_packing_state.get('completed_orders'):
+            try:
+                import pandas as pd
+                completed_items = pd.to_numeric(
+                    self.processed_df[
+                        self.processed_df['Order_Number'].isin(self.session_packing_state['completed_orders'])
+                    ]['Quantity'],
+                    errors='coerce'
+                ).sum()
+                packed_items += int(completed_items)
+            except Exception as e:
+                logger.warning(f"Could not calculate packed items from completed orders: {e}")
+
+        # Count packed items from in-progress orders
+        for order_state in self.session_packing_state.get('in_progress', {}).values():
+            if isinstance(order_state, list):
+                # New format: list of item states
+                for item in order_state:
+                    if isinstance(item, dict):
+                        packed_items += item.get('packed', 0)
+
+        # Build complete state structure with metadata
+        state_data = {
+            # Metadata
+            "session_id": self.session_id,
+            "client_id": self.client_id,
+            "packing_list_name": self.packing_list_name,
+            "started_at": self.started_at,
+            "last_updated": datetime.now().isoformat(),
+            "status": "completed" if completed_orders_count == total_orders and total_orders > 0 else "in_progress",
+            "worker_pc": self.worker_pc,
+
+            # Progress summary
+            "progress": {
+                "total_orders": total_orders,
+                "completed_orders": completed_orders_count,
+                "in_progress_order": self.current_order_number,
+                "total_items": total_items,
+                "packed_items": packed_items
+            },
+
+            # Detailed packing state
+            "in_progress": self.session_packing_state.get('in_progress', {}),
+            "completed": self._build_completed_list()
         }
 
         try:
             state_path = Path(state_file)
             state_dir = state_path.parent
-
-            # Create backup if file exists
-            if state_path.exists():
-                backup_path = state_path.with_suffix('.json.backup')
-                shutil.copy2(state_path, backup_path)
-                logger.debug(f"Created backup: {backup_path}")
 
             # Atomic write: write to temp file first
             with tempfile.NamedTemporaryFile(
@@ -250,25 +354,77 @@ class PackerLogic(QObject):
                 delete=False,
                 encoding='utf-8'
             ) as tmp_file:
-                json.dump(data, tmp_file, indent=4)
+                json.dump(state_data, tmp_file, indent=2, ensure_ascii=False)
                 tmp_path = tmp_file.name
 
             # Atomic replace (works on Windows too)
             shutil.move(tmp_path, state_file)
 
-            logger.debug("Session state saved successfully")
+            logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
 
         except Exception as e:
             logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
 
-            # Try to restore from backup
-            backup_path = Path(state_file).with_suffix('.json.backup')
-            if backup_path.exists():
-                try:
-                    shutil.copy2(backup_path, state_file)
-                    logger.warning("Restored session state from backup")
-                except Exception as restore_error:
-                    logger.error(f"Failed to restore from backup: {restore_error}")
+    def _build_completed_list(self) -> List[Dict[str, Any]]:
+        """
+        Build list of completed orders with timestamps and durations.
+
+        Returns:
+            List of dicts with order metadata:
+            [
+                {
+                    "order_number": "ORDER-001",
+                    "completed_at": "2025-11-10T14:35:12",
+                    "items_count": 3,
+                    "duration_seconds": 45
+                }
+            ]
+
+        Note: This is a basic implementation. Full timestamps tracking requires
+        storing start time for each order (future enhancement).
+        """
+        completed_list = []
+
+        for order_number in self.session_packing_state.get('completed_orders', []):
+            # Get items count for this order
+            items_count = 0
+            if order_number in self.orders_data:
+                items_count = len(self.orders_data[order_number].get('items', []))
+
+            completed_list.append({
+                "order_number": order_number,
+                "completed_at": datetime.now().isoformat(),  # Approximation
+                "items_count": items_count
+                # duration_seconds: Cannot calculate without start time (future enhancement)
+            })
+
+        return completed_list
+
+    def _initialize_session_metadata(self, session_id: str = None, packing_list_name: str = None):
+        """
+        Initialize session metadata for state tracking.
+
+        This should be called when starting a new packing session (loading packing list).
+        Sets up timestamps and identifiers for the session.
+
+        Args:
+            session_id: Unique session identifier (e.g., "2025-11-10_1")
+            packing_list_name: Name of the packing list being packed (e.g., "DHL_Orders")
+        """
+        if not self.started_at:
+            # Only set started_at if not already set (for session restoration)
+            self.started_at = datetime.now().isoformat()
+
+        if session_id:
+            self.session_id = session_id
+        elif not self.session_id:
+            # Generate session_id from timestamp if not provided
+            self.session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        if packing_list_name:
+            self.packing_list_name = packing_list_name
+
+        logger.info(f"Session metadata initialized: {self.session_id} / {self.packing_list_name}")
 
     def _normalize_sku(self, sku: Any) -> str:
         """
@@ -927,6 +1083,24 @@ class PackerLogic(QObject):
 
         logger.info(f"Converted {len(df)} items from {len(orders_list)} orders to DataFrame")
 
+        # Initialize session metadata
+        # Extract session_id from path if available (e.g., .../Sessions/CLIENT_M/2025-11-10_1/...)
+        session_id = None
+        try:
+            # Try to extract session_id from path (parent directory name)
+            parent_path = packing_list_path.parent
+            if parent_path.name == 'packing_lists':
+                # Path is .../packing_lists/list.json, go up one more level
+                session_dir = parent_path.parent
+                session_id = session_dir.name
+        except Exception as e:
+            logger.debug(f"Could not extract session_id from path: {e}")
+
+        self._initialize_session_metadata(
+            session_id=session_id,
+            packing_list_name=packing_data.get('list_name', list_name)
+        )
+
         # Generate barcodes
         try:
             order_count = self.process_data_and_generate_barcodes(column_mapping=None)
@@ -1073,6 +1247,16 @@ class PackerLogic(QObject):
 
         logger.info(f"Converted {len(df)} items from {len(orders_list)} orders to DataFrame")
 
+        # Initialize session metadata
+        # Extract session_id from session_path (e.g., .../Sessions/CLIENT_M/2025-11-10_1)
+        session_id = Path(session_path).name
+        packing_list_name = "Shopify_Full_Session"
+
+        self._initialize_session_metadata(
+            session_id=session_id,
+            packing_list_name=packing_list_name
+        )
+
         # Generate barcodes
         try:
             order_count = self.process_data_and_generate_barcodes(column_mapping=None)
@@ -1085,11 +1269,166 @@ class PackerLogic(QObject):
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg)
 
-    def end_session_cleanup(self):
-        """Removes the session state file upon graceful session termination."""
-        state_file = self._get_state_file_path()
-        if os.path.exists(state_file):
+    def generate_session_summary(self) -> dict:
+        """
+        Generate comprehensive session summary upon completion.
+
+        This method creates a summary document containing:
+        - Session metadata (ID, client, packing list, timestamps)
+        - Summary statistics (total orders, completed orders, items)
+        - Performance metrics (orders/hour, items/hour, fastest/slowest orders)
+
+        Returns:
+            dict: Session summary structure (ready for JSON serialization)
+
+        Example structure:
+        {
+            "session_id": "2025-11-10_1",
+            "client_id": "M",
+            "packing_list_name": "DHL_Orders",
+            "started_at": "2025-11-10T14:30:00",
+            "completed_at": "2025-11-10T16:20:45",
+            "duration_seconds": 6645,
+            "worker_pc": "WAREHOUSE-PC-01",
+
+            "summary": {
+                "total_orders": 45,
+                "completed_orders": 45,
+                "total_items": 156,
+                "average_order_time_seconds": 147.6
+            },
+
+            "performance": {
+                "orders_per_hour": 24.3,
+                "items_per_hour": 84.2,
+                "fastest_order_seconds": 25,
+                "slowest_order_seconds": 380
+            }
+        }
+        """
+        logger.info("Generating session summary")
+
+        # Calculate timestamps and duration
+        completed_at = datetime.now().isoformat()
+        duration_seconds = None
+        started_dt = None
+
+        if self.started_at:
             try:
-                os.remove(state_file)
-            except OSError as e:
-                print(f"Warning: Could not remove state file {state_file}. Reason: {e}")
+                started_dt = datetime.fromisoformat(self.started_at)
+                completed_dt = datetime.now()
+                duration_seconds = int((completed_dt - started_dt).total_seconds())
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Could not parse started_at for duration calculation: {e}")
+
+        # Calculate order and item counts
+        total_orders = len(self.orders_data) if self.orders_data else 0
+        completed_orders = len(self.session_packing_state.get('completed_orders', []))
+
+        # Calculate total items
+        total_items = 0
+        if self.processed_df is not None:
+            try:
+                import pandas as pd
+                total_items = int(pd.to_numeric(self.processed_df['Quantity'], errors='coerce').sum())
+            except Exception as e:
+                logger.warning(f"Could not calculate total_items: {e}")
+
+        # Calculate average order time (if we have duration and completed orders)
+        average_order_time_seconds = None
+        if duration_seconds and completed_orders > 0:
+            average_order_time_seconds = round(duration_seconds / completed_orders, 1)
+
+        # Calculate performance metrics (orders/hour, items/hour)
+        orders_per_hour = None
+        items_per_hour = None
+
+        if duration_seconds and duration_seconds > 0:
+            hours = duration_seconds / 3600.0
+            if completed_orders > 0:
+                orders_per_hour = round(completed_orders / hours, 1)
+            if total_items > 0:
+                items_per_hour = round(total_items / hours, 1)
+
+        # Build session summary
+        summary = {
+            # Session metadata
+            "session_id": self.session_id,
+            "client_id": self.client_id,
+            "packing_list_name": self.packing_list_name,
+            "started_at": self.started_at,
+            "completed_at": completed_at,
+            "duration_seconds": duration_seconds,
+            "worker_pc": self.worker_pc,
+
+            # Summary statistics
+            "summary": {
+                "total_orders": total_orders,
+                "completed_orders": completed_orders,
+                "total_items": total_items,
+                "average_order_time_seconds": average_order_time_seconds
+            },
+
+            # Performance metrics
+            "performance": {
+                "orders_per_hour": orders_per_hour,
+                "items_per_hour": items_per_hour
+                # Note: fastest/slowest order times require per-order timing
+                # This is a future enhancement (need to track start time per order)
+            }
+        }
+
+        logger.info(
+            f"Session summary generated: {completed_orders}/{total_orders} orders, "
+            f"{duration_seconds}s duration, {orders_per_hour} orders/hour"
+        )
+
+        return summary
+
+    def save_session_summary(self, summary_path: str = None) -> str:
+        """
+        Generate and save session summary to JSON file.
+
+        Args:
+            summary_path: Optional path to save summary. If None, saves to barcode_dir/session_summary.json
+
+        Returns:
+            Path to saved summary file
+
+        Raises:
+            IOError: If summary cannot be written to disk
+        """
+        # Generate summary
+        summary = self.generate_session_summary()
+
+        # Determine output path
+        if not summary_path:
+            summary_path = os.path.join(self.barcode_dir, SUMMARY_FILE_NAME)
+
+        # Save to file
+        try:
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Session summary saved to: {summary_path}")
+            return summary_path
+
+        except Exception as e:
+            logger.error(f"Failed to save session summary: {e}", exc_info=True)
+            raise IOError(f"Failed to save session summary: {e}")
+
+    def end_session_cleanup(self):
+        """
+        Perform cleanup when ending a session.
+
+        New behavior (redesigned state management):
+        - Does NOT remove packing_state.json (kept as history)
+        - State files are permanent historical records
+        - session_summary.json should be created separately via save_session_summary()
+
+        This method is now essentially a no-op, kept for backward compatibility.
+        In the new design, state files are NEVER deleted - they form the historical record.
+        """
+        logger.info("Session cleanup called (state files preserved as history)")
+        # No longer removing state files - they are permanent history
+        # This method kept for backward compatibility but does nothing
