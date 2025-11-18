@@ -97,8 +97,12 @@ def test_successful_processing_and_barcode_generation(packer_logic, dummy_file_p
     num_orders = packer_logic.process_data_and_generate_barcodes()
     assert num_orders == 2
 
-    assert os.path.exists(os.path.join(test_dir, '1001.png'))
-    assert os.path.exists(os.path.join(test_dir, '1002.png'))
+    # Check barcode files exist in test_dir/barcodes/ subdirectory
+    barcode_dir = os.path.join(test_dir, 'barcodes')
+    assert os.path.exists(os.path.join(barcode_dir, '1001.png')), \
+        f"Expected barcode file not found: {os.path.join(barcode_dir, '1001.png')}"
+    assert os.path.exists(os.path.join(barcode_dir, '1002.png')), \
+        f"Expected barcode file not found: {os.path.join(barcode_dir, '1002.png')}"
 
     assert '1001' in packer_logic.orders_data
     assert len(packer_logic.orders_data['1001']['items']) == 2
