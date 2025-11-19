@@ -1,5 +1,8 @@
 # Packer's Assistant - Functions Catalog
 
+**Version:** 1.2.0
+**Last Updated:** 2025-11-19
+
 Complete catalog of all classes, methods, and functions in the Packer's Assistant application.
 
 ## Table of Contents
@@ -54,6 +57,7 @@ Order processing and packing state management.
 
 **Public Methods:**
 - `load_packing_list_from_file(file_path, restore_dir=None) -> bool` - Load packing list from Excel
+- `load_packing_list_json(packing_list_path) -> Tuple[int, str]` - **[NEW v1.2.0]** Load packing list from Shopify JSON
 - `process_data_and_generate_barcodes() -> pd.DataFrame` - Generate barcodes for all orders
 - `start_order_packing(barcode_data) -> tuple[bool, str, list]` - Start packing an order
 - `process_sku_scan(barcode_data) -> tuple[bool, str, int, int, bool]` - Process SKU scan
@@ -94,6 +98,7 @@ Manages creation, tracking, and cleanup of packing sessions.
 - `end_session()` - End current session
 - `get_session_info() -> dict` - Get session information
 - `is_session_active() -> bool` - Check if session active
+- `get_packing_work_dir(session_path, packing_list_name) -> Path` - **[NEW v1.2.0]** Get/create Phase 1 work directory
 
 **Private Methods:**
 - `_create_session_directory(client_id) -> tuple[Path, str]` - Create session directory
