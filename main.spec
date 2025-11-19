@@ -3,11 +3,12 @@
 
 a = Analysis(
     ['src/main.py'],
-    pathex=['src'],
+    pathex=['src', '.'],  # Added '.' for project root (to find 'shared' module)
     binaries=[],
     datas=[
         ('src/styles.qss', 'src'),
         ('config.ini.example', '.'),
+        ('shared', 'shared'),  # Include shared module directory
     ],
     hiddenimports=[
         'exceptions',
@@ -17,6 +18,8 @@ a = Analysis(
         'logger',
         'profile_manager',
         'session_manager',
+        'shared',
+        'shared.stats_manager',
     ],
     hookspath=[],
     hooksconfig={},
