@@ -2,6 +2,12 @@ import sys
 import os
 import json
 from pathlib import Path
+
+# Add project root to Python path to find 'shared' module
+# This allows imports like 'from shared.stats_manager import StatsManager' to work
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
     QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
