@@ -1,5 +1,9 @@
 # Packer's Assistant
 
+**Version:** 1.2.0 | **Phase:** Phase 1 Complete - Shopify Integration | **Last Updated:** 2025-11-19
+
+---
+
 ## 🎉 What's New in v1.2.0
 
 ### Major Improvements

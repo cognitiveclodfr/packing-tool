@@ -1,5 +1,11 @@
 # Packer's Assistant - System Architecture
 
+**Version:** 1.2.0
+**Last Updated:** 2025-11-19
+**Architecture Phase:** Phase 1 Complete - Shopify Integration
+
+---
+
 ## Table of Contents
 1. [Overview](#overview)
 2. [System Architecture](#system-architecture)
@@ -13,11 +19,17 @@
 ## Overview
 
 Packer's Assistant is a desktop application designed for small to medium-sized warehouse operations. It streamlines the order fulfillment process by:
-- Processing Excel packing lists
-- Generating scannable barcode labels for orders
-- Tracking packing progress in real-time
-- Supporting crash recovery with session persistence
-- Enabling multi-PC collaboration via centralized file server storage
+- **Processing packing lists** from multiple sources:
+  - Shopify sessions with JSON packing lists (Phase 1 - v1.2.0)
+  - Excel files (Legacy workflow - fully supported)
+- **Generating scannable barcode labels** optimized for thermal printers
+- **Tracking packing progress** in real-time with auto-save
+- **Supporting crash recovery** with session persistence
+- **Enabling multi-PC collaboration** via centralized file server storage
+- **Managing multiple packing lists** per Shopify session (Phase 1)
+
+**Phase 1 (v1.2.0) - Shopify Integration:**
+The application now integrates seamlessly with Shopify Tool, supporting unified session structures and multiple packing lists per session. This enables efficient handling of orders organized by courier, delivery method, or custom criteria.
 
 The application is built with Python 3.8+ and PySide6 (Qt6) for cross-platform desktop GUI support.
 
@@ -327,6 +339,12 @@ SessionManager.end_session()
 
 ### Directory Structure
 
+**Phase 1 (v1.2.0) - Dual Workflow Support:**
+- **Shopify Workflow**: Sessions with `packing/` directory (multiple lists)
+- **Excel Workflow**: Sessions with `barcodes/` directory (single list)
+
+#### Phase 1 - Shopify Session Structure (v1.2.0)
+
 ```
 \\FileServer\PackerAssistant\
 │
@@ -335,34 +353,60 @@ SessionManager.end_session()
 │   │   ├── config.json             # Client configuration
 │   │   ├── sku_mapping.json        # Barcode-to-SKU mappings
 │   │   └── backups/                # Configuration backups
-│   │       ├── config_20251103_143000.json
-│   │       └── sku_mapping_20251103_143000.json
 │   │
 │   └── CLIENT_R/
 │       └── ...
 │
 ├── SESSIONS/                        # Session data
 │   ├── CLIENT_M/
-│   │   ├── 2025-11-03_14-30/       # Timestamped session
-│   │   │   ├── session_info.json   # Session metadata (deleted on end)
+│   │   ├── 2025-11-19_1/           # Shopify session (Phase 1)
+│   │   │   ├── session_info.json   # Session metadata
 │   │   │   ├── .session.lock       # Lock file with heartbeat
-│   │   │   ├── barcodes/           # Generated barcodes
-│   │   │   │   ├── ORDER-123.png
-│   │   │   │   ├── ORDER-456.png
-│   │   │   │   └── packing_state.json  # Progress tracking
-│   │   │   └── output/             # Completion report (created on end)
-│   │   │       ├── packing_list_completed.xlsx
+│   │   │   │
+│   │   │   ├── analysis/           # Created by Shopify Tool
+│   │   │   │   └── analysis_data.json
+│   │   │   │
+│   │   │   ├── packing_lists/      # Created by Shopify Tool
+│   │   │   │   ├── DHL_Orders.json
+│   │   │   │   ├── PostOne_Orders.json
+│   │   │   │   └── ...
+│   │   │   │
+│   │   │   └── packing/            # Created by Packing Tool (Phase 1)
+│   │   │       ├── DHL_Orders/     # Work dir for DHL list
+│   │   │       │   ├── packing_state.json
+│   │   │       │   ├── session_summary.json
+│   │   │       │   ├── barcodes/
+│   │   │       │   │   ├── ORDER-123.png
+│   │   │       │   │   └── ORDER-456.png
+│   │   │       │   └── reports/
+│   │   │       │       └── packing_report.xlsx
+│   │   │       │
+│   │   │       └── PostOne_Orders/ # Work dir for PostOne list
+│   │   │           └── [same structure]
+│   │   │
+│   │   ├── 2025-11-19_2/           # Excel session (Legacy)
+│   │   │   ├── session_info.json
+│   │   │   ├── .session.lock
+│   │   │   └── barcodes/           # Legacy structure
+│   │   │       ├── ORDER-789.png
+│   │   │       ├── packing_state.json
 │   │   │       └── session_summary.json
 │   │   │
-│   │   └── 2025-11-03_16-15/
-│   │       └── ...
+│   │   └── ...
 │   │
 │   └── CLIENT_R/
 │       └── ...
 │
 └── STATS/                           # Global statistics
-    └── stats.json                   # Centralized metrics
+    └── global_stats.json            # Centralized metrics (unified)
 ```
+
+**Key Architectural Changes (v1.2.0):**
+- ✅ **Multiple packing lists** per Shopify session supported
+- ✅ **Isolated work directories** (`packing/{list_name}/`) for each list
+- ✅ **Backward compatible** with Excel workflow (`barcodes/`)
+- ✅ **Unified statistics** via `shared/stats_manager.py`
+- ✅ **Session detection** automatically identifies workflow type
 
 ### File Formats
 
