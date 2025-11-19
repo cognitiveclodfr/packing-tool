@@ -559,6 +559,19 @@ class PackerLogic(QObject):
         iterates through each unique order to generate a printable barcode image.
         The image includes the order number, courier, and the barcode itself.
 
+        Barcode Configuration (Optimized for 68x38mm labels @ 203 DPI):
+        ================================================================
+        - Printer: Citizen CL-E300 (203 DPI)
+        - Label size: 68mm x 38mm
+        - Output: 543 x 303 pixels PNG image
+        - Module width: 0.4mm (bar width)
+        - Module height: 20.0mm (bar height for good scannability)
+        - Quiet zones: 6.0mm (left/right margins)
+        - Scannability: Optimized for 20-30cm working distance
+
+        DO NOT modify barcode parameters without testing on actual labels!
+        Changes to module_width, module_height, or DPI will affect print size.
+
         Args:
             column_mapping: Optional mapping from required column names to actual names in file
 
@@ -600,23 +613,27 @@ class PackerLogic(QObject):
         code128 = barcode.get_barcode_class('code128')
 
         # === BARCODE LABEL DIMENSIONS ===
-        # These values are configured for common thermal printers used in small warehouses
-        # (Zebra, Brother, Dymo, TSC, and similar models)
+        # Optimized for Citizen CL-E300 printer with 68mm x 38mm labels
+        # These settings ensure barcodes are:
+        # - Properly sized for direct printing without scaling
+        # - Scannable from 20-30cm working distance
+        # - Clear and readable with sharp bars
 
         # DPI (Dots Per Inch) = 203
+        # Citizen CL-E300 printer resolution
         # This is the standard resolution for entry-level thermal printers
         # More expensive printers use 300 DPI, but 203 DPI is sufficient for
         # barcode readability and is the most common resolution in small businesses
         DPI = 203
 
         # Label dimensions in millimeters
-        # 65mm x 35mm is a common label size that:
-        # - Fits standard thermal printer rolls (most printers support 50-80mm width)
-        # - Large enough for barcode + text information
-        # - Small enough to be cost-effective (label cost per unit)
-        # - Fits well on shipping boxes without taking excessive space
-        LABEL_WIDTH_MM = 65   # 2.56 inches
-        LABEL_HEIGHT_MM = 35  # 1.38 inches
+        # 68mm x 38mm labels for Citizen CL-E300 thermal printer
+        # Dimensions match physical label stock used in warehouse
+        # - Fits Citizen CL-E300 label rolls
+        # - Large enough for barcode + order info + courier name
+        # - Optimal size for shipping box labels
+        LABEL_WIDTH_MM = 68   # 2.68 inches → ~543 pixels @ 203 DPI
+        LABEL_HEIGHT_MM = 38  # 1.50 inches → ~303 pixels @ 203 DPI
 
         # Convert millimeters to pixels for image generation
         # Formula: (mm / 25.4) * DPI
@@ -690,23 +707,33 @@ class PackerLogic(QObject):
                 # Generate barcode to in-memory buffer (not disk file)
                 buffer = io.BytesIO()
 
-                # Barcode generation parameters:
-                # - module_height: 15.0mm = height of individual barcode bars
-                #   15mm is chosen because it's:
-                #   * Tall enough for reliable scanning (minimum ~10mm recommended)
-                #   * Not too tall (wastes label space)
-                #   * Standard for shipping labels in small warehouse operations
+                # Barcode generation parameters optimized for 68x38mm @ 203 DPI
+                # Target output: ~543x240px image for Citizen CL-E300 printer
+                #
+                # - module_width: 0.4mm = width of individual barcode bars
+                #   Optimal range for 203 DPI printers: 0.33-0.5mm
+                #   0.4mm provides good balance between density and scannability
+                #
+                # - module_height: 20.0mm = height of individual barcode bars
+                #   20mm ensures reliable scanning from 20-30cm distance
+                #   Taller bars = better scannability from working distance
+                #   At 203 DPI: 20mm = ~158 pixels
+                #
+                # - dpi: 203 = match Citizen CL-E300 printer resolution
+                #   Critical for correct sizing and sharp rendering
+                #
+                # - quiet_zone: 6.0mm = blank space on left/right of barcode
+                #   Code128 standard requires ≥10× module_width
+                #   6mm provides adequate margins for reliable scanning
                 #
                 # - write_text: False = don't include human-readable text below bars
                 #   We handle text rendering ourselves for better layout control
-                #
-                # - quiet_zone: 2 = minimum blank space on left/right of barcode (in modules)
-                #   Quiet zones are required by barcode standards for reliable scanning
-                #   2 modules is the minimum; we rely on label margins for additional space
                 barcode_obj.write(buffer, {
-                    'module_height': 15.0,    # Bar height in mm
-                    'write_text': False,      # We'll add text manually
-                    'quiet_zone': 2           # Minimum blank space on sides
+                    'module_width': 0.4,      # Bar width (mm) - optimal for 203 DPI
+                    'module_height': 20.0,    # Bar height (mm) - 20mm for good scannability
+                    'dpi': 203,               # Match printer DPI for correct sizing
+                    'quiet_zone': 6.0,        # Left/right margins (mm) - adequate quiet zones
+                    'write_text': False       # We'll add text manually with PIL
                 })
 
                 # Rewind buffer to start for reading
@@ -785,6 +812,10 @@ class PackerLogic(QObject):
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
                 label_img.save(barcode_path)
 
+                # === STEP 6.5: Validate barcode dimensions ===
+                # Verify that generated barcode meets size requirements for 68x38mm labels
+                self._validate_barcode_dimensions(barcode_path)
+
                 # === STEP 7: Store order data for later use ===
                 # Store both the barcode file path and all order items
                 # This data is used during packing to:
@@ -803,6 +834,70 @@ class PackerLogic(QObject):
         except Exception as e:
             logger.error(f"Error during barcode generation: {e}", exc_info=True)
             raise RuntimeError(f"Error during barcode generation: {e}")
+
+    def _validate_barcode_dimensions(self, barcode_path: str):
+        """
+        Validate that generated barcode meets size requirements for 68x38mm labels @ 203 DPI.
+
+        This method checks the pixel dimensions of the generated barcode image and logs
+        warnings if dimensions fall outside expected ranges. It helps detect configuration
+        issues early before printing.
+
+        Expected dimensions for 68x38mm @ 203 DPI:
+        - Width: ~543 pixels (63-75mm range allowed for tolerance)
+        - Height: ~240-280 pixels (25-35mm range, accounts for text area variation)
+
+        Args:
+            barcode_path: Path to the generated PNG barcode file
+
+        Note:
+            This is a validation-only method. Warnings are logged but generation continues.
+            Out-of-range dimensions may indicate printer settings issues or label stock mismatch.
+        """
+        try:
+            # Load generated barcode image
+            img = Image.open(barcode_path)
+            width_px, height_px = img.size
+
+            # Expected dimensions for 68x38mm @ 203 DPI
+            # Width tolerance: ±5mm (allows for quiet zone variations)
+            expected_width_min = 500   # ~63mm @ 203 DPI
+            expected_width_max = 600   # ~75mm @ 203 DPI
+
+            # Height tolerance: wider range due to text area variations
+            # Full label is 38mm (303px), but barcode itself is shorter due to text
+            expected_height_min = 200  # ~25mm @ 203 DPI (barcode only, no text)
+            expected_height_max = 320  # ~40mm @ 203 DPI (includes text area)
+
+            # Validate width
+            if not (expected_width_min <= width_px <= expected_width_max):
+                logger.warning(
+                    f"Barcode width {width_px}px outside expected range "
+                    f"[{expected_width_min}-{expected_width_max}px]. "
+                    f"May not fit properly on 68mm label."
+                )
+
+            # Validate height
+            if not (expected_height_min <= height_px <= expected_height_max):
+                logger.warning(
+                    f"Barcode height {height_px}px outside expected range "
+                    f"[{expected_height_min}-{expected_height_max}px]. "
+                    f"May not fit properly on 38mm label."
+                )
+
+            # Convert to millimeters for logging
+            width_mm = width_px / 203 * 25.4
+            height_mm = height_px / 203 * 25.4
+
+            logger.debug(
+                f"Barcode dimensions: {width_px}x{height_px}px "
+                f"({width_mm:.1f}x{height_mm:.1f}mm @ 203 DPI)"
+            )
+
+        except Exception as e:
+            # Don't fail generation if validation fails
+            # This is a diagnostic tool, not a critical requirement
+            logger.warning(f"Could not validate barcode dimensions for {barcode_path}: {e}")
 
     def start_order_packing(self, scanned_text: str) -> Tuple[List[Dict] | None, str]:
         """

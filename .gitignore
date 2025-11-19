@@ -1,6 +1,9 @@
 # Ignore the directory for generated barcodes
 /barcodes/
 
+# Ignore test output directory
+/test_output/
+
 # Ignore PyInstaller build artifacts
 /build/
 /dist/
