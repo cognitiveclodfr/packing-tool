@@ -33,11 +33,13 @@ from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
 from order_table_model import OrderTableModel
 from shared.stats_manager import StatsManager
+from shared.worker_manager import WorkerManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from dashboard_widget import DashboardWidget
 from session_history_widget import SessionHistoryWidget
+from worker_selection_dialog import WorkerSelectionDialog
 
 logger = get_logger(__name__)
 
@@ -96,13 +98,20 @@ class MainWindow(QMainWindow):
         table_model (OrderTableModel): The model for the orders table.
         proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
     """
-    def __init__(self):
-        """Initialize the MainWindow, sets up UI, and loads initial state."""
+    def __init__(self, skip_worker_selection: bool = False):
+        """Initialize the MainWindow, sets up UI, and loads initial state.
+
+        Args:
+            skip_worker_selection: If True, skip worker selection dialog (for tests)
+        """
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
         self.resize(1024, 768)
 
         logger.info("Initializing MainWindow")
+
+        # Detect if running in test mode
+        self._is_test_mode = skip_worker_selection or 'pytest' in sys.modules
 
         # Initialize ProfileManager (may raise NetworkError)
         try:
@@ -126,6 +135,15 @@ class MainWindow(QMainWindow):
         self.lock_manager = SessionLockManager(self.profile_manager)
         logger.info("SessionLockManager initialized successfully")
 
+        # Initialize WorkerManager
+        base_path = self.profile_manager.base_path
+        self.worker_manager = WorkerManager(str(base_path))
+        logger.info("WorkerManager initialized successfully")
+
+        # Worker state
+        self.current_worker_id = None
+        self.current_worker_name = None
+
         # Current client state
         self.current_client_id = None
         self.session_manager = None  # Will be instantiated per client
@@ -138,7 +156,6 @@ class MainWindow(QMainWindow):
         self.packing_data = None          # Loaded packing list data
 
         # Phase 1.4: Unified StatsManager for integration with Shopify Tool statistics
-        base_path = self.profile_manager.base_path
         self.stats_manager = StatsManager(base_path=str(base_path))
 
         # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
@@ -146,6 +163,18 @@ class MainWindow(QMainWindow):
 
         # Settings for remembering last client
         self.settings = QSettings("PackingTool", "ClientSelection")
+
+        # Show worker selection BEFORE main window initialization (skip in test mode)
+        if not self._is_test_mode:
+            if not self._select_worker():
+                # User cancelled - exit app
+                logger.info("Worker selection cancelled - exiting application")
+                sys.exit(0)
+        else:
+            # Test mode - use dummy worker
+            self.current_worker_id = "test_worker_001"
+            self.current_worker_name = "Test Worker"
+            logger.info(f"Test mode: Using dummy worker {self.current_worker_name}")
 
         self._init_ui()
 
@@ -168,6 +197,11 @@ class MainWindow(QMainWindow):
         client_selection_widget.setObjectName("ClientSelection")
         client_selection_layout = QHBoxLayout(client_selection_widget)
         main_layout.addWidget(client_selection_widget)
+
+        # Worker display
+        worker_label = QLabel(f"Worker: {self.current_worker_name}")
+        worker_label.setStyleSheet("color: #0d7377; font-weight: bold; font-size: 12pt; margin-right: 20px;")
+        client_selection_layout.addWidget(worker_label)
 
         client_label = QLabel("Client:")
         client_label.setStyleSheet("font-size: 14pt; font-weight: bold;")
@@ -314,6 +348,38 @@ class MainWindow(QMainWindow):
         session_monitor_action = QAction("Session &Monitor", self)
         session_monitor_action.triggered.connect(self.open_session_monitor)
         tools_menu.addAction(session_monitor_action)
+
+    def _select_worker(self) -> bool:
+        """Show worker selection dialog
+
+        Returns:
+            bool: True if worker selected, False if cancelled
+        """
+        try:
+            # Show selection dialog
+            dialog = WorkerSelectionDialog(self.worker_manager, self)
+
+            if dialog.exec() == QDialog.Accepted:
+                self.current_worker_id = dialog.get_selected_worker_id()
+
+                # Get worker details
+                worker = self.worker_manager.get_worker(self.current_worker_id)
+                if worker:
+                    self.current_worker_name = worker.name
+                    logger.info(f"Logged in as: {self.current_worker_name} ({self.current_worker_id})")
+                    return True
+
+            logger.info("Worker selection cancelled")
+            return False
+
+        except Exception as e:
+            logger.error(f"Worker selection failed: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to load worker profiles:\n{str(e)}\n\nApplication will exit."
+            )
+            return False
 
     def _refresh_all_views(self):
         """Refresh all dashboard and history views."""
@@ -520,7 +586,9 @@ class MainWindow(QMainWindow):
             self.session_manager = SessionManager(
                 client_id=self.current_client_id,
                 profile_manager=self.profile_manager,
-                lock_manager=self.lock_manager
+                lock_manager=self.lock_manager,
+                worker_id=self.current_worker_id,
+                worker_name=self.current_worker_name
             )
 
             # Start session
@@ -769,32 +837,42 @@ class MainWindow(QMainWindow):
 
                 # Phase 1.4: Record packing session to unified statistics
                 try:
-                    if start_time:  # Only record if we have start_time
-                        # Get worker PC name
-                        worker_id = session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown')
+                    # Calculate duration (if we have start_time)
+                    duration_seconds = int((end_time - start_time).total_seconds()) if start_time else None
 
-                        # Calculate duration
-                        duration_seconds = int((end_time - start_time).total_seconds()) if start_time else None
+                    # Record to unified stats (always, even if start_time is None)
+                    self.stats_manager.record_packing(
+                        client_id=self.current_client_id,
+                        session_id=session_id,
+                        worker_id=self.current_worker_id,
+                        orders_count=completed_orders,
+                        items_count=items_packed,
+                        metadata={
+                            "duration_seconds": duration_seconds,
+                            "packing_list_name": os.path.basename(packing_list_path) if packing_list_path else "Unknown",
+                            "started_at": start_time.isoformat() if start_time else None,
+                            "completed_at": end_time.isoformat(),
+                            "total_orders": total_orders,
+                            "in_progress_orders": in_progress_orders,
+                            "session_type": "shopify" if is_shopify_session else "excel",
+                            "user_name": os.environ.get('USERNAME', 'Unknown'),
+                            "worker_name": self.current_worker_name,
+                            "pc_name": os.environ.get('COMPUTERNAME', 'Unknown')
+                        }
+                    )
+                    logger.info(f"Recorded packing session to unified stats: {completed_orders} orders, {items_packed} items (Worker: {self.current_worker_name})")
 
-                        # Record to unified stats
-                        self.stats_manager.record_packing(
-                            client_id=self.current_client_id,
-                            session_id=session_id,
-                            worker_id=worker_id,
-                            orders_count=completed_orders,
-                            items_count=items_packed,
-                            metadata={
-                                "duration_seconds": duration_seconds,
-                                "packing_list_name": os.path.basename(packing_list_path) if packing_list_path else "Unknown",
-                                "started_at": start_time.isoformat(),
-                                "completed_at": end_time.isoformat(),
-                                "total_orders": total_orders,
-                                "in_progress_orders": in_progress_orders,
-                                "session_type": "shopify" if is_shopify_session else "excel",
-                                "user_name": os.environ.get('USERNAME', 'Unknown')
-                            }
+                    # Phase 1.3: Update worker statistics (ALWAYS, regardless of start_time)
+                    if self.current_worker_id:
+                        self.worker_manager.update_worker_stats(
+                            worker_id=self.current_worker_id,
+                            sessions=1,
+                            orders=completed_orders,
+                            items=items_packed
                         )
-                        logger.info(f"Recorded packing session to unified stats: {completed_orders} orders, {items_packed} items")
+                        logger.info(f"Updated worker stats for {self.current_worker_name}")
+                    else:
+                        logger.warning("Worker ID is None, skipping worker stats update")
                 except Exception as e:
                     logger.error(f"Error recording packing session to unified stats: {e}", exc_info=True)
 
@@ -813,6 +891,8 @@ class MainWindow(QMainWindow):
                         "completed_file_path": output_path,
                         "pc_name": session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown'),
                         "user_name": os.environ.get('USERNAME', 'Unknown'),
+                        "worker_id": self.current_worker_id,
+                        "worker_name": self.current_worker_name,
                         "total_orders": total_orders,
                         "completed_orders": completed_orders,
                         "in_progress_orders": in_progress_orders,
@@ -1395,7 +1475,9 @@ class MainWindow(QMainWindow):
                 self.session_manager = SessionManager(
                     client_id=self.current_client_id,
                     profile_manager=self.profile_manager,
-                    lock_manager=self.lock_manager
+                    lock_manager=self.lock_manager,
+                    worker_id=self.current_worker_id,
+                    worker_name=self.current_worker_name
                 )
 
             # ✅ GOOD: Use SessionManager method to create work directory

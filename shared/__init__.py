@@ -5,14 +5,18 @@ This package contains unified components that work identically in both tools,
 ensuring consistency and reducing code duplication.
 
 Phase 1.4: Unified Statistics System
+Phase 1.3: Worker Profile System
 """
 
 from .stats_manager import StatsManager, StatsManagerError, FileLockError
+from .worker_manager import WorkerManager, WorkerProfile
 
 __all__ = [
     'StatsManager',
     'StatsManagerError',
     'FileLockError',
+    'WorkerManager',
+    'WorkerProfile',
 ]
 
-__version__ = '1.2.0'
+__version__ = '1.3.0'
