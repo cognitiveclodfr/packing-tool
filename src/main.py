@@ -2,6 +2,12 @@ import sys
 import os
 import json
 from pathlib import Path
+
+# Add project root to Python path to find 'shared' module
+# This allows imports like 'from shared.stats_manager import StatsManager' to work
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
     QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
@@ -1384,22 +1390,27 @@ class MainWindow(QMainWindow):
                     lock_manager=self.lock_manager
                 )
 
-            # Create work directory: packing/{list_name}/ for specific lists
-            if load_mode == "packing_list":
-                work_dir = session_path / "packing" / selected_name
-            else:
-                # For full session, use legacy structure
-                work_dir = session_path / "packing_full_session"
+            # ✅ GOOD: Use SessionManager method to create work directory
+            # This automatically creates packing/{list_name}/barcodes/ and reports/
+            packing_list_name = selected_name if load_mode == "packing_list" else "full_session"
 
-            # Create work directory (PackerLogic will create subdirectories)
-            work_dir.mkdir(parents=True, exist_ok=True)
+            work_dir = self.session_manager.get_packing_work_dir(
+                session_path=str(session_path),
+                packing_list_name=packing_list_name
+            )
+
+            # SessionManager.get_packing_work_dir() automatically:
+            # - Creates packing/{list_name}/ directory
+            # - Creates barcodes/ subdirectory
+            # - Creates reports/ subdirectory
+            # - Returns Path object
 
             # Store current session info
             self.current_session_path = str(session_path)
             self.current_packing_list = selected_name
             self.current_work_dir = str(work_dir)
 
-            logger.info(f"Work directory: {work_dir}")
+            logger.info(f"Work directory created via SessionManager: {work_dir}")
 
             # Step 4: Create PackerLogic instance with unified work_dir
             # PackerLogic will create barcodes/ and reports/ subdirectories
@@ -1416,23 +1427,18 @@ class MainWindow(QMainWindow):
             if load_mode == "packing_list":
                 # Load specific packing list JSON
                 logger.info(f"Loading packing list from: {packing_list_path}")
+
+                # ✅ Single read through PackerLogic
                 order_count, list_name = self.logic.load_packing_list_json(packing_list_path)
 
-                logger.info(f"Loaded packing list '{list_name}': {order_count} orders")
+                # ✅ Use minimal UI data (orders already in PackerLogic)
+                self.packing_data = {
+                    'list_name': list_name,
+                    'total_orders': order_count,
+                    'orders': []  # Don't duplicate data - PackerLogic has it
+                }
 
-                # Load JSON data for UI display (read the file to get metadata)
-                try:
-                    with open(packing_list_path, 'r', encoding='utf-8') as f:
-                        self.packing_data = json.load(f)
-                    logger.debug(f"Loaded packing data metadata: {self.packing_data.get('total_orders', 0)} orders")
-                except Exception as e:
-                    logger.warning(f"Could not load packing data metadata: {e}")
-                    # Set minimal packing_data for UI
-                    self.packing_data = {
-                        'list_name': list_name,
-                        'total_orders': order_count,
-                        'orders': []
-                    }
+                logger.info(f"Loaded packing list '{list_name}': {order_count} orders")
             else:
                 # Load entire session (analysis_data.json)
                 logger.info(f"Loading full session from: {session_path}")
