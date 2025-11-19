@@ -226,6 +226,191 @@ class TestSessionHistoryManager(unittest.TestCase):
         self.assertIn('Client ID', export_data[0])
         self.assertIn('Total Orders', export_data[0])
 
+    def test_parse_session_directory_shopify_structure(self):
+        """Test parsing Phase 1 Shopify session structure."""
+        # Setup Phase 1 Shopify structure
+        client_dir = self.sessions_root / "CLIENT_SHOPIFY_TEST"
+        client_dir.mkdir(parents=True)
+
+        session_dir = client_dir / "2025-11-19_1"
+        session_dir.mkdir()
+
+        packing_dir = session_dir / "packing"
+        packing_dir.mkdir()
+
+        dhl_dir = packing_dir / "DHL_Orders"
+        dhl_dir.mkdir()
+
+        # Create packing_state.json in Phase 1 structure
+        packing_state = {
+            "version": "1.0",
+            "timestamp": datetime.now().isoformat(),
+            "client_id": "SHOPIFY_TEST",
+            "data": {
+                "in_progress": {
+                    "ORDER-001": {
+                        "SKU_A": {"packed": 2, "required": 5}
+                    }
+                },
+                "completed_orders": ["ORDER-002", "ORDER-003"]
+            }
+        }
+
+        state_file = dhl_dir / "packing_state.json"
+        with open(state_file, 'w') as f:
+            json.dump(packing_state, f)
+
+        # Test parsing
+        record = self.manager._parse_session_directory("SHOPIFY_TEST", session_dir)
+
+        # Assert
+        self.assertIsNotNone(record, "Phase 1 Shopify session should be parsed successfully")
+        self.assertEqual(record.session_id, "2025-11-19_1")
+        self.assertEqual(record.client_id, "SHOPIFY_TEST")
+        self.assertEqual(record.total_orders, 3)  # 1 in progress + 2 completed
+        self.assertEqual(record.completed_orders, 2)
+        self.assertEqual(record.in_progress_orders, 1)
+
+    def test_parse_session_directory_shopify_with_session_summary(self):
+        """Test parsing Phase 1 Shopify session with session_summary.json."""
+        # Setup Phase 1 Shopify structure
+        client_dir = self.sessions_root / "CLIENT_SHOPIFY_TEST"
+        client_dir.mkdir(parents=True, exist_ok=True)
+
+        session_dir = client_dir / "2025-11-19_2"
+        session_dir.mkdir()
+
+        packing_dir = session_dir / "packing"
+        packing_dir.mkdir()
+
+        postone_dir = packing_dir / "PostOne_Orders"
+        postone_dir.mkdir()
+
+        # Create session_summary.json (completed session)
+        session_summary = {
+            "session_id": "2025-11-19_2",
+            "packing_list_name": "PostOne_Orders",
+            "started_at": "2025-11-19T10:00:00",
+            "completed_at": "2025-11-19T12:30:00",
+            "duration_seconds": 9000,
+            "total_orders": 10,
+            "completed_orders": 10,
+            "in_progress_orders": 0,
+            "items_packed": 45,
+            "pc_name": "WAREHOUSE_PC1",
+            "packing_list_path": "/path/to/postone.xlsx"
+        }
+
+        summary_file = postone_dir / "session_summary.json"
+        with open(summary_file, 'w') as f:
+            json.dump(session_summary, f)
+
+        # Test parsing
+        record = self.manager._parse_session_directory("SHOPIFY_TEST", session_dir)
+
+        # Assert
+        self.assertIsNotNone(record, "Phase 1 Shopify session with summary should be parsed")
+        self.assertEqual(record.session_id, "2025-11-19_2")
+        self.assertEqual(record.total_orders, 10)
+        self.assertEqual(record.completed_orders, 10)
+        self.assertEqual(record.in_progress_orders, 0)
+        self.assertEqual(record.total_items_packed, 45)
+        self.assertEqual(record.pc_name, "WAREHOUSE_PC1")
+
+    def test_parse_session_directory_legacy_excel_structure(self):
+        """Test parsing Legacy Excel session structure."""
+        # This test uses the existing helper which creates Legacy structure
+        session_dir = self._create_test_session("LEGACY_TEST", "20250101_120000",
+                                                completed_orders=5, in_progress_orders=2)
+
+        # Test parsing
+        record = self.manager._parse_session_directory("LEGACY_TEST", session_dir)
+
+        # Assert
+        self.assertIsNotNone(record, "Legacy Excel session should be parsed successfully")
+        self.assertEqual(record.session_id, "20250101_120000")
+        self.assertEqual(record.client_id, "LEGACY_TEST")
+        self.assertEqual(record.total_orders, 7)  # 5 completed + 2 in progress
+        self.assertEqual(record.completed_orders, 5)
+        self.assertEqual(record.in_progress_orders, 2)
+
+    def test_parse_session_directory_multiple_packing_lists(self):
+        """Test session with multiple packing lists in Phase 1 structure."""
+        # Setup Phase 1 structure with multiple packing lists
+        client_dir = self.sessions_root / "CLIENT_MULTI"
+        client_dir.mkdir(parents=True)
+
+        session_dir = client_dir / "2025-11-19_3"
+        session_dir.mkdir()
+
+        packing_dir = session_dir / "packing"
+        packing_dir.mkdir()
+
+        # Create first packing list
+        dhl_dir = packing_dir / "DHL_Orders"
+        dhl_dir.mkdir()
+        dhl_state = dhl_dir / "packing_state.json"
+        with open(dhl_state, 'w') as f:
+            json.dump({
+                "data": {
+                    "in_progress": {},
+                    "completed_orders": ["ORDER-001"]
+                }
+            }, f)
+
+        # Create second packing list
+        postone_dir = packing_dir / "PostOne_Orders"
+        postone_dir.mkdir()
+        postone_state = postone_dir / "packing_state.json"
+        with open(postone_state, 'w') as f:
+            json.dump({
+                "data": {
+                    "in_progress": {},
+                    "completed_orders": ["ORDER-002", "ORDER-003"]
+                }
+            }, f)
+
+        # Test parsing - should find first one
+        record = self.manager._parse_session_directory("MULTI", session_dir)
+
+        # Assert - should parse one of the packing lists
+        self.assertIsNotNone(record, "Session with multiple packing lists should be parsed")
+        self.assertEqual(record.session_id, "2025-11-19_3")
+
+    def test_get_session_details_shopify_structure(self):
+        """Test get_session_details with Phase 1 Shopify structure."""
+        # Setup Phase 1 Shopify structure
+        client_dir = self.sessions_root / "CLIENT_DETAIL_TEST"
+        client_dir.mkdir(parents=True)
+
+        session_dir = client_dir / "2025-11-19_4"
+        session_dir.mkdir()
+
+        packing_dir = session_dir / "packing"
+        packing_dir.mkdir()
+
+        dhl_dir = packing_dir / "DHL_Orders"
+        dhl_dir.mkdir()
+
+        # Create packing_state.json
+        packing_state = {
+            "data": {
+                "in_progress": {},
+                "completed_orders": ["ORDER-001", "ORDER-002"]
+            }
+        }
+        with open(dhl_dir / "packing_state.json", 'w') as f:
+            json.dump(packing_state, f)
+
+        # Test get_session_details
+        details = self.manager.get_session_details("DETAIL_TEST", "2025-11-19_4")
+
+        # Assert
+        self.assertIsNotNone(details, "Should retrieve details for Shopify session")
+        self.assertIn('record', details)
+        self.assertIn('packing_state', details)
+        self.assertEqual(len(details['packing_state']['data']['completed_orders']), 2)
+
 
 class TestSessionHistoryRecord(unittest.TestCase):
     """Test cases for SessionHistoryRecord dataclass."""

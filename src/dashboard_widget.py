@@ -224,7 +224,10 @@ class DashboardWidget(QWidget):
         days: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Calculate performance metrics from packing history.
+        Calculate performance metrics from session history.
+
+        Uses SessionHistoryManager to read actual session data from both
+        Phase 1 (Shopify) and Legacy (Excel) structures.
 
         Args:
             client_id: Filter by client ID (None for all clients)
@@ -234,22 +237,44 @@ class DashboardWidget(QWidget):
             Dictionary with performance metrics
         """
         try:
-            # Get packing history
-            history = self.stats_manager.get_packing_history(
-                client_id=client_id,
-                worker_id=None,
-                limit=None
-            )
-
-            # Filter by date if specified
+            # Calculate date filters
+            start_date = None
+            end_date = None
             if days:
-                cutoff_date = datetime.now() - timedelta(days=days)
-                history = [
-                    h for h in history
-                    if datetime.fromisoformat(h.get('timestamp', '')) >= cutoff_date
-                ]
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=days)
 
-            if not history:
+            # Get sessions from SessionHistoryManager
+            if client_id:
+                # Get sessions for specific client
+                sessions = self.history_manager.get_client_sessions(
+                    client_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    include_incomplete=True
+                )
+            else:
+                # Get sessions for all clients
+                sessions = []
+                try:
+                    # Get all client directories
+                    sessions_root = self.profile_manager.get_sessions_root()
+                    if sessions_root.exists():
+                        for client_dir in sessions_root.iterdir():
+                            if client_dir.is_dir() and client_dir.name.startswith("CLIENT_"):
+                                client_id_from_dir = client_dir.name.replace("CLIENT_", "")
+                                client_sessions = self.history_manager.get_client_sessions(
+                                    client_id_from_dir,
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    include_incomplete=True
+                                )
+                                sessions.extend(client_sessions)
+                except Exception as e:
+                    logger.warning(f"Error loading all client sessions: {e}")
+                    sessions = []
+
+            if not sessions:
                 return {
                     'total_sessions': 0,
                     'total_orders': 0,
@@ -261,19 +286,17 @@ class DashboardWidget(QWidget):
                     'items_per_hour': 0.0
                 }
 
-            # Calculate metrics
-            total_sessions = len(history)
-            total_orders = sum(h.get('orders_count', 0) for h in history)
-            total_items = sum(h.get('items_count', 0) for h in history)
+            # Calculate metrics from sessions
+            total_sessions = len(sessions)
+            total_orders = sum(s.completed_orders for s in sessions)
+            total_items = sum(s.total_items_packed for s in sessions)
 
-            # Calculate durations (if available in metadata)
+            # Calculate durations
             total_duration_seconds = 0
             sessions_with_duration = 0
-            for h in history:
-                metadata = h.get('metadata', {})
-                duration = metadata.get('duration_seconds', 0)
-                if duration:
-                    total_duration_seconds += duration
+            for s in sessions:
+                if s.duration_seconds:
+                    total_duration_seconds += s.duration_seconds
                     sessions_with_duration += 1
 
             # Calculate averages
@@ -286,6 +309,8 @@ class DashboardWidget(QWidget):
             total_duration_hours = total_duration_seconds / 3600.0
             orders_per_hour = total_orders / total_duration_hours if total_duration_hours > 0 else 0.0
             items_per_hour = total_items / total_duration_hours if total_duration_hours > 0 else 0.0
+
+            logger.info(f"Dashboard metrics calculated: {total_sessions} sessions, {total_orders} orders, {total_items} items")
 
             return {
                 'total_sessions': total_sessions,
@@ -340,11 +365,9 @@ class DashboardWidget(QWidget):
             # Show/hide client-specific section
             if client_id:
                 self.client_specific_group.setVisible(True)
-                client_stats = self.stats_manager.get_client_stats(client_id)
-
-                self.client_sessions_card.set_value(client_stats.get('sessions', 0))
-                self.client_orders_card.set_value(client_stats.get('orders_packed', 0))
-                # items_packed not in unified client_stats, calculate from total
+                # Use SessionHistoryManager data (already filtered by client_id)
+                self.client_sessions_card.set_value(metrics['total_sessions'])
+                self.client_orders_card.set_value(metrics['total_orders'])
                 self.client_items_card.set_value(metrics['total_items'])
             else:
                 self.client_specific_group.setVisible(False)

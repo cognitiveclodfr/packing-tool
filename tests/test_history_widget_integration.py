@@ -72,6 +72,10 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
             session_dir = self.sessions_root / f"CLIENT_{client_id}" / session_id
             session_dir.mkdir(parents=True)
 
+            # Create barcodes directory for Legacy Excel structure
+            barcodes_dir = session_dir / "barcodes"
+            barcodes_dir.mkdir(parents=True)
+
             summary = {
                 "version": "1.0",
                 "session_id": session_id,
@@ -84,7 +88,8 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
                 "items_packed": 45 + i * 5
             }
 
-            with open(session_dir / "session_summary.json", 'w') as f:
+            # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+            with open(barcodes_dir / "session_summary.json", 'w') as f:
                 json.dump(summary, f)
 
         # Load clients and sessions
@@ -121,6 +126,10 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
         session_dir = self.sessions_root / f"CLIENT_{client_id}" / session_id
         session_dir.mkdir(parents=True)
 
+        # Create barcodes directory for Legacy Excel structure
+        barcodes_dir = session_dir / "barcodes"
+        barcodes_dir.mkdir(parents=True)
+
         # Partial session (0 completed orders, some in-progress)
         summary = {
             "version": "1.0",
@@ -135,7 +144,8 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
             "items_packed": 15
         }
 
-        with open(session_dir / "session_summary.json", 'w') as f:
+        # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+        with open(barcodes_dir / "session_summary.json", 'w') as f:
             json.dump(summary, f)
 
         self.widget.load_clients([client_id])
@@ -166,6 +176,11 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
         # Create a new session
         session_dir = client_dir / "20251029_150000"
         session_dir.mkdir(parents=True)
+
+        # Create barcodes directory for Legacy Excel structure
+        barcodes_dir = session_dir / "barcodes"
+        barcodes_dir.mkdir(parents=True)
+
         summary = {
             "version": "1.0",
             "session_id": "20251029_150000",
@@ -176,7 +191,8 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
             "items_packed": 25
         }
 
-        with open(session_dir / "session_summary.json", 'w') as f:
+        # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+        with open(barcodes_dir / "session_summary.json", 'w') as f:
             json.dump(summary, f)
 
         # Refresh
@@ -208,6 +224,10 @@ class TestHistoryWidgetFilters(unittest.TestCase):
                 session_dir = self.sessions_root / client_id / f"2025102{i}_100000"
                 session_dir.mkdir(parents=True)
 
+                # Create barcodes directory for Legacy Excel structure
+                barcodes_dir = session_dir / "barcodes"
+                barcodes_dir.mkdir(parents=True)
+
                 summary = {
                     "version": "1.0",
                     "session_id": f"2025102{i}_100000",
@@ -220,7 +240,8 @@ class TestHistoryWidgetFilters(unittest.TestCase):
                     "items_packed": 25
                 }
 
-                with open(session_dir / "session_summary.json", 'w') as f:
+                # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+                with open(barcodes_dir / "session_summary.json", 'w') as f:
                     json.dump(summary, f)
 
         # Create mock profile_manager
