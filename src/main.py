@@ -738,28 +738,55 @@ class MainWindow(QMainWindow):
 
             # REDESIGNED STATE MANAGEMENT: Generate session summary from PackerLogic
             # PackerLogic now maintains full session state with metadata and generates summary
+            # This generates a unified v1.3.0 format summary
             if self.logic:
-                try:
-                    # Determine summary output path based on session type
-                    if hasattr(self, 'current_work_dir') and self.current_work_dir:
-                        # Shopify session - save to work directory
-                        summary_output_path = os.path.join(self.current_work_dir, "session_summary.json")
-                    else:
-                        # Excel session - save to barcodes directory
-                        barcodes_dir = self.session_manager.get_barcodes_dir()
-                        summary_output_path = os.path.join(barcodes_dir, "session_summary.json")
+                # Determine summary output path based on session type
+                is_shopify_session = hasattr(self, 'current_work_dir') and self.current_work_dir
 
-                    # Generate and save summary via PackerLogic
-                    self.logic.save_session_summary(summary_output_path)
-                    logger.info(f"PackerLogic session summary saved to: {summary_output_path}")
+                if is_shopify_session:
+                    # Shopify session - save to work directory
+                    summary_output_path = os.path.join(self.current_work_dir, "session_summary.json")
+                    session_type = "shopify"
+                else:
+                    # Excel session - save to barcodes directory
+                    barcodes_dir = self.session_manager.get_barcodes_dir()
+                    summary_output_path = os.path.join(barcodes_dir, "session_summary.json")
+                    session_type = "excel"
+
+                # Generate and save unified v1.3.0 summary via PackerLogic
+                try:
+                    self.logic.save_session_summary(
+                        summary_path=summary_output_path,
+                        worker_id=self.current_worker_id,
+                        worker_name=self.current_worker_name,
+                        session_type=session_type
+                    )
+                    logger.info(f"Session summary (v1.3.0) saved to: {summary_output_path}")
 
                 except Exception as e:
                     logger.error(f"Failed to save PackerLogic session summary: {e}", exc_info=True)
-                    # Non-critical error - continue with existing summary logic below
+                    # This is critical - we need the summary for history
+                    # Try to save minimal summary as fallback
+                    try:
+                        from shared.metadata_utils import get_current_timestamp
+                        minimal_summary = {
+                            "version": "1.3.0",
+                            "session_id": self.logic.session_id if self.logic else "unknown",
+                            "session_type": session_type,
+                            "client_id": self.current_client_id,
+                            "worker_id": self.current_worker_id,
+                            "worker_name": self.current_worker_name,
+                            "completed_at": get_current_timestamp(),
+                            "error": str(e)
+                        }
+                        with open(summary_output_path, 'w', encoding='utf-8') as f:
+                            json.dump(minimal_summary, f, indent=2, ensure_ascii=False)
+                        logger.warning("Saved minimal session summary due to errors")
+                    except Exception as e2:
+                        logger.error(f"Could not save even minimal summary: {e2}", exc_info=True)
 
-            # Phase 1.3: Record session completion metrics and save session summary
-            # ALWAYS save session summary, even if errors occur
-            # NOTE: This is the legacy summary logic (kept for compatibility)
+            # Phase 1.3: Record session completion metrics
+            # Record session to stats and update worker stats
             try:
                 session_info = self.session_manager.get_session_info()
 
@@ -868,7 +895,9 @@ class MainWindow(QMainWindow):
                             worker_id=self.current_worker_id,
                             sessions=1,
                             orders=completed_orders,
-                            items=items_packed
+                            items=items_packed,
+                            duration_seconds=duration_seconds if duration_seconds else 0,
+                            session_id=session_id if session_id else None
                         )
                         logger.info(f"Updated worker stats for {self.current_worker_name}")
                     else:
@@ -876,36 +905,8 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error recording packing session to unified stats: {e}", exc_info=True)
 
-                # Phase 1.3: ALWAYS save session summary for History
+                # Update session metadata with completion status
                 try:
-                    summary_path = os.path.join(summary_output_dir, "session_summary.json")
-                    session_summary = {
-                        "version": "1.0",
-                        "session_id": session_id,
-                        "session_type": "shopify" if is_shopify_session else "excel",
-                        "client_id": self.current_client_id,
-                        "started_at": start_time.isoformat() if start_time else None,
-                        "completed_at": end_time.isoformat(),
-                        "duration_seconds": int((end_time - start_time).total_seconds()) if start_time else None,
-                        "packing_list_path": packing_list_path,
-                        "completed_file_path": output_path,
-                        "pc_name": session_info.get('pc_name') if session_info else os.environ.get('COMPUTERNAME', 'Unknown'),
-                        "user_name": os.environ.get('USERNAME', 'Unknown'),
-                        "worker_id": self.current_worker_id,
-                        "worker_name": self.current_worker_name,
-                        "total_orders": total_orders,
-                        "completed_orders": completed_orders,
-                        "in_progress_orders": in_progress_orders,
-                        "total_items": total_items,
-                        "items_packed": items_packed
-                    }
-
-                    with open(summary_path, 'w', encoding='utf-8') as f:
-                        json.dump(session_summary, f, indent=2, ensure_ascii=False)
-
-                    logger.info(f"Saved session summary: {completed_orders}/{total_orders} orders, {items_packed}/{total_items} items to {summary_path}")
-
-                    # Update session metadata with completion status
                     if hasattr(self, 'current_session_path') and hasattr(self, 'current_packing_list'):
                         if self.current_session_path and self.current_packing_list:
                             self.session_manager.update_session_metadata(
@@ -913,24 +914,9 @@ class MainWindow(QMainWindow):
                                 self.current_packing_list,
                                 'completed'
                             )
-
+                            logger.info("Updated session metadata to 'completed' status")
                 except Exception as e:
-                    logger.error(f"CRITICAL: Error saving session summary: {e}", exc_info=True)
-                    # Try to save minimal summary
-                    try:
-                        minimal_summary = {
-                            "version": "1.0",
-                            "session_id": session_id,
-                            "session_type": "shopify" if is_shopify_session else "excel",
-                            "client_id": self.current_client_id,
-                            "completed_at": datetime.now().isoformat(),
-                            "error": str(e)
-                        }
-                        with open(os.path.join(summary_output_dir, "session_summary.json"), 'w') as f:
-                            json.dump(minimal_summary, f, indent=2)
-                        logger.warning("Saved minimal session summary due to errors")
-                    except Exception as e2:
-                        logger.error(f"Could not save even minimal summary: {e2}")
+                    logger.warning(f"Could not update session metadata: {e}")
 
             except Exception as e:
                 logger.error(f"CRITICAL: Exception in session completion block: {e}", exc_info=True)

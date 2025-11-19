@@ -262,6 +262,8 @@ class SessionHistoryManager:
         """
         Parse session_summary.json for completed sessions.
 
+        Uses backward compatible loader to handle both old (v1.0-1.2) and new (v1.3.0) formats.
+
         Args:
             client_id: Client identifier
             session_dir: Path to session directory
@@ -270,34 +272,25 @@ class SessionHistoryManager:
         Returns:
             SessionHistoryRecord or None if parsing fails
         """
+        from shared.metadata_utils import load_session_summary_compat, parse_timestamp
+
         session_id = session_dir.name
 
         try:
-            with open(summary_file, 'r', encoding='utf-8') as f:
-                summary = json.load(f)
+            # Load with backward compatibility
+            summary = load_session_summary_compat(summary_file)
 
-            # Parse timestamps
-            start_time = None
-            end_time = None
-            duration_seconds = None
+            # Parse timestamps using utility function
+            start_time = parse_timestamp(summary.get('started_at', ''))
+            end_time = parse_timestamp(summary.get('completed_at', ''))
 
-            if 'started_at' in summary and summary['started_at']:
-                try:
-                    start_time = datetime.fromisoformat(summary['started_at'])
-                except (ValueError, TypeError):
-                    pass
-
-            if 'completed_at' in summary and summary['completed_at']:
-                try:
-                    end_time = datetime.fromisoformat(summary['completed_at'])
-                except (ValueError, TypeError):
-                    pass
-
-            if 'duration_seconds' in summary:
-                duration_seconds = summary['duration_seconds']
-            elif start_time and end_time:
+            # Get duration
+            duration_seconds = summary.get('duration_seconds')
+            if duration_seconds is None and start_time and end_time:
                 duration_seconds = (end_time - start_time).total_seconds()
 
+            # Map unified v1.3.0 format to SessionHistoryRecord
+            # The compatibility loader ensures we always get v1.3.0 format
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
@@ -306,10 +299,10 @@ class SessionHistoryManager:
                 duration_seconds=duration_seconds,
                 total_orders=summary.get('total_orders', 0),
                 completed_orders=summary.get('completed_orders', 0),
-                in_progress_orders=summary.get('in_progress_orders', 0),
-                total_items_packed=summary.get('items_packed', 0),
+                in_progress_orders=0,  # v1.3.0 doesn't track this separately
+                total_items_packed=summary.get('total_items', 0),  # v1.3.0 uses 'total_items'
                 pc_name=summary.get('pc_name'),
-                packing_list_path=summary.get('packing_list_path'),
+                packing_list_path=summary.get('packing_list_name'),  # v1.3.0 uses packing_list_name
                 session_path=str(session_dir)
             )
 
