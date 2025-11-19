@@ -3,9 +3,9 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QWidget,
     QMessageBox
 )
-from PySide6.QtGui import QPixmap, QPainter, QImage, QPageLayout
+from PySide6.QtGui import QPixmap, QPainter, QImage, QPageLayout, QPageSize
 from PySide6.QtCore import QRectF, Qt, QSizeF, QMarginsF
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPageSize
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from typing import Dict, Any
 from logger import logger
 
