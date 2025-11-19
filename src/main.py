@@ -1327,6 +1327,9 @@ class MainWindow(QMainWindow):
         2. Automatically scan packing_lists/ folder
         3. User can select specific packing list or load entire session
         4. Create work directory: packing/{list_name}/ for selected lists
+
+        If a client is already selected in the main menu, it will be
+        pre-selected in the dialog (no need to select twice).
         """
         logger.info("Opening Shopify session selector")
 
@@ -1353,7 +1356,12 @@ class MainWindow(QMainWindow):
             return
 
         # Step 1: Use SessionSelectorDialog to select session and packing list
-        selector_dialog = SessionSelectorDialog(self.profile_manager, self)
+        # Pass pre-selected client from main menu to avoid double selection
+        selector_dialog = SessionSelectorDialog(
+            profile_manager=self.profile_manager,
+            pre_selected_client=self.current_client_id,
+            parent=self
+        )
 
         if not selector_dialog.exec():
             logger.info("Shopify session selection cancelled")

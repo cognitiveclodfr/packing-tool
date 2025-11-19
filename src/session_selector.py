@@ -44,17 +44,21 @@ class SessionSelectorDialog(QDialog):
     - Session metadata dictionary
     """
 
-    def __init__(self, profile_manager, parent=None):
+    def __init__(self, profile_manager, pre_selected_client=None, parent=None):
         """
         Initialize SessionSelectorDialog.
 
         Args:
             profile_manager: ProfileManager instance for accessing sessions
+            pre_selected_client: Optional pre-selected client ID
+                                If provided, client selector will be hidden
+                                and sessions filtered to this client only
             parent: Parent widget
         """
         super().__init__(parent)
 
         self.profile_manager = profile_manager
+        self.pre_selected_client = pre_selected_client
         self.selected_session_path = None
         self.selected_session_data = None
         self.selected_packing_list_path = None  # NEW: Selected packing list JSON path
@@ -64,7 +68,12 @@ class SessionSelectorDialog(QDialog):
         self.setMinimumHeight(600)  # Increased height for packing lists section
 
         self._init_ui()
-        self._load_clients()
+
+        # If client pre-selected, apply pre-selection immediately
+        if self.pre_selected_client:
+            self._apply_pre_selection()
+        else:
+            self._load_clients()
 
         logger.info("SessionSelectorDialog initialized")
 
@@ -225,24 +234,60 @@ class SessionSelectorDialog(QDialog):
         if self.client_combo.count() > 0 and self.client_combo.currentData():
             self._on_client_changed(0)
 
-    def _on_client_changed(self, index: int):
-        """Handle client selection change."""
-        client_id = self.client_combo.currentData()
+    def _apply_pre_selection(self):
+        """
+        Apply pre-selected client filter and hide client selector.
 
-        if not client_id:
-            logger.debug("No valid client selected")
-            return
+        Called when dialog is opened with a pre-selected client from main menu.
+        Hides the client ComboBox and shows static label instead.
+        """
+        logger.info(f"Applying pre-selection for client: {self.pre_selected_client}")
 
-        logger.info(f"Client changed to: {client_id}")
-        self._refresh_sessions()
+        # Hide client selector ComboBox
+        if hasattr(self, 'client_combo'):
+            self.client_combo.setVisible(False)
+            self.client_combo.setEnabled(False)
 
-    def _refresh_sessions(self):
-        """Refresh sessions list for current client with filters."""
-        client_id = self.client_combo.currentData()
+        # Create and show static label instead
+        if not hasattr(self, 'client_label'):
+            # Get client display name
+            try:
+                config = self.profile_manager.load_client_config(self.pre_selected_client)
+                if config:
+                    display_name = f"{config.get('client_name', self.pre_selected_client)} ({self.pre_selected_client})"
+                else:
+                    display_name = self.pre_selected_client
+            except:
+                display_name = self.pre_selected_client
 
-        if not client_id:
-            return
+            self.client_label = QLabel(f"Client: {display_name}")
+            self.client_label.setStyleSheet("font-weight: bold; font-size: 11pt; color: #2E7D32;")
 
+            # Insert into client group layout (before combo)
+            client_group = self.client_combo.parent()
+            if client_group:
+                layout = client_group.layout()
+                if layout:
+                    # Insert at position 1 (after "Client:" label)
+                    layout.insertWidget(1, self.client_label)
+
+        self.client_label.setVisible(True)
+
+        # Update window title
+        self.setWindowTitle(f"Select Shopify Session - {self.pre_selected_client}")
+
+        # Load sessions immediately for this client
+        self._refresh_sessions_for_client(self.pre_selected_client)
+
+        logger.info(f"Pre-selection applied successfully for client {self.pre_selected_client}")
+
+    def _refresh_sessions_for_client(self, client_id: str):
+        """
+        Refresh sessions list for a specific client.
+
+        Args:
+            client_id: Client identifier to load sessions for
+        """
         logger.info(f"Refreshing sessions for client {client_id}")
 
         self.sessions_list.clear()
@@ -296,6 +341,31 @@ class SessionSelectorDialog(QDialog):
         except Exception as e:
             logger.error(f"Error refreshing sessions: {e}", exc_info=True)
             QMessageBox.warning(self, "Error", f"Failed to load sessions:\n\n{e}")
+
+    def _on_client_changed(self, index: int):
+        """Handle client selection change."""
+        client_id = self.client_combo.currentData()
+
+        if not client_id:
+            logger.debug("No valid client selected")
+            return
+
+        logger.info(f"Client changed to: {client_id}")
+        self._refresh_sessions()
+
+    def _refresh_sessions(self):
+        """Refresh sessions list for current client with filters."""
+        # Use pre-selected client if available, otherwise get from combo
+        if self.pre_selected_client:
+            client_id = self.pre_selected_client
+        else:
+            client_id = self.client_combo.currentData()
+
+        if not client_id:
+            return
+
+        # Use the unified refresh method
+        self._refresh_sessions_for_client(client_id)
 
     def _scan_shopify_sessions(self, client_id: str) -> List[Dict]:
         """
