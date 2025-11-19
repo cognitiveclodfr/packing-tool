@@ -98,13 +98,20 @@ class MainWindow(QMainWindow):
         table_model (OrderTableModel): The model for the orders table.
         proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
     """
-    def __init__(self):
-        """Initialize the MainWindow, sets up UI, and loads initial state."""
+    def __init__(self, skip_worker_selection: bool = False):
+        """Initialize the MainWindow, sets up UI, and loads initial state.
+
+        Args:
+            skip_worker_selection: If True, skip worker selection dialog (for tests)
+        """
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
         self.resize(1024, 768)
 
         logger.info("Initializing MainWindow")
+
+        # Detect if running in test mode
+        self._is_test_mode = skip_worker_selection or 'pytest' in sys.modules
 
         # Initialize ProfileManager (may raise NetworkError)
         try:
@@ -157,11 +164,17 @@ class MainWindow(QMainWindow):
         # Settings for remembering last client
         self.settings = QSettings("PackingTool", "ClientSelection")
 
-        # Show worker selection BEFORE main window initialization
-        if not self._select_worker():
-            # User cancelled - exit app
-            logger.info("Worker selection cancelled - exiting application")
-            sys.exit(0)
+        # Show worker selection BEFORE main window initialization (skip in test mode)
+        if not self._is_test_mode:
+            if not self._select_worker():
+                # User cancelled - exit app
+                logger.info("Worker selection cancelled - exiting application")
+                sys.exit(0)
+        else:
+            # Test mode - use dummy worker
+            self.current_worker_id = "test_worker_001"
+            self.current_worker_name = "Test Worker"
+            logger.info(f"Test mode: Using dummy worker {self.current_worker_name}")
 
         self._init_ui()
 
