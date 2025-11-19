@@ -7,7 +7,9 @@ from PySide6.QtGui import QPixmap, QPainter, QImage, QPageLayout, QPageSize
 from PySide6.QtCore import QRectF, Qt, QSizeF, QMarginsF
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from typing import Dict, Any
-from logger import logger
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class PrintDialog(QDialog):
     """
