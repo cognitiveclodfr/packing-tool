@@ -1,8 +1,57 @@
 # Packer's Assistant
 
+## 🎉 What's New in v1.2.0
+
+### Major Improvements
+
+**Session Management & History** ✨
+- Fixed Shopify session detection - Dashboard and History Browser now working correctly
+- Support for multiple packing lists per Shopify session
+- Real-time session statistics tracking
+
+**Print & Barcode Improvements** 🖨️
+- Optimized barcode size for 68x38mm labels (Citizen CL-E300)
+- Correct DPI handling (203 DPI) for thermal printers
+- 1:1 scale printing - no more tiny barcodes!
+
+**User Experience** 💫
+- Streamlined client selection - no more double selection
+- Client auto-selected in Shopify session dialog
+- Improved error messages throughout
+
+**Technical Improvements** ⚙️
+- Phase 1 architecture fully integrated
+- Unified stats management across tools
+- Enhanced error handling and logging
+- 100% backward compatibility with Excel workflow
+
+---
+
 ## Purpose
 
 Packer's Assistant is a desktop application designed to streamline the order fulfillment process for small to medium-sized warehouses. It helps packers efficiently process orders from an Excel-based packing list, track their progress in real-time, and generate corresponding barcodes. Its key design goals are to minimize errors, increase productivity, and provide resilience against unexpected interruptions.
+
+## ✨ Features
+
+### Core Functionality
+- ✅ **Barcode scanning** for order picking
+- ✅ **SKU mapping** for flexible inventory management
+- ✅ **Real-time validation** of picked items
+- ✅ **Barcode printing** optimized for thermal printers
+- ✅ **Session management** with crash recovery
+- ✅ **Multi-user support** with session locking
+
+### Integrations
+- ✅ **Shopify Tool** - seamless packing list import
+- ✅ **Excel workflow** - backward compatible
+- ✅ **Multiple packing lists** per session support
+- ✅ **Citizen CL-E300** printer optimization
+
+### Monitoring & Analytics
+- ✅ **Dashboard** - persistent statistics
+- ✅ **History Browser** - completed sessions tracking
+- ✅ **Performance metrics** - orders/hour, items/hour
+- ✅ **Session analytics** - progress tracking
 
 ## Core Features
 
@@ -159,6 +208,14 @@ The application's resilience is built around a JSON-based state file.
         - `"completed_orders"`: A simple list of `Order_Number` strings for all orders that have been fully packed during the session.
     - The file is overwritten after **every successful SKU scan**, ensuring minimal data loss.
     - When a session is restored, `PackerLogic` loads this file into memory. `MainWindow` then uses this restored state to rebuild the UI, showing which orders are in progress, which are completed, and what the packing progress is for each.
+
+## 💻 System Requirements
+
+- **OS:** Windows 10/11
+- **Python:** 3.9+
+- **Network:** Access to file server (\\192.168.88.101\...)
+- **Printer:** Citizen CL-E300 or compatible thermal label printer (203 DPI)
+- **Label size:** 68mm x 38mm thermal labels
 
 ## Development Setup
 
