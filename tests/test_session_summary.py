@@ -196,6 +196,10 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
         session_dir = self.sessions_root / f"CLIENT_{client_id}" / session_id
         session_dir.mkdir(parents=True)
 
+        # Create barcodes directory for Legacy Excel structure
+        barcodes_dir = session_dir / "barcodes"
+        barcodes_dir.mkdir(parents=True)
+
         # Create session_summary.json
         summary = {
             "version": "1.0",
@@ -213,7 +217,8 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
             "items_packed": 45
         }
 
-        summary_file = session_dir / "session_summary.json"
+        # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+        summary_file = barcodes_dir / "session_summary.json"
         with open(summary_file, 'w', encoding='utf-8') as f:
             json.dump(summary, f)
 
@@ -237,6 +242,10 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
         session_dir = self.sessions_root / f"CLIENT_{client_id}" / session_id
         session_dir.mkdir(parents=True)
 
+        # Create barcodes directory for Legacy Excel structure
+        barcodes_dir = session_dir / "barcodes"
+        barcodes_dir.mkdir(parents=True)
+
         # Create session_summary.json with 0 completed orders
         summary = {
             "version": "1.0",
@@ -252,7 +261,8 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
             "items_packed": 15
         }
 
-        summary_file = session_dir / "session_summary.json"
+        # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+        summary_file = barcodes_dir / "session_summary.json"
         with open(summary_file, 'w', encoding='utf-8') as f:
             json.dump(summary, f)
 
@@ -323,6 +333,10 @@ class TestSessionSummaryEdgeCases(unittest.TestCase):
             session_dir = sessions_root / f"CLIENT_{client_id}" / "20251029_160000"
             session_dir.mkdir(parents=True)
 
+            # Create barcodes directory for Legacy Excel structure
+            barcodes_dir = session_dir / "barcodes"
+            barcodes_dir.mkdir(parents=True)
+
             # Create summary with null started_at
             summary = {
                 "version": "1.0",
@@ -336,7 +350,8 @@ class TestSessionSummaryEdgeCases(unittest.TestCase):
                 "items_packed": 10
             }
 
-            with open(session_dir / "session_summary.json", 'w') as f:
+            # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
+            with open(barcodes_dir / "session_summary.json", 'w') as f:
                 json.dump(summary, f)
 
             # Create mock profile_manager
