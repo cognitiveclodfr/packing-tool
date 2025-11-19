@@ -218,22 +218,22 @@ class TestShopifyIntegration:
         assert order_count == 0
         assert analyzed_at == "2025-11-04T10:30:00"
 
-    def test_load_from_shopify_analysis_missing_required_columns(self, mock_profile_manager, barcode_dir, tmp_path):
-        """Test error when orders are missing required columns."""
-        session_dir = tmp_path / "invalid_columns_session"
+    def test_load_from_shopify_analysis_missing_optional_courier(self, mock_profile_manager, barcode_dir, tmp_path):
+        """Test loading analysis data when courier field is missing (should use default 'N/A')."""
+        session_dir = tmp_path / "no_courier_session"
         session_dir.mkdir()
 
         analysis_dir = session_dir / "analysis"
         analysis_dir.mkdir()
 
-        # Analysis data missing 'courier' field
+        # Analysis data missing 'courier' field (valid for full session data)
         analysis_data = {
             "analyzed_at": "2025-11-04T10:30:00",
             "total_orders": 1,
             "orders": [
                 {
                     "order_number": "ORDER-001",
-                    # Missing 'courier' field
+                    # Missing 'courier' field - should default to 'N/A'
                     "items": [
                         {
                             "sku": "SKU-123",
@@ -255,7 +255,56 @@ class TestShopifyIntegration:
             work_dir=barcode_dir
         )
 
-        # Should raise ValueError due to missing Courier column
+        # Should NOT raise error - courier is optional in analysis_data.json
+        order_count, analyzed_at = logic.load_from_shopify_analysis(session_dir)
+
+        # Verify data was loaded successfully
+        assert order_count == 1
+        assert analyzed_at == "2025-11-04T10:30:00"
+
+        # Verify default courier value was used
+        assert logic.processed_df is not None
+        assert len(logic.processed_df) == 1
+        assert logic.processed_df.iloc[0]['Courier'] == 'N/A'
+
+    def test_load_from_shopify_analysis_missing_required_order_number(self, mock_profile_manager, barcode_dir, tmp_path):
+        """Test error when orders are missing required order_number field."""
+        session_dir = tmp_path / "invalid_columns_session"
+        session_dir.mkdir()
+
+        analysis_dir = session_dir / "analysis"
+        analysis_dir.mkdir()
+
+        # Analysis data missing 'order_number' field (truly required)
+        analysis_data = {
+            "analyzed_at": "2025-11-04T10:30:00",
+            "total_orders": 1,
+            "orders": [
+                {
+                    # Missing 'order_number' field - THIS should raise error
+                    "courier": "DHL",
+                    "items": [
+                        {
+                            "sku": "SKU-123",
+                            "quantity": 1,
+                            "product_name": "Product A"
+                        }
+                    ]
+                }
+            ]
+        }
+
+        analysis_file = analysis_dir / "analysis_data.json"
+        with open(analysis_file, 'w', encoding='utf-8') as f:
+            json.dump(analysis_data, f)
+
+        logic = PackerLogic(
+            client_id="TEST",
+            profile_manager=mock_profile_manager,
+            work_dir=barcode_dir
+        )
+
+        # Should raise ValueError due to missing order_number (truly required)
         with pytest.raises(ValueError, match="Missing required columns"):
             logic.load_from_shopify_analysis(session_dir)
 
