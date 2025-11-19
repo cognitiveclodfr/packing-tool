@@ -806,11 +806,27 @@ class PackerLogic(QObject):
                 # Courier is important for sorting packages by delivery method
                 draw.text((courier_x, courier_y), courier_name, font=font_bold, fill='black')
 
-                # === STEP 6: Save label to disk ===
+                # === STEP 6: Save label to disk with DPI metadata ===
                 # Save as PNG for lossless quality (important for barcode scanning)
+                # CRITICAL: Explicitly set DPI metadata to 203 DPI for correct print scaling
+                # This ensures Windows, printers, and other applications respect the physical size
                 # Filename uses sanitized barcode content for easy identification
                 barcode_path = os.path.join(self.barcode_dir, f"{safe_barcode_content}.png")
-                label_img.save(barcode_path)
+                label_img.save(barcode_path, dpi=(DPI, DPI))
+
+                # Verify DPI metadata was written correctly
+                try:
+                    saved_img = Image.open(barcode_path)
+                    saved_dpi = saved_img.info.get('dpi', (72, 72))
+                    logger.info(f"Saved barcode with DPI metadata: {saved_dpi}")
+
+                    if saved_dpi[0] != DPI or saved_dpi[1] != DPI:
+                        logger.warning(
+                            f"DPI metadata mismatch! Expected ({DPI}, {DPI}), got {saved_dpi}. "
+                            f"This may cause incorrect print scaling."
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not verify DPI metadata: {e}")
 
                 # === STEP 6.5: Validate barcode dimensions ===
                 # Verify that generated barcode meets size requirements for 68x38mm labels
