@@ -53,7 +53,7 @@ class SessionLockManager:
         self.hostname = socket.gethostname()
         self.username = self._get_username()
         self.process_id = os.getpid()
-        self.app_version = "1.2.0"
+        self.app_version = "1.3.0"
 
     def _get_username(self) -> str:
         """
@@ -68,13 +68,21 @@ class SessionLockManager:
             # Fallback to environment variable
             return os.environ.get('USERNAME', 'Unknown')
 
-    def acquire_lock(self, client_id: str, session_dir: Path) -> Tuple[bool, Optional[str]]:
+    def acquire_lock(
+        self,
+        client_id: str,
+        session_dir: Path,
+        worker_id: Optional[str] = None,
+        worker_name: Optional[str] = None
+    ) -> Tuple[bool, Optional[str]]:
         """
         Attempt to acquire a lock on the session.
 
         Args:
             client_id: Client identifier
             session_dir: Path to session directory
+            worker_id: Worker ID (e.g., "worker_001")
+            worker_name: Worker display name
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
@@ -137,7 +145,9 @@ class SessionLockManager:
                 "lock_time": datetime.now().isoformat(),
                 "process_id": self.process_id,
                 "app_version": self.app_version,
-                "heartbeat": datetime.now().isoformat()
+                "heartbeat": datetime.now().isoformat(),
+                "worker_id": worker_id,
+                "worker_name": worker_name
             }
 
             # Write atomically using temp file
@@ -255,6 +265,12 @@ class SessionLockManager:
                     extra={"session_dir": str(session_dir)}
                 )
                 return False, None
+
+            # Ensure worker fields exist (backward compatibility)
+            if 'worker_id' not in lock_info:
+                lock_info['worker_id'] = None
+            if 'worker_name' not in lock_info:
+                lock_info['worker_name'] = None
 
             return True, lock_info
 

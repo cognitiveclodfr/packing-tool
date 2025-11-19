@@ -61,7 +61,14 @@ class SessionManager:
         packing_list_path (str | None): Path to the original Excel packing list
     """
 
-    def __init__(self, client_id: str, profile_manager, lock_manager):
+    def __init__(
+        self,
+        client_id: str,
+        profile_manager,
+        lock_manager,
+        worker_id: Optional[str] = None,
+        worker_name: Optional[str] = None
+    ):
         """
         Initialize SessionManager for a specific client.
 
@@ -69,17 +76,21 @@ class SessionManager:
             client_id: Client identifier (e.g., "M", "R")
             profile_manager: ProfileManager instance for path operations
             lock_manager: SessionLockManager instance for session locking
+            worker_id: Worker ID (e.g., "worker_001")
+            worker_name: Worker display name
         """
         self.client_id = client_id
         self.profile_manager = profile_manager
         self.lock_manager = lock_manager
+        self.worker_id = worker_id
+        self.worker_name = worker_name
         self.session_id = None
         self.session_active = False
         self.output_dir = None
         self.packing_list_path = None
         self.heartbeat_timer = None
 
-        logger.info(f"SessionManager initialized for client {client_id}")
+        logger.info(f"SessionManager initialized for client {client_id} (Worker: {worker_name})")
 
     def start_session(self, packing_list_path: str, restore_dir: str = None) -> str:
         """
@@ -226,7 +237,14 @@ class SessionManager:
         # - lock_time: when lock was acquired
         # - process_id: PID of this application instance
         # - heartbeat: timestamp of last heartbeat update
-        success, error_msg = self.lock_manager.acquire_lock(self.client_id, self.output_dir)
+        # - worker_id: Worker ID (Phase 1.3)
+        # - worker_name: Worker display name (Phase 1.3)
+        success, error_msg = self.lock_manager.acquire_lock(
+            self.client_id,
+            self.output_dir,
+            worker_id=self.worker_id,
+            worker_name=self.worker_name
+        )
 
         if not success:
             # Lock acquisition failed (very rare at this point, but handle it)
