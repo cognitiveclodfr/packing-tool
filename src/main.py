@@ -824,41 +824,42 @@ class MainWindow(QMainWindow):
 
                 # Phase 1.4: Record packing session to unified statistics
                 try:
-                    if start_time:  # Only record if we have start_time
-                        # Calculate duration
-                        duration_seconds = int((end_time - start_time).total_seconds()) if start_time else None
+                    # Calculate duration (if we have start_time)
+                    duration_seconds = int((end_time - start_time).total_seconds()) if start_time else None
 
-                        # Record to unified stats
-                        self.stats_manager.record_packing(
-                            client_id=self.current_client_id,
-                            session_id=session_id,
+                    # Record to unified stats (always, even if start_time is None)
+                    self.stats_manager.record_packing(
+                        client_id=self.current_client_id,
+                        session_id=session_id,
+                        worker_id=self.current_worker_id,
+                        orders_count=completed_orders,
+                        items_count=items_packed,
+                        metadata={
+                            "duration_seconds": duration_seconds,
+                            "packing_list_name": os.path.basename(packing_list_path) if packing_list_path else "Unknown",
+                            "started_at": start_time.isoformat() if start_time else None,
+                            "completed_at": end_time.isoformat(),
+                            "total_orders": total_orders,
+                            "in_progress_orders": in_progress_orders,
+                            "session_type": "shopify" if is_shopify_session else "excel",
+                            "user_name": os.environ.get('USERNAME', 'Unknown'),
+                            "worker_name": self.current_worker_name,
+                            "pc_name": os.environ.get('COMPUTERNAME', 'Unknown')
+                        }
+                    )
+                    logger.info(f"Recorded packing session to unified stats: {completed_orders} orders, {items_packed} items (Worker: {self.current_worker_name})")
+
+                    # Phase 1.3: Update worker statistics (ALWAYS, regardless of start_time)
+                    if self.current_worker_id:
+                        self.worker_manager.update_worker_stats(
                             worker_id=self.current_worker_id,
-                            orders_count=completed_orders,
-                            items_count=items_packed,
-                            metadata={
-                                "duration_seconds": duration_seconds,
-                                "packing_list_name": os.path.basename(packing_list_path) if packing_list_path else "Unknown",
-                                "started_at": start_time.isoformat(),
-                                "completed_at": end_time.isoformat(),
-                                "total_orders": total_orders,
-                                "in_progress_orders": in_progress_orders,
-                                "session_type": "shopify" if is_shopify_session else "excel",
-                                "user_name": os.environ.get('USERNAME', 'Unknown'),
-                                "worker_name": self.current_worker_name,
-                                "pc_name": os.environ.get('COMPUTERNAME', 'Unknown')
-                            }
+                            sessions=1,
+                            orders=completed_orders,
+                            items=items_packed
                         )
-                        logger.info(f"Recorded packing session to unified stats: {completed_orders} orders, {items_packed} items (Worker: {self.current_worker_name})")
-
-                        # Phase 1.3: Update worker statistics
-                        if self.current_worker_id:
-                            self.worker_manager.update_worker_stats(
-                                worker_id=self.current_worker_id,
-                                sessions=1,
-                                orders=completed_orders,
-                                items=items_packed
-                            )
-                            logger.info(f"Updated worker stats for {self.current_worker_name}")
+                        logger.info(f"Updated worker stats for {self.current_worker_name}")
+                    else:
+                        logger.warning("Worker ID is None, skipping worker stats update")
                 except Exception as e:
                     logger.error(f"Error recording packing session to unified stats: {e}", exc_info=True)
 
