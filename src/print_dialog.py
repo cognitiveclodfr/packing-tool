@@ -1,11 +1,12 @@
 import sys
+import os
+from pathlib import Path
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QWidget,
-    QMessageBox
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+    QScrollArea, QWidget, QMessageBox, QCheckBox
 )
-from PySide6.QtGui import QPixmap, QPainter, QImage, QPageLayout, QPageSize
-from PySide6.QtCore import QRectF, Qt, QSizeF, QMarginsF
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt
 from typing import Dict, Any
 from logger import get_logger
 
@@ -16,13 +17,16 @@ class PrintDialog(QDialog):
     A dialog for previewing and printing generated barcode labels.
 
     This dialog displays a grid of all the barcode labels generated for the
-    current session. It provides a "Print" button that opens the system's
-    native print dialog to send the labels to a physical printer.
+    current session. Users can select specific labels to print using checkboxes.
+
+    For thermal label printers (like Citizen CL-E300), this dialog uses Windows
+    shell printing which works better than QPrinter for label alignment.
 
     Attributes:
         orders_data (Dict[str, Any]): A dictionary containing the data for all
                                       orders, including paths to their barcode
                                       images.
+        checkboxes (Dict[str, QCheckBox]): Checkboxes for selecting labels to print
         scroll_content (QWidget): The widget inside the scroll area that holds
                                   the grid of barcode previews.
     """
@@ -37,12 +41,33 @@ class PrintDialog(QDialog):
         """
         super().__init__(parent)
         self.setWindowTitle("Print Barcodes")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(900, 700)
 
         self.orders_data = orders_data
+        self.checkboxes = {}  # Store checkboxes for each order
 
         main_layout = QVBoxLayout(self)
 
+        # === HEADER: Selection Controls ===
+        header_layout = QHBoxLayout()
+
+        header_label = QLabel("Select labels to print:")
+        header_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
+        header_layout.addWidget(header_label)
+
+        header_layout.addStretch()
+
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(self.select_all)
+        header_layout.addWidget(select_all_btn)
+
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.clicked.connect(self.deselect_all)
+        header_layout.addWidget(deselect_all_btn)
+
+        main_layout.addLayout(header_layout)
+
+        # === SCROLL AREA: Barcode Previews ===
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         main_layout.addWidget(scroll_area)
@@ -51,20 +76,50 @@ class PrintDialog(QDialog):
         scroll_area.setWidget(self.scroll_content)
 
         grid_layout = QGridLayout(self.scroll_content)
+        grid_layout.setSpacing(15)
 
+        # Create grid of barcode previews with checkboxes
         row, col = 0, 0
         for order_number, data in self.orders_data.items():
             barcode_path = data['barcode_path']
+
+            # Item container
             item_widget = QWidget()
+            item_widget.setStyleSheet("""
+                QWidget {
+                    border: 2px solid #ddd;
+                    border-radius: 5px;
+                    padding: 10px;
+                    background-color: white;
+                }
+            """)
             item_layout = QVBoxLayout(item_widget)
 
+            # Checkbox for selection
+            checkbox = QCheckBox(f"Print {order_number}")
+            checkbox.setChecked(True)  # Default: all selected
+            checkbox.setStyleSheet("font-weight: bold;")
+            self.checkboxes[order_number] = checkbox
+            item_layout.addWidget(checkbox, alignment=Qt.AlignmentFlag.AlignCenter)
+
+            # Barcode preview image
             pixmap = QPixmap(barcode_path)
             barcode_label = QLabel()
-            barcode_label.setPixmap(pixmap.scaledToWidth(200))  # Scale for display
+            barcode_label.setPixmap(pixmap.scaledToWidth(250))  # Larger preview
+            barcode_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             item_layout.addWidget(barcode_label)
 
+            # Order number label
             number_label = QLabel(order_number)
+            number_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            number_label.setStyleSheet("font-size: 10pt; color: #555;")
             item_layout.addWidget(number_label)
+
+            # Path label (for reference)
+            path_label = QLabel(Path(barcode_path).name)
+            path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            path_label.setStyleSheet("font-size: 8pt; color: #999;")
+            item_layout.addWidget(path_label)
 
             grid_layout.addWidget(item_widget, row, col)
 
@@ -73,141 +128,180 @@ class PrintDialog(QDialog):
                 col = 0
                 row += 1
 
-        print_button = QPushButton("Print")
-        print_button.clicked.connect(self.print_widget)
-        main_layout.addWidget(print_button)
+        # === FOOTER: Action Buttons ===
+        footer_layout = QHBoxLayout()
+        footer_layout.addStretch()
 
-    def print_widget(self):
+        # Print via Windows (recommended for thermal printers)
+        print_windows_btn = QPushButton("🖨️ Print Selected (Windows)")
+        print_windows_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                font-size: 11pt;
+                padding: 10px 20px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        print_windows_btn.clicked.connect(self.print_via_windows)
+        footer_layout.addWidget(print_windows_btn)
+
+        # Cancel button
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet("padding: 10px 20px;")
+        cancel_btn.clicked.connect(self.reject)
+        footer_layout.addWidget(cancel_btn)
+
+        main_layout.addLayout(footer_layout)
+
+        # Info label
+        info_label = QLabel(
+            "💡 Tip: 'Print Selected (Windows)' works best with thermal label printers.\n"
+            "Each label will be printed separately to ensure correct alignment."
+        )
+        info_label.setStyleSheet("""
+            QLabel {
+                background-color: #E3F2FD;
+                padding: 10px;
+                border-radius: 5px;
+                color: #1976D2;
+                font-size: 9pt;
+            }
+        """)
+        info_label.setWordWrap(True)
+        main_layout.addWidget(info_label)
+
+    def select_all(self):
+        """Select all barcode checkboxes."""
+        for checkbox in self.checkboxes.values():
+            checkbox.setChecked(True)
+        logger.info("Selected all barcodes for printing")
+
+    def deselect_all(self):
+        """Deselect all barcode checkboxes."""
+        for checkbox in self.checkboxes.values():
+            checkbox.setChecked(False)
+        logger.info("Deselected all barcodes")
+
+    def print_via_windows(self):
         """
-        Opens a print dialog and prints the barcode labels.
+        Print selected barcode labels using Windows shell.
 
-        This method prints each barcode label on a separate page at 1:1 scale
-        for the Citizen CL-E300 label printer (68x38mm @ 203 DPI).
+        This method uses os.startfile() with "print" verb to send each label
+        to the default printer. This approach works better with thermal label
+        printers (like Citizen CL-E300) because:
 
-        The printer is configured to match the label specifications:
-        - Page size: 68mm x 38mm
-        - Resolution: 203 DPI
-        - Full page mode (no margins)
-        - One label per page
+        1. Uses Windows printer driver directly (no Qt abstraction)
+        2. Respects DPI metadata in PNG files
+        3. Each label printed separately (proper alignment)
+        4. No page breaking issues
+        5. User can select printer in Windows dialog
 
-        Images are printed at their native resolution without any scaling,
-        ensuring correct barcode dimensions for scanning.
+        For thermal printers, make sure:
+        - Label size (68x38mm) is configured in printer driver
+        - Printer is set as default or selected in dialog
+        - Labels are loaded and printer is calibrated
         """
-        try:
-            # ========================================
-            # 1. Create printer with correct settings
-            # ========================================
-            printer = QPrinter(QPrinter.HighResolution)
+        # Get selected barcodes
+        selected_orders = [
+            order_number
+            for order_number, checkbox in self.checkboxes.items()
+            if checkbox.isChecked()
+        ]
 
-            # Set label size: 68mm x 38mm (matches Citizen CL-E300 label size)
-            page_size = QPageSize(
-                QSizeF(68, 38),  # Width x Height in mm
-                QPageSize.Unit.Millimeter,
-                "Label 68x38mm"
-            )
-            printer.setPageSize(page_size)
-
-            # Set resolution to match printer
-            printer.setResolution(203)  # 203 DPI - Citizen CL-E300
-
-            # CRITICAL: Use full page (no margins!)
-            printer.setFullPage(True)
-
-            # Set to zero margins explicitly
-            printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
-
-            # Portrait orientation
-            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
-
-            # Set document name
-            printer.setDocName("Barcode Labels")
-
-            # ========================================
-            # 2. Show print dialog (user can select printer/preset)
-            # ========================================
-            dialog = QPrintDialog(printer, self)
-            dialog.setWindowTitle("Print Barcode Labels")
-
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                logger.info("Print cancelled by user")
-                return
-
-            # ========================================
-            # 3. Print each label on separate page at 1:1 scale
-            # ========================================
-            painter = QPainter()
-
-            if not painter.begin(printer):
-                raise RuntimeError("Failed to start printing")
-
-            try:
-                # Get printer page size in pixels
-                page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-                logger.info(f"Printer page rect: {page_rect.width()}x{page_rect.height()}px @ {printer.resolution()} DPI")
-
-                label_count = len(self.orders_data)
-                current_label = 0
-
-                for order_number, data in self.orders_data.items():
-                    current_label += 1
-                    barcode_path = data['barcode_path']
-
-                    # Load image
-                    image = QImage(barcode_path)
-
-                    if image.isNull():
-                        logger.error(f"Failed to load image: {barcode_path}")
-                        continue
-
-                    logger.info(f"Printing label {current_label}/{label_count}: {order_number} ({image.width()}x{image.height()}px)")
-
-                    # ========================================
-                    # 4. Print at 1:1 scale (NO SCALING!)
-                    # ========================================
-                    # Image is 543x303px @ 203 DPI = 68x38mm
-                    # Printer is set to 203 DPI
-                    # So we print at EXACT pixel size (1:1)
-
-                    target_width = image.width()   # 543px
-                    target_height = image.height() # 303px
-
-                    # Center image on page (in case page is slightly larger)
-                    x_offset = (page_rect.width() - target_width) / 2
-                    y_offset = (page_rect.height() - target_height) / 2
-
-                    # Ensure no negative offsets
-                    x_offset = max(0, x_offset)
-                    y_offset = max(0, y_offset)
-
-                    # Draw image at 1:1 scale
-                    painter.drawImage(
-                        int(x_offset),
-                        int(y_offset),
-                        image
-                    )
-
-                    logger.info(f"Drew image at position ({x_offset:.1f}, {y_offset:.1f}), size: {target_width}x{target_height}px (1:1 scale)")
-
-                    # Start new page for next label (except for last label)
-                    if current_label < label_count:
-                        printer.newPage()
-
-            finally:
-                painter.end()
-
-            logger.info(f"Successfully printed {label_count} barcode label(s)")
-
-            # Show success message
-            QMessageBox.information(
+        if not selected_orders:
+            QMessageBox.warning(
                 self,
-                "Print Success",
-                f"Successfully printed {label_count} barcode label(s)"
+                "No Selection",
+                "Please select at least one barcode to print."
             )
+            return
+
+        # Confirm print action
+        reply = QMessageBox.question(
+            self,
+            "Confirm Print",
+            f"Print {len(selected_orders)} selected label(s)?\n\n"
+            f"Each label will be printed separately.\n"
+            f"Make sure your printer is ready and has labels loaded.\n\n"
+            f"Selected orders:\n" + "\n".join(f"  • {order}" for order in selected_orders[:10]) +
+            (f"\n  ... and {len(selected_orders) - 10} more" if len(selected_orders) > 10 else ""),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            logger.info("Print cancelled by user")
+            return
+
+        try:
+            # Print each selected label separately via Windows
+            printed_count = 0
+            failed_labels = []
+
+            for order_number in selected_orders:
+                try:
+                    barcode_path = self.orders_data[order_number]['barcode_path']
+
+                    # Check if file exists
+                    if not os.path.exists(barcode_path):
+                        raise FileNotFoundError(f"Barcode file not found: {barcode_path}")
+
+                    logger.info(f"Sending to Windows print queue: {order_number} ({barcode_path})")
+
+                    # Use Windows shell to print
+                    # This opens the file with default application and sends to printer
+                    os.startfile(barcode_path, "print")
+
+                    printed_count += 1
+
+                    # Note: os.startfile is non-blocking, so we can't detect print errors immediately
+                    # The Windows print spooler will handle the actual printing
+
+                except Exception as e:
+                    logger.error(f"Failed to print {order_number}: {e}", exc_info=True)
+                    failed_labels.append(f"{order_number}: {str(e)}")
+
+            # Show result
+            if failed_labels:
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"Sent {printed_count} label(s) to print queue.\n\n"
+                    f"Failed to print {len(failed_labels)} label(s):\n" +
+                    "\n".join(f"  • {error}" for error in failed_labels[:5]) +
+                    (f"\n  ... and {len(failed_labels) - 5} more" if len(failed_labels) > 5 else "")
+                )
+            else:
+                logger.info(f"Successfully queued {printed_count} label(s) for printing")
+
+                QMessageBox.information(
+                    self,
+                    "Print Queued",
+                    f"✅ Successfully sent {printed_count} label(s) to Windows print queue!\n\n"
+                    f"The Windows print dialog(s) will open shortly.\n"
+                    f"Please select your printer (Citizen CL-E300) and confirm.\n\n"
+                    f"Note: You may see multiple print dialogs (one per label).\n"
+                    f"This ensures correct label alignment on thermal printers."
+                )
+
+            # Close dialog after successful print
+            if printed_count > 0:
+                self.accept()
 
         except Exception as e:
-            logger.error(f"Failed to print barcodes: {e}", exc_info=True)
+            logger.error(f"Print operation failed: {e}", exc_info=True)
             QMessageBox.critical(
                 self,
                 "Print Error",
-                f"Failed to print barcodes:\n{str(e)}"
+                f"Failed to print labels:\n\n{str(e)}\n\n"
+                f"Please check:\n"
+                f"  • Printer is turned on and connected\n"
+                f"  • Labels are loaded\n"
+                f"  • Printer driver is installed\n"
+                f"  • You have permission to print"
             )
