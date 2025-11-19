@@ -1,11 +1,13 @@
 import sys
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QWidget
+    QDialog, QVBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QWidget,
+    QMessageBox
 )
-from PySide6.QtGui import QPixmap, QPainter
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+from PySide6.QtGui import QPixmap, QPainter, QImage, QPageLayout
+from PySide6.QtCore import QRectF, Qt, QSizeF, QMarginsF
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPageSize
 from typing import Dict, Any
+from logger import logger
 
 class PrintDialog(QDialog):
     """
@@ -77,45 +79,133 @@ class PrintDialog(QDialog):
         """
         Opens a print dialog and prints the barcode labels.
 
-        This method is triggered by the "Print" button. It uses QPrinter and
-        QPainter to lay out the barcode images onto the pages of the selected
-        printer. The layout logic arranges the labels in a grid, handling page
-        breaks automatically.
+        This method prints each barcode label on a separate page at 1:1 scale
+        for the Citizen CL-E300 label printer (68x38mm @ 203 DPI).
+
+        The printer is configured to match the label specifications:
+        - Page size: 68mm x 38mm
+        - Resolution: 203 DPI
+        - Full page mode (no margins)
+        - One label per page
+
+        Images are printed at their native resolution without any scaling,
+        ensuring correct barcode dimensions for scanning.
         """
-        printer = QPrinter(QPrinter.HighResolution)
-        dialog = QPrintDialog(printer, self)
+        try:
+            # ========================================
+            # 1. Create printer with correct settings
+            # ========================================
+            printer = QPrinter(QPrinter.HighResolution)
 
-        if dialog.exec() == QDialog.Accepted:
-            printer.setDocName("Barcodes")
+            # Set label size: 68mm x 38mm (matches Citizen CL-E300 label size)
+            page_size = QPageSize(
+                QSizeF(68, 38),  # Width x Height in mm
+                QPageSize.Unit.Millimeter,
+                "Label 68x38mm"
+            )
+            printer.setPageSize(page_size)
+
+            # Set resolution to match printer
+            printer.setResolution(203)  # 203 DPI - Citizen CL-E300
+
+            # CRITICAL: Use full page (no margins!)
+            printer.setFullPage(True)
+
+            # Set to zero margins explicitly
+            printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
+
+            # Portrait orientation
+            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+
+            # Set document name
+            printer.setDocName("Barcode Labels")
+
+            # ========================================
+            # 2. Show print dialog (user can select printer/preset)
+            # ========================================
+            dialog = QPrintDialog(printer, self)
+            dialog.setWindowTitle("Print Barcode Labels")
+
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                logger.info("Print cancelled by user")
+                return
+
+            # ========================================
+            # 3. Print each label on separate page at 1:1 scale
+            # ========================================
             painter = QPainter()
-            painter.begin(printer)
 
-            page_rect = printer.pageRect(QPrinter.Point)
-            margin = 50
-            x_pos, y_pos = margin, margin
+            if not painter.begin(printer):
+                raise RuntimeError("Failed to start printing")
 
-            # Define label size in printer points (1 point = 1/72 inch)
-            # This is an approximation for layout; the generated barcode image has the correct DPI.
-            label_width, label_height = 300, 150
-            x_spacing, y_spacing = 20, 20
+            try:
+                # Get printer page size in pixels
+                page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+                logger.info(f"Printer page rect: {page_rect.width()}x{page_rect.height()}px @ {printer.resolution()} DPI")
 
-            for order_number, data in self.orders_data.items():
-                if x_pos + label_width > page_rect.width() - margin:
-                    # Move to next row
-                    x_pos = margin
-                    y_pos += label_height + y_spacing
+                label_count = len(self.orders_data)
+                current_label = 0
 
-                if y_pos + label_height > page_rect.height() - margin:
-                    # New page
-                    printer.newPage()
-                    x_pos, y_pos = margin, margin
+                for order_number, data in self.orders_data.items():
+                    current_label += 1
+                    barcode_path = data['barcode_path']
 
-                barcode_path = data['barcode_path']
-                pixmap = QPixmap(barcode_path)
+                    # Load image
+                    image = QImage(barcode_path)
 
-                target_rect = QRectF(x_pos, y_pos, label_width, label_height)
-                painter.drawPixmap(target_rect, pixmap, pixmap.rect())
+                    if image.isNull():
+                        logger.error(f"Failed to load image: {barcode_path}")
+                        continue
 
-                x_pos += label_width + x_spacing
+                    logger.info(f"Printing label {current_label}/{label_count}: {order_number} ({image.width()}x{image.height()}px)")
 
-            painter.end()
+                    # ========================================
+                    # 4. Print at 1:1 scale (NO SCALING!)
+                    # ========================================
+                    # Image is 543x303px @ 203 DPI = 68x38mm
+                    # Printer is set to 203 DPI
+                    # So we print at EXACT pixel size (1:1)
+
+                    target_width = image.width()   # 543px
+                    target_height = image.height() # 303px
+
+                    # Center image on page (in case page is slightly larger)
+                    x_offset = (page_rect.width() - target_width) / 2
+                    y_offset = (page_rect.height() - target_height) / 2
+
+                    # Ensure no negative offsets
+                    x_offset = max(0, x_offset)
+                    y_offset = max(0, y_offset)
+
+                    # Draw image at 1:1 scale
+                    painter.drawImage(
+                        int(x_offset),
+                        int(y_offset),
+                        image
+                    )
+
+                    logger.info(f"Drew image at position ({x_offset:.1f}, {y_offset:.1f}), size: {target_width}x{target_height}px (1:1 scale)")
+
+                    # Start new page for next label (except for last label)
+                    if current_label < label_count:
+                        printer.newPage()
+
+            finally:
+                painter.end()
+
+            logger.info(f"Successfully printed {label_count} barcode label(s)")
+
+            # Show success message
+            QMessageBox.information(
+                self,
+                "Print Success",
+                f"Successfully printed {label_count} barcode label(s)"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to print barcodes: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Print Error",
+                f"Failed to print barcodes:\n{str(e)}"
+            )
