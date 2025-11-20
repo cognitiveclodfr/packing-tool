@@ -76,17 +76,17 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
             barcodes_dir = session_dir / "barcodes"
             barcodes_dir.mkdir(parents=True)
 
-            summary = {
-                "version": "1.0",
-                "session_id": session_id,
-                "client_id": client_id,
-                "started_at": f"2025-10-2{i}T12:00:00",
-                "completed_at": f"2025-10-2{i}T13:30:00",
-                "duration_seconds": 5400,
-                "total_orders": 10,
-                "completed_orders": 8 + i,
-                "items_packed": 45 + i * 5
-            }
+            from conftest import create_v130_session_summary
+            summary = create_v130_session_summary(
+                session_id=session_id,
+                client_id=client_id,
+                started_at=f"2025-10-2{i}T12:00:00+00:00",
+                completed_at=f"2025-10-2{i}T13:30:00+00:00",
+                duration_seconds=5400,
+                total_orders=10,
+                completed_orders=8 + i,
+                total_items=45 + i * 5
+            )
 
             # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
             with open(barcodes_dir / "session_summary.json", 'w') as f:
@@ -130,19 +130,18 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
         barcodes_dir = session_dir / "barcodes"
         barcodes_dir.mkdir(parents=True)
 
-        # Partial session (0 completed orders, some in-progress)
-        summary = {
-            "version": "1.0",
-            "session_id": session_id,
-            "client_id": client_id,
-            "started_at": "2025-10-29T14:00:00",
-            "completed_at": "2025-10-29T14:15:00",
-            "duration_seconds": 900,
-            "total_orders": 10,
-            "completed_orders": 0,
-            "in_progress_orders": 3,
-            "items_packed": 15
-        }
+        # Partial session (0 completed orders)
+        from conftest import create_v130_session_summary
+        summary = create_v130_session_summary(
+            session_id=session_id,
+            client_id=client_id,
+            started_at="2025-10-29T14:00:00+00:00",
+            completed_at="2025-10-29T14:15:00+00:00",
+            duration_seconds=900,
+            total_orders=10,
+            completed_orders=0,
+            total_items=15
+        )
 
         # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
         with open(barcodes_dir / "session_summary.json", 'w') as f:
@@ -181,15 +180,16 @@ class TestHistoryWidgetIntegration(unittest.TestCase):
         barcodes_dir = session_dir / "barcodes"
         barcodes_dir.mkdir(parents=True)
 
-        summary = {
-            "version": "1.0",
-            "session_id": "20251029_150000",
-            "client_id": client_id,
-            "completed_at": "2025-10-29T15:30:00",
-            "total_orders": 5,
-            "completed_orders": 5,
-            "items_packed": 25
-        }
+        from conftest import create_v130_session_summary
+        summary = create_v130_session_summary(
+            session_id="20251029_150000",
+            client_id=client_id,
+            started_at="2025-10-29T15:00:00+00:00",
+            completed_at="2025-10-29T15:30:00+00:00",
+            total_orders=5,
+            completed_orders=5,
+            total_items=25
+        )
 
         # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
         with open(barcodes_dir / "session_summary.json", 'w') as f:
@@ -228,17 +228,17 @@ class TestHistoryWidgetFilters(unittest.TestCase):
                 barcodes_dir = session_dir / "barcodes"
                 barcodes_dir.mkdir(parents=True)
 
-                summary = {
-                    "version": "1.0",
-                    "session_id": f"2025102{i}_100000",
-                    "client_id": client_id.replace("CLIENT_", ""),
-                    "started_at": f"2025-10-2{i}T10:00:00",  # Added for proper parsing
-                    "completed_at": f"2025-10-2{i}T10:30:00",
-                    "duration_seconds": 1800,  # 30 minutes
-                    "total_orders": 5,
-                    "completed_orders": 5,
-                    "items_packed": 25
-                }
+                from conftest import create_v130_session_summary
+                summary = create_v130_session_summary(
+                    session_id=f"2025102{i}_100000",
+                    client_id=client_id.replace("CLIENT_", ""),
+                    started_at=f"2025-10-2{i}T10:00:00+00:00",
+                    completed_at=f"2025-10-2{i}T10:30:00+00:00",
+                    duration_seconds=1800,
+                    total_orders=5,
+                    completed_orders=5,
+                    total_items=25
+                )
 
                 # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
                 with open(barcodes_dir / "session_summary.json", 'w') as f:

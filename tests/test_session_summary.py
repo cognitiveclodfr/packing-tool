@@ -19,9 +19,12 @@ import pandas as pd
 
 # Import the modules to test
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+tests_dir = Path(__file__).parent
+sys.path.insert(0, str(tests_dir.parent / 'src'))
+sys.path.insert(0, str(tests_dir))
 
 from session_history_manager import SessionHistoryManager, SessionHistoryRecord
+from conftest import create_v130_session_summary
 
 
 class TestSessionSummaryGeneration(unittest.TestCase):
@@ -200,22 +203,19 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
         barcodes_dir = session_dir / "barcodes"
         barcodes_dir.mkdir(parents=True)
 
-        # Create session_summary.json
-        summary = {
-            "version": "1.0",
-            "session_id": session_id,
-            "client_id": client_id,
-            "started_at": "2025-10-29T12:00:00",
-            "completed_at": "2025-10-29T13:30:00",
-            "duration_seconds": 5400,
-            "packing_list_path": "C:/test/file.xlsx",
-            "pc_name": "TEST-PC",
-            "total_orders": 10,
-            "completed_orders": 8,
-            "in_progress_orders": 2,
-            "total_items": 50,
-            "items_packed": 45
-        }
+        # Create session_summary.json using v1.3.0 helper
+        summary = create_v130_session_summary(
+            session_id=session_id,
+            client_id=client_id,
+            started_at="2025-10-29T12:00:00+00:00",
+            completed_at="2025-10-29T13:30:00+00:00",
+            duration_seconds=5400,
+            total_orders=10,
+            completed_orders=8,
+            total_items=45,
+            pc_name="TEST-PC",
+            packing_list_name="file.xlsx"
+        )
 
         # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
         summary_file = barcodes_dir / "session_summary.json"
@@ -231,7 +231,6 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
         self.assertEqual(session.client_id, client_id)
         self.assertEqual(session.total_orders, 10)
         self.assertEqual(session.completed_orders, 8)
-        self.assertEqual(session.in_progress_orders, 2)
         self.assertEqual(session.total_items_packed, 45)
         self.assertEqual(session.duration_seconds, 5400)
 
@@ -246,20 +245,19 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
         barcodes_dir = session_dir / "barcodes"
         barcodes_dir.mkdir(parents=True)
 
-        # Create session_summary.json with 0 completed orders
-        summary = {
-            "version": "1.0",
-            "session_id": session_id,
-            "client_id": client_id,
-            "started_at": "2025-10-29T13:00:00",
-            "completed_at": "2025-10-29T13:15:00",
-            "duration_seconds": 900,
-            "total_orders": 10,
-            "completed_orders": 0,
-            "in_progress_orders": 3,
-            "total_items": 50,
-            "items_packed": 15
-        }
+        # Create session_summary.json using v1.3.0 helper
+        summary = create_v130_session_summary(
+            session_id=session_id,
+            client_id=client_id,
+            started_at="2025-10-29T13:00:00+00:00",
+            completed_at="2025-10-29T13:15:00+00:00",
+            duration_seconds=900,
+            total_orders=10,
+            completed_orders=0,
+            total_items=15,
+            pc_name="TEST-PC",
+            packing_list_name="test.xlsx"
+        )
 
         # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
         summary_file = barcodes_dir / "session_summary.json"
@@ -272,7 +270,6 @@ class TestSessionHistoryManagerParsing(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         session = sessions[0]
         self.assertEqual(session.completed_orders, 0)
-        self.assertEqual(session.in_progress_orders, 3)
         self.assertEqual(session.total_items_packed, 15)
 
     def test_no_session_files(self):
@@ -337,17 +334,33 @@ class TestSessionSummaryEdgeCases(unittest.TestCase):
             barcodes_dir = session_dir / "barcodes"
             barcodes_dir.mkdir(parents=True)
 
-            # Create summary with null started_at
+            # Create summary - can't use helper because started_at is None (edge case)
+            # This tests backward compatibility handling
             summary = {
-                "version": "1.0",
+                "version": "1.3.0",
                 "session_id": "20251029_160000",
+                "session_type": "excel",
                 "client_id": client_id,
+                "packing_list_name": "test.xlsx",
+                "worker_id": None,
+                "worker_name": "TestWorker",
+                "pc_name": "TEST-PC",
                 "started_at": None,  # Missing session_info
-                "completed_at": "2025-10-29T16:30:00",
-                "duration_seconds": None,
+                "completed_at": "2025-10-29T16:30:00+00:00",
+                "duration_seconds": 0,
                 "total_orders": 5,
                 "completed_orders": 2,
-                "items_packed": 10
+                "total_items": 10,
+                "unique_skus": 0,
+                "metrics": {
+                    "avg_time_per_order": 0,
+                    "avg_time_per_item": 0,
+                    "fastest_order_seconds": 0,
+                    "slowest_order_seconds": 0,
+                    "orders_per_hour": 0,
+                    "items_per_hour": 0
+                },
+                "orders": []
             }
 
             # Put session_summary.json in barcodes/ directory (Legacy Excel structure)
