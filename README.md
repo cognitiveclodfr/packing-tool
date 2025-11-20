@@ -1,33 +1,43 @@
 # Packer's Assistant
 
-**Version:** 1.2.0 | **Phase:** Phase 1 Complete - Shopify Integration | **Last Updated:** 2025-11-19
+**Version:** 1.3.0-dev | **Phase:** Phase 3.1 - Session Browser | **Last Updated:** 2025-11-20
 
 ---
 
-## 🎉 What's New in v1.2.0
+## 🎉 What's New in v1.3.0 (In Development)
 
-### Major Improvements
+### Session Browser - Phase 3.1 🚀
 
-**Session Management & History** ✨
-- Fixed Shopify session detection - Dashboard and History Browser now working correctly
-- Support for multiple packing lists per Shopify session
-- Real-time session statistics tracking
+**Unified Session Management Interface**
+- New **Session Browser** replaces Restore Session dialog and Session Monitor
+- Single interface for browsing active, completed, and available sessions
 
-**Print & Barcode Improvements** 🖨️
-- Optimized barcode size for 68x38mm labels (Citizen CL-E300)
-- Correct DPI handling (203 DPI) for thermal printers
-- 1:1 scale printing - no more tiny barcodes!
+**Active Sessions Tab** ✨
+- View all in-progress sessions across warehouse PCs
+- Real-time lock status: Active (green), Stale (red), Paused (yellow)
+- Worker and PC tracking for each session
+- Progress indicators showing X/Y orders completed
+- **Resume** action to continue working on sessions
+- **Force Unlock** action for stale locks (crashed sessions)
 
-**User Experience** 💫
-- Streamlined client selection - no more double selection
-- Client auto-selected in Shopify session dialog
-- Improved error messages throughout
+**Completed Sessions Tab** 📊
+- Browse session history with comprehensive filters
+- Date range filter (last 7/30/90 days, all time)
+- Client filter for multi-client warehouses
+- Search across session ID, worker, packing list
+- Export to Excel for reporting
+- Sortable columns for data analysis
 
-**Technical Improvements** ⚙️
-- Phase 1 architecture fully integrated
-- Unified stats management across tools
-- Enhanced error handling and logging
-- 100% backward compatibility with Excel workflow
+**Enhanced Visibility** 👀
+- See who is working on which sessions in real-time
+- Identify stale locks from crashed applications
+- Track session progress across all warehouse stations
+- Color-coded status indicators for quick assessment
+
+**Coming in Phase 3.2:**
+- Available Sessions Tab (Shopify sessions ready to start)
+- Session Details Dialog (comprehensive session view)
+- PDF export for completed sessions
 
 ---
 

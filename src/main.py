@@ -39,6 +39,8 @@ from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from dashboard_widget import DashboardWidget
 from session_history_widget import SessionHistoryWidget
+from session_history_manager import SessionHistoryManager
+from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
 
 logger = get_logger(__name__)
@@ -139,6 +141,10 @@ class MainWindow(QMainWindow):
         base_path = self.profile_manager.base_path
         self.worker_manager = WorkerManager(str(base_path))
         logger.info("WorkerManager initialized successfully")
+
+        # Initialize SessionHistoryManager
+        self.session_history_manager = SessionHistoryManager(self.profile_manager)
+        logger.info("SessionHistoryManager initialized successfully")
 
         # Worker state
         self.current_worker_id = None
@@ -250,9 +256,11 @@ class MainWindow(QMainWindow):
         self.load_shopify_button.setToolTip("Open Shopify session and select packing list to work on")
         control_layout.addWidget(self.load_shopify_button)
 
-        self.restore_session_button = QPushButton("Restore Session")
-        self.restore_session_button.clicked.connect(self.open_restore_session_dialog)
-        control_layout.addWidget(self.restore_session_button)
+        self.session_browser_button = QPushButton("Session Browser")
+        self.session_browser_button.clicked.connect(self.open_session_browser)
+        self.session_browser_button.setStyleSheet("background-color: #2196F3; color: white;")
+        self.session_browser_button.setToolTip("Browse active, completed, and available sessions")
+        control_layout.addWidget(self.session_browser_button)
 
         self.end_session_button = QPushButton("End Session")
         self.end_session_button.setEnabled(False)
@@ -1671,6 +1679,99 @@ class MainWindow(QMainWindow):
         layout.addWidget(close_button)
 
         monitor_dialog.exec()
+
+    def open_session_browser(self):
+        """Open Session Browser dialog."""
+        logger.info("Opening Session Browser")
+
+        # Create dialog
+        browser_dialog = QDialog(self)
+        browser_dialog.setWindowTitle("Session Browser")
+        browser_dialog.setMinimumSize(1000, 700)
+        browser_dialog.setModal(False)  # Non-modal - can keep open while working
+
+        layout = QVBoxLayout(browser_dialog)
+
+        # Create Session Browser widget
+        browser = SessionBrowserWidget(
+            profile_manager=self.profile_manager,
+            session_manager=self.session_manager,
+            session_lock_manager=self.lock_manager,
+            session_history_manager=self.session_history_manager,
+            worker_manager=self.worker_manager,
+            parent=browser_dialog
+        )
+
+        # Connect signals
+        browser.resume_session_requested.connect(
+            lambda info: self._handle_resume_session_from_browser(browser_dialog, info)
+        )
+
+        layout.addWidget(browser)
+
+        # Show dialog
+        browser_dialog.exec()
+
+    def _handle_resume_session_from_browser(self, dialog, session_info: dict):
+        """
+        Handle resume request from Session Browser.
+
+        Args:
+            dialog: Session Browser dialog to close
+            session_info: Dict with session_path, client_id, packing_list_name, work_dir
+        """
+        try:
+            logger.info(f"Resuming session from browser: {session_info.get('session_id', 'Unknown')}")
+
+            # Close browser dialog
+            dialog.accept()
+
+            # Extract info
+            session_path = Path(session_info['session_path'])
+            client_id = session_info['client_id']
+            packing_list_name = session_info['packing_list_name']
+
+            # Set current client if different
+            if self.current_client_id != client_id:
+                # Find client index in combo
+                for i in range(self.client_combo.count()):
+                    if self.client_combo.itemData(i) == client_id:
+                        self.client_combo.setCurrentIndex(i)
+                        break
+
+            # Create SessionManager for this client if not exists
+            if not self.session_manager or self.session_manager.client_id != client_id:
+                self.session_manager = SessionManager(
+                    client_id=client_id,
+                    profile_manager=self.profile_manager,
+                    lock_manager=self.lock_manager,
+                    worker_id=self.current_worker_id,
+                    worker_name=self.current_worker_name
+                )
+
+            # Load packing list
+            packing_data = self.session_manager.load_packing_list(
+                session_path=str(session_path),
+                packing_list_name=packing_list_name
+            )
+
+            # Resume session (using existing method)
+            self.start_shopify_packing_session(
+                session_path=str(session_path),
+                packing_list_name=packing_list_name,
+                packing_data=packing_data,
+                is_resume=True
+            )
+
+            logger.info("Session resumed successfully from Session Browser")
+
+        except Exception as e:
+            logger.error(f"Failed to resume session from browser: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Resume Failed",
+                f"Failed to resume session:\n{str(e)}"
+            )
 
     def _handle_session_locked_error(self, error: SessionLockedError):
         """
