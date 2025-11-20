@@ -1073,7 +1073,13 @@ class MainWindow(QMainWindow):
                 order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
             elif order_number in in_progress_orders:
                 order_state = in_progress_orders[order_number]
-                total_packed = sum(s['packed'] for s in order_state.values())
+                # Phase 2b fix: order_state is now a list, not a dict
+                if isinstance(order_state, list):
+                    # New format: list of item states
+                    total_packed = sum(s['packed'] for s in order_state)
+                else:
+                    # Legacy format: dict of item states (backward compatibility)
+                    total_packed = sum(s['packed'] for s in order_state.values())
                 order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {int(total_required)}"
                 if total_packed > 0:
                     order_summary.at[index, 'Status'] = 'In Progress'
@@ -1151,7 +1157,8 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.show_notification("INCORRECT ITEM!", "red")
                 self.flash_border("red")
             elif status == "ORDER_COMPLETE":
-                current_order_num = self.logic.current_order_number
+                # Phase 2b: Get order_number from result (current_order_number is already reset)
+                current_order_num = result.get("order_number")
                 # Phase 1.4: No need to record individual order completion - only record at session completion
 
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
@@ -1159,7 +1166,7 @@ class MainWindow(QMainWindow):
                 self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
                 self.packer_mode_widget.scanner_input.setEnabled(False)
-                self.logic.clear_current_order()
+                # Phase 2b: No need to call clear_current_order() - already done in _complete_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
 
     def _process_shopify_packing_data(self, packing_data: dict) -> int:

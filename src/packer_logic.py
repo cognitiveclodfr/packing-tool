@@ -1156,9 +1156,20 @@ class PackerLogic(QObject):
             all_items_complete = self._check_order_complete()
 
             if all_items_complete:
+                # Phase 2b: Save order_number BEFORE it gets reset by _complete_current_order()
+                completed_order_number = self.current_order_number
+
                 # Phase 2b: Use new completion method with full metadata
                 self._complete_current_order()
                 status = "ORDER_COMPLETE"
+
+                # Return with order_number so UI can update properly
+                return {
+                    "row": found_item['row'],
+                    "packed": found_item['packed'],
+                    "is_complete": is_complete,
+                    "order_number": completed_order_number
+                }, status
             else:
                 # Order still in progress
                 status = "SKU_OK"
@@ -1179,8 +1190,8 @@ class PackerLogic(QObject):
                 # - Multi-PC environments see consistent state
                 self._save_session_state()
 
-            # Return success with detailed information
-            return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
+                # Return success with detailed information
+                return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
 
         # === STEP 5: Handle error cases ===
         # If we reach here, the scanned SKU didn't match any unpacked item
