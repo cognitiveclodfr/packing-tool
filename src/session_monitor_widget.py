@@ -117,13 +117,15 @@ class SessionMonitorWidget(QWidget):
 
                     # Format times
                     try:
-                        from datetime import datetime
+                        from shared.metadata_utils import parse_timestamp
                         if lock_time != 'Unknown':
-                            lock_dt = datetime.fromisoformat(lock_time)
-                            lock_time = lock_dt.strftime('%H:%M:%S')
+                            lock_dt = parse_timestamp(lock_time)
+                            if lock_dt:
+                                lock_time = lock_dt.strftime('%H:%M:%S')
                         if heartbeat != 'Unknown':
-                            hb_dt = datetime.fromisoformat(heartbeat)
-                            heartbeat = hb_dt.strftime('%H:%M:%S')
+                            hb_dt = parse_timestamp(heartbeat)
+                            if hb_dt:
+                                heartbeat = hb_dt.strftime('%H:%M:%S')
                     except:
                         pass
 

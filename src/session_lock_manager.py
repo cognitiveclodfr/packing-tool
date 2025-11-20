@@ -384,8 +384,11 @@ class SessionLockManager:
             if not heartbeat_str:
                 return True
 
-            heartbeat_time = datetime.fromisoformat(heartbeat_str)
-            now = datetime.now()
+            from shared.metadata_utils import parse_timestamp
+            heartbeat_time = parse_timestamp(heartbeat_str)
+            if not heartbeat_time:
+                return True  # Can't parse, consider stale
+            now = datetime.now().astimezone()
             elapsed = (now - heartbeat_time).total_seconds()
 
             return elapsed > stale_timeout
@@ -461,8 +464,12 @@ class SessionLockManager:
 
         # Format time nicely
         try:
-            lock_dt = datetime.fromisoformat(lock_time)
-            lock_time_formatted = lock_dt.strftime('%d.%m.%Y %H:%M')
+            from shared.metadata_utils import parse_timestamp
+            lock_dt = parse_timestamp(lock_time)
+            if lock_dt:
+                lock_time_formatted = lock_dt.strftime('%d.%m.%Y %H:%M')
+            else:
+                lock_time_formatted = lock_time
         except (ValueError, TypeError):
             lock_time_formatted = lock_time
 
@@ -479,8 +486,11 @@ class SessionLockManager:
             if not heartbeat_str:
                 return 0
 
-            heartbeat_time = datetime.fromisoformat(heartbeat_str)
-            now = datetime.now()
+            from shared.metadata_utils import parse_timestamp
+            heartbeat_time = parse_timestamp(heartbeat_str)
+            if not heartbeat_time:
+                return 0
+            now = datetime.now().astimezone()
             elapsed_minutes = int((now - heartbeat_time).total_seconds() / 60)
             return elapsed_minutes
 

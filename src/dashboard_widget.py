@@ -241,7 +241,7 @@ class DashboardWidget(QWidget):
             start_date = None
             end_date = None
             if days:
-                end_date = datetime.now()
+                end_date = datetime.now().astimezone()  # Timezone-aware
                 start_date = end_date - timedelta(days=days)
 
             # Get sessions from SessionHistoryManager

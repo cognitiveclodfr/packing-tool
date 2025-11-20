@@ -127,6 +127,8 @@ class StatsManager:
         Returns:
             Dictionary with default statistics structure
         """
+        from shared.metadata_utils import get_current_timestamp
+
         return {
             "total_orders_analyzed": 0,
             "total_orders_packed": 0,
@@ -134,8 +136,8 @@ class StatsManager:
             "by_client": {},
             "analysis_history": [],
             "packing_history": [],
-            "last_updated": datetime.now().isoformat(),
-            "version": "1.0"
+            "last_updated": get_current_timestamp(),
+            "version": "1.3.0"
         }
 
     @contextmanager
@@ -249,8 +251,10 @@ class StatsManager:
         Raises:
             StatsManagerError: If unable to save statistics after retries
         """
+        from shared.metadata_utils import get_current_timestamp
+
         # Update timestamp
-        stats["last_updated"] = datetime.now().isoformat()
+        stats["last_updated"] = get_current_timestamp()
 
         for attempt in range(self.max_retries):
             try:
@@ -315,7 +319,8 @@ class StatsManager:
                         update_func(stats)
 
                         # Update timestamp
-                        stats["last_updated"] = datetime.now().isoformat()
+                        from shared.metadata_utils import get_current_timestamp
+                        stats["last_updated"] = get_current_timestamp()
 
                         # Save
                         f.seek(0)
@@ -373,8 +378,10 @@ class StatsManager:
             stats["by_client"][client_id]["orders_analyzed"] += orders_count
 
             # Add to analysis history
+            from shared.metadata_utils import get_current_timestamp
+
             record = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_current_timestamp(),
                 "client_id": client_id,
                 "session_id": session_id,
                 "orders_count": orders_count,
@@ -442,8 +449,10 @@ class StatsManager:
             stats["by_client"][client_id]["sessions"] += 1
 
             # Add to packing history
+            from shared.metadata_utils import get_current_timestamp
+
             record = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_current_timestamp(),
                 "client_id": client_id,
                 "session_id": session_id,
                 "worker_id": worker_id,

@@ -11,9 +11,12 @@ import shutil
 
 # Add src to path
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+tests_dir = Path(__file__).parent
+sys.path.insert(0, str(tests_dir.parent / 'src'))
+sys.path.insert(0, str(tests_dir))
 
 from session_history_manager import SessionHistoryManager, SessionHistoryRecord, ClientAnalytics
+from conftest import create_v130_session_summary
 
 
 class TestSessionHistoryManager(unittest.TestCase):
@@ -286,20 +289,19 @@ class TestSessionHistoryManager(unittest.TestCase):
         postone_dir = packing_dir / "PostOne_Orders"
         postone_dir.mkdir()
 
-        # Create session_summary.json (completed session)
-        session_summary = {
-            "session_id": "2025-11-19_2",
-            "packing_list_name": "PostOne_Orders",
-            "started_at": "2025-11-19T10:00:00",
-            "completed_at": "2025-11-19T12:30:00",
-            "duration_seconds": 9000,
-            "total_orders": 10,
-            "completed_orders": 10,
-            "in_progress_orders": 0,
-            "items_packed": 45,
-            "pc_name": "WAREHOUSE_PC1",
-            "packing_list_path": "/path/to/postone.xlsx"
-        }
+        # Create session_summary.json using v1.3.0 helper
+        session_summary = create_v130_session_summary(
+            session_id="2025-11-19_2",
+            client_id="SHOPIFY_TEST",
+            started_at="2025-11-19T10:00:00+00:00",
+            completed_at="2025-11-19T12:30:00+00:00",
+            duration_seconds=9000,
+            total_orders=10,
+            completed_orders=10,
+            total_items=45,
+            pc_name="WAREHOUSE_PC1",
+            packing_list_name="PostOne_Orders"
+        )
 
         summary_file = postone_dir / "session_summary.json"
         with open(summary_file, 'w') as f:
@@ -313,7 +315,6 @@ class TestSessionHistoryManager(unittest.TestCase):
         self.assertEqual(record.session_id, "2025-11-19_2")
         self.assertEqual(record.total_orders, 10)
         self.assertEqual(record.completed_orders, 10)
-        self.assertEqual(record.in_progress_orders, 0)
         self.assertEqual(record.total_items_packed, 45)
         self.assertEqual(record.pc_name, "WAREHOUSE_PC1")
 

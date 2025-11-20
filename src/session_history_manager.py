@@ -125,6 +125,19 @@ class SessionHistoryManager:
         Returns:
             List of SessionHistoryRecord objects, sorted by start time (newest first)
         """
+        # Ensure date filters are timezone-aware for comparison with session timestamps
+        from datetime import timezone
+
+        if start_date is not None and start_date.tzinfo is None:
+            # Assume local timezone if naive
+            start_date = start_date.replace(tzinfo=timezone.utc)
+            logger.debug(f"Converted naive start_date to timezone-aware (UTC)")
+
+        if end_date is not None and end_date.tzinfo is None:
+            # Assume local timezone if naive
+            end_date = end_date.replace(tzinfo=timezone.utc)
+            logger.debug(f"Converted naive end_date to timezone-aware (UTC)")
+
         logger.info(f"Retrieving sessions for client {client_id}")
 
         try:
@@ -174,7 +187,10 @@ class SessionHistoryManager:
                     continue
 
             # Sort by start time, newest first
-            sessions.sort(key=lambda s: s.start_time or datetime.min, reverse=True)
+            # Use timezone-aware min for compatibility with new timestamps
+            from datetime import timezone
+            min_dt = datetime.min.replace(tzinfo=timezone.utc)
+            sessions.sort(key=lambda s: s.start_time or min_dt, reverse=True)
 
             logger.info(f"Found {len(sessions)} sessions for client {client_id}")
             return sessions
@@ -260,7 +276,7 @@ class SessionHistoryManager:
         summary_file: Path
     ) -> Optional[SessionHistoryRecord]:
         """
-        Parse session_summary.json for completed sessions.
+        Parse session_summary.json for completed sessions (v1.3.0 format only).
 
         Args:
             client_id: Client identifier
@@ -270,34 +286,24 @@ class SessionHistoryManager:
         Returns:
             SessionHistoryRecord or None if parsing fails
         """
+        from shared.metadata_utils import load_session_summary, parse_timestamp
+
         session_id = session_dir.name
 
         try:
-            with open(summary_file, 'r', encoding='utf-8') as f:
-                summary = json.load(f)
+            # Load v1.3.0 format
+            summary = load_session_summary(summary_file)
 
-            # Parse timestamps
-            start_time = None
-            end_time = None
-            duration_seconds = None
+            # Parse timestamps using utility function
+            start_time = parse_timestamp(summary.get('started_at', ''))
+            end_time = parse_timestamp(summary.get('completed_at', ''))
 
-            if 'started_at' in summary and summary['started_at']:
-                try:
-                    start_time = datetime.fromisoformat(summary['started_at'])
-                except (ValueError, TypeError):
-                    pass
-
-            if 'completed_at' in summary and summary['completed_at']:
-                try:
-                    end_time = datetime.fromisoformat(summary['completed_at'])
-                except (ValueError, TypeError):
-                    pass
-
-            if 'duration_seconds' in summary:
-                duration_seconds = summary['duration_seconds']
-            elif start_time and end_time:
+            # Get duration
+            duration_seconds = summary.get('duration_seconds')
+            if duration_seconds is None and start_time and end_time:
                 duration_seconds = (end_time - start_time).total_seconds()
 
+            # Map v1.3.0 format to SessionHistoryRecord
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
@@ -306,10 +312,10 @@ class SessionHistoryManager:
                 duration_seconds=duration_seconds,
                 total_orders=summary.get('total_orders', 0),
                 completed_orders=summary.get('completed_orders', 0),
-                in_progress_orders=summary.get('in_progress_orders', 0),
-                total_items_packed=summary.get('items_packed', 0),
-                pc_name=summary.get('pc_name'),
-                packing_list_path=summary.get('packing_list_path'),
+                in_progress_orders=0,  # No longer tracked in v1.3.0
+                total_items_packed=summary.get('total_items', 0),
+                pc_name=summary.get('pc_name', ''),
+                packing_list_path=summary.get('packing_list_name', ''),
                 session_path=str(session_dir)
             )
 
@@ -366,17 +372,19 @@ class SessionHistoryManager:
             state_timestamp = packing_state.get('timestamp')
             if state_timestamp:
                 try:
-                    end_time = datetime.fromisoformat(state_timestamp)
+                    from shared.metadata_utils import parse_timestamp
+                    end_time = parse_timestamp(state_timestamp)
                     if start_time and end_time:
                         duration_seconds = (end_time - start_time).total_seconds()
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
 
             # If no end time from state, use file modification time
             if not end_time:
                 try:
+                    from datetime import timezone
                     mtime = state_file.stat().st_mtime
-                    end_time = datetime.fromtimestamp(mtime)
+                    end_time = datetime.fromtimestamp(mtime, tz=timezone.utc)
                     if start_time:
                         duration_seconds = (end_time - start_time).total_seconds()
                 except Exception:
@@ -421,14 +429,18 @@ class SessionHistoryManager:
         Parse timestamp from session ID.
 
         Session IDs are typically in format: YYYYMMDD_HHMMSS
+        Returns timezone-aware datetime (UTC).
         """
+        from datetime import timezone
         try:
             # Try standard format: YYYYMMDD_HHMMSS
-            return datetime.strptime(session_id, "%Y%m%d_%H%M%S")
+            dt = datetime.strptime(session_id, "%Y%m%d_%H%M%S")
+            return dt.replace(tzinfo=timezone.utc)
         except ValueError:
             try:
                 # Try alternative formats
-                return datetime.strptime(session_id, "%Y%m%d-%H%M%S")
+                dt = datetime.strptime(session_id, "%Y%m%d-%H%M%S")
+                return dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 logger.debug(f"Could not parse timestamp from session ID: {session_id}")
                 return None

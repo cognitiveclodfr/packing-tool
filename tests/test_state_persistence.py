@@ -14,7 +14,7 @@ import tempfile
 import shutil
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock, MagicMock, patch
 import pandas as pd
 
@@ -99,7 +99,7 @@ class TestPackingStateStructure(unittest.TestCase):
         self.assertIn('status', state, "State should have status")
         self.assertIn(state['status'], ['in_progress', 'completed'])
 
-        self.assertIn('worker_pc', state, "State should have worker_pc")
+        self.assertIn('pc_name', state, "State should have pc_name")
 
         # Verify progress section
         self.assertIn('progress', state, "State should have progress section")
@@ -178,17 +178,17 @@ class TestPackingStateStructure(unittest.TestCase):
         packer = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
 
         # Initialize session (sets started_at)
-        before_init = datetime.now()
+        before_init = datetime.now(timezone.utc)
         packer._initialize_session_metadata(
             session_id="2025-11-18_14-30-00",
             packing_list_name="Test_Orders"
         )
-        after_init = datetime.now()
+        after_init = datetime.now(timezone.utc)
 
         # Verify started_at is set
         self.assertIsNotNone(packer.started_at, "started_at should be set on init")
 
-        # Parse and verify started_at timestamp
+        # Parse and verify started_at timestamp (should be timezone-aware)
         started_dt = datetime.fromisoformat(packer.started_at)
         self.assertGreaterEqual(started_dt, before_init, "started_at should be after test start")
         self.assertLessEqual(started_dt, after_init, "started_at should be before next action")
@@ -272,26 +272,25 @@ class TestSessionSummaryGeneration(unittest.TestCase):
         self.assertIn('started_at', summary)
         self.assertIn('completed_at', summary)
         self.assertIn('duration_seconds', summary)
-        self.assertIn('worker_pc', summary)
+        self.assertIn('pc_name', summary)
 
-        # Verify summary section
-        self.assertIn('summary', summary)
-        self.assertIn('total_orders', summary['summary'])
-        self.assertIn('completed_orders', summary['summary'])
-        self.assertIn('total_items', summary['summary'])
-        self.assertIn('average_order_time_seconds', summary['summary'])
+        # Verify v1.3.0 direct fields (not nested in 'summary')
+        self.assertIn('total_orders', summary)
+        self.assertIn('completed_orders', summary)
+        self.assertIn('total_items', summary)
 
-        # Verify performance section
-        self.assertIn('performance', summary)
-        self.assertIn('orders_per_hour', summary['performance'])
-        self.assertIn('items_per_hour', summary['performance'])
+        # Verify v1.3.0 metrics section (not 'performance')
+        self.assertIn('metrics', summary)
+        self.assertIn('orders_per_hour', summary['metrics'])
+        self.assertIn('items_per_hour', summary['metrics'])
+        self.assertIn('avg_time_per_order', summary['metrics'])
 
     def test_summary_metrics_accuracy(self):
         """Test summary contains accurate metrics"""
         packer = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
 
-        # Set specific started_at time for duration calculation
-        start_time = datetime(2025, 11, 18, 14, 0, 0)
+        # Set specific started_at time for duration calculation (timezone-aware)
+        start_time = datetime(2025, 11, 18, 14, 0, 0, tzinfo=timezone.utc)
         packer.started_at = start_time.isoformat()
         packer.session_id = "2025-11-18_14-00-00"
         packer.packing_list_name = "Test_Orders"
@@ -315,33 +314,34 @@ class TestSessionSummaryGeneration(unittest.TestCase):
         packer.session_packing_state['completed_orders'] = ['ORDER-1', 'ORDER-2', 'ORDER-3', 'ORDER-4']
 
         # Mock current time to be 1 hour after start (3600 seconds)
-        with patch('packer_logic.datetime') as mock_datetime:
-            mock_datetime.now.return_value = start_time.replace(hour=15)  # 1 hour later
-            mock_datetime.fromisoformat = datetime.fromisoformat
+        # Mock get_current_timestamp to return time 1 hour later
+        end_time = start_time.replace(hour=15)  # 1 hour later
+        with patch('shared.metadata_utils.get_current_timestamp') as mock_timestamp:
+            mock_timestamp.return_value = end_time.isoformat()
 
             summary = packer.generate_session_summary()
 
-        # Verify counts
-        self.assertEqual(summary['summary']['total_orders'], 5)
-        self.assertEqual(summary['summary']['completed_orders'], 4)
-        self.assertEqual(summary['summary']['total_items'], 20)
+        # Verify counts (v1.3.0 format - direct fields)
+        self.assertEqual(summary['total_orders'], 5)
+        self.assertEqual(summary['completed_orders'], 4)
+        self.assertEqual(summary['total_items'], 20)
 
         # Verify duration is approximately 3600 seconds (1 hour)
         self.assertIsNotNone(summary['duration_seconds'])
         self.assertEqual(summary['duration_seconds'], 3600)
 
-        # Verify performance metrics
+        # Verify metrics (v1.3.0 format - under 'metrics')
         # 4 orders / 1 hour = 4 orders per hour
-        self.assertIsNotNone(summary['performance']['orders_per_hour'])
-        self.assertEqual(summary['performance']['orders_per_hour'], 4.0)
+        self.assertIsNotNone(summary['metrics']['orders_per_hour'])
+        self.assertEqual(summary['metrics']['orders_per_hour'], 4.0)
 
         # 20 items / 1 hour = 20 items per hour
-        self.assertIsNotNone(summary['performance']['items_per_hour'])
-        self.assertEqual(summary['performance']['items_per_hour'], 20.0)
+        self.assertIsNotNone(summary['metrics']['items_per_hour'])
+        self.assertEqual(summary['metrics']['items_per_hour'], 20.0)
 
         # Average order time: 3600s / 4 orders = 900s per order
-        self.assertIsNotNone(summary['summary']['average_order_time_seconds'])
-        self.assertEqual(summary['summary']['average_order_time_seconds'], 900.0)
+        self.assertIsNotNone(summary['metrics']['avg_time_per_order'])
+        self.assertEqual(summary['metrics']['avg_time_per_order'], 900.0)
 
     def test_summary_location(self):
         """Test summary saved in work_dir root"""
@@ -372,8 +372,9 @@ class TestSessionSummaryGeneration(unittest.TestCase):
             summary = json.load(f)
 
         self.assertIn('session_id', summary)
-        self.assertIn('summary', summary)
-        self.assertIn('performance', summary)
+        # v1.3.0 format has direct fields, not nested 'summary' or 'performance'
+        self.assertIn('total_orders', summary)
+        self.assertIn('metrics', summary)
 
 
 class TestNoBackupLogic(unittest.TestCase):
@@ -578,7 +579,7 @@ class TestCrashRecovery(unittest.TestCase):
             state = json.load(f)
 
         self.assertEqual(state['status'], 'in_progress')
-        self.assertEqual(state['worker_pc'], packer.worker_pc)
+        self.assertEqual(state['pc_name'], packer.worker_pc)
         self.assertIsNotNone(state['session_id'])
         self.assertIsNotNone(state['client_id'])
         self.assertIsNotNone(state['packing_list_name'])

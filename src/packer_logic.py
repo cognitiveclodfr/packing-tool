@@ -333,7 +333,7 @@ class PackerLogic(QObject):
             "started_at": "2025-11-10T14:30:00",
             "last_updated": "2025-11-10T15:45:23",
             "status": "in_progress",
-            "worker_pc": "WAREHOUSE-PC-01",
+            "pc_name": "WAREHOUSE-PC-01",
             "progress": {...},
             "in_progress": {...},
             "completed": [...]
@@ -381,15 +381,20 @@ class PackerLogic(QObject):
                         packed_items += item.get('packed', 0)
 
         # Build complete state structure with metadata
+        from shared.metadata_utils import get_current_timestamp
+
         state_data = {
+            # Version
+            "version": "1.3.0",
+
             # Metadata
             "session_id": self.session_id,
             "client_id": self.client_id,
             "packing_list_name": self.packing_list_name,
             "started_at": self.started_at,
-            "last_updated": datetime.now().isoformat(),
+            "last_updated": get_current_timestamp(),
             "status": "completed" if completed_orders_count == total_orders and total_orders > 0 else "in_progress",
-            "worker_pc": self.worker_pc,
+            "pc_name": self.worker_pc,
 
             # Progress summary
             "progress": {
@@ -455,9 +460,11 @@ class PackerLogic(QObject):
             if order_number in self.orders_data:
                 items_count = len(self.orders_data[order_number].get('items', []))
 
+            from shared.metadata_utils import get_current_timestamp
+
             completed_list.append({
                 "order_number": order_number,
-                "completed_at": datetime.now().isoformat(),  # Approximation
+                "completed_at": get_current_timestamp(),  # Approximation
                 "items_count": items_count
                 # duration_seconds: Cannot calculate without start time (future enhancement)
             })
@@ -477,7 +484,8 @@ class PackerLogic(QObject):
         """
         if not self.started_at:
             # Only set started_at if not already set (for session restoration)
-            self.started_at = datetime.now().isoformat()
+            from shared.metadata_utils import get_current_timestamp
+            self.started_at = get_current_timestamp()
 
         if session_id:
             self.session_id = session_id
@@ -1444,57 +1452,74 @@ class PackerLogic(QObject):
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg)
 
-    def generate_session_summary(self) -> dict:
+    def generate_session_summary(
+        self,
+        worker_id: str = None,
+        worker_name: str = None,
+        session_type: str = "shopify"
+    ) -> dict:
         """
         Generate comprehensive session summary upon completion.
 
-        This method creates a summary document containing:
-        - Session metadata (ID, client, packing list, timestamps)
-        - Summary statistics (total orders, completed orders, items)
-        - Performance metrics (orders/hour, items/hour, fastest/slowest orders)
+        Creates a unified v1.3.0 format session summary with:
+        - Session metadata (ID, client, packing list, timestamps, worker info)
+        - Counts (total orders, completed orders, items, unique SKUs)
+        - Performance metrics (orders/hour, items/hour, average times)
+
+        Args:
+            worker_id: Worker who completed session (e.g., "worker_001")
+            worker_name: Worker display name (e.g., "Dolphin")
+            session_type: "shopify" or "excel"
 
         Returns:
-            dict: Session summary structure (ready for JSON serialization)
+            dict: Unified session summary (v1.3.0 format, ready for JSON serialization)
 
         Example structure:
         {
+            "version": "1.3.0",
             "session_id": "2025-11-10_1",
+            "session_type": "shopify",
             "client_id": "M",
             "packing_list_name": "DHL_Orders",
-            "started_at": "2025-11-10T14:30:00",
-            "completed_at": "2025-11-10T16:20:45",
+            "worker_id": "worker_001",
+            "worker_name": "Dolphin",
+            "pc_name": "WAREHOUSE-PC-01",
+            "started_at": "2025-11-10T14:30:00+02:00",
+            "completed_at": "2025-11-10T16:20:45+02:00",
             "duration_seconds": 6645,
-            "worker_pc": "WAREHOUSE-PC-01",
-
-            "summary": {
-                "total_orders": 45,
-                "completed_orders": 45,
-                "total_items": 156,
-                "average_order_time_seconds": 147.6
-            },
-
-            "performance": {
+            "total_orders": 45,
+            "completed_orders": 45,
+            "total_items": 156,
+            "unique_skus": 42,
+            "metrics": {
+                "avg_time_per_order": 147.6,
+                "avg_time_per_item": 42.6,
+                "fastest_order_seconds": 0,
+                "slowest_order_seconds": 0,
                 "orders_per_hour": 24.3,
-                "items_per_hour": 84.2,
-                "fastest_order_seconds": 25,
-                "slowest_order_seconds": 380
-            }
+                "items_per_hour": 84.2
+            },
+            "orders": []
         }
         """
-        logger.info("Generating session summary")
+        from shared.metadata_utils import get_current_timestamp, calculate_duration
+
+        logger.info("Generating session summary (v1.3.0 format)")
 
         # Calculate timestamps and duration
-        completed_at = datetime.now().isoformat()
-        duration_seconds = None
-        started_dt = None
+        completed_at = get_current_timestamp()
+        duration_seconds = 0
 
         if self.started_at:
-            try:
-                started_dt = datetime.fromisoformat(self.started_at)
-                completed_dt = datetime.now()
-                duration_seconds = int((completed_dt - started_dt).total_seconds())
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Could not parse started_at for duration calculation: {e}")
+            duration_seconds = calculate_duration(self.started_at, completed_at)
+            if duration_seconds == 0:
+                # Fallback to old method if calculate_duration fails
+                try:
+                    started_dt = datetime.fromisoformat(self.started_at)
+                    completed_dt = datetime.now()
+                    duration_seconds = int((completed_dt - started_dt).total_seconds())
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Could not parse started_at for duration calculation: {e}")
 
         # Calculate order and item counts
         total_orders = len(self.orders_data) if self.orders_data else 0
@@ -1509,63 +1534,104 @@ class PackerLogic(QObject):
             except Exception as e:
                 logger.warning(f"Could not calculate total_items: {e}")
 
-        # Calculate average order time (if we have duration and completed orders)
-        average_order_time_seconds = None
-        if duration_seconds and completed_orders > 0:
-            average_order_time_seconds = round(duration_seconds / completed_orders, 1)
+        # Count unique SKUs
+        unique_skus = self._count_unique_skus()
 
-        # Calculate performance metrics (orders/hour, items/hour)
-        orders_per_hour = None
-        items_per_hour = None
+        # Calculate performance metrics
+        avg_time_per_order = 0
+        avg_time_per_item = 0
+        orders_per_hour = 0
+        items_per_hour = 0
 
         if duration_seconds and duration_seconds > 0:
             hours = duration_seconds / 3600.0
+
             if completed_orders > 0:
+                avg_time_per_order = round(duration_seconds / completed_orders, 1)
                 orders_per_hour = round(completed_orders / hours, 1)
+
             if total_items > 0:
+                avg_time_per_item = round(duration_seconds / total_items, 1)
                 items_per_hour = round(total_items / hours, 1)
 
-        # Build session summary
+        # Build unified v1.3.0 session summary
         summary = {
-            # Session metadata
+            # Metadata
+            "version": "1.3.0",
             "session_id": self.session_id,
+            "session_type": session_type,
             "client_id": self.client_id,
             "packing_list_name": self.packing_list_name,
+
+            # Ownership
+            "worker_id": worker_id,
+            "worker_name": worker_name if worker_name else "Unknown",
+            "pc_name": self.worker_pc,
+
+            # Timing
             "started_at": self.started_at,
             "completed_at": completed_at,
             "duration_seconds": duration_seconds,
-            "worker_pc": self.worker_pc,
 
-            # Summary statistics
-            "summary": {
-                "total_orders": total_orders,
-                "completed_orders": completed_orders,
-                "total_items": total_items,
-                "average_order_time_seconds": average_order_time_seconds
-            },
+            # Counts
+            "total_orders": total_orders,
+            "completed_orders": completed_orders,
+            "total_items": total_items,
+            "unique_skus": unique_skus,
 
-            # Performance metrics
-            "performance": {
+            # Metrics
+            "metrics": {
+                "avg_time_per_order": avg_time_per_order,
+                "avg_time_per_item": avg_time_per_item,
+                "fastest_order_seconds": 0,  # Future enhancement: per-order timing
+                "slowest_order_seconds": 0,   # Future enhancement: per-order timing
                 "orders_per_hour": orders_per_hour,
                 "items_per_hour": items_per_hour
-                # Note: fastest/slowest order times require per-order timing
-                # This is a future enhancement (need to track start time per order)
-            }
+            },
+
+            # Orders array (Phase 2b will populate with detailed order data)
+            "orders": []
         }
 
         logger.info(
-            f"Session summary generated: {completed_orders}/{total_orders} orders, "
+            f"Session summary generated (v1.3.0): {completed_orders}/{total_orders} orders, "
+            f"{total_items} items, {unique_skus} unique SKUs, "
             f"{duration_seconds}s duration, {orders_per_hour} orders/hour"
         )
 
         return summary
 
-    def save_session_summary(self, summary_path: str = None) -> str:
+    def _count_unique_skus(self) -> int:
+        """Count unique SKUs across all orders
+
+        Returns:
+            int: Number of unique SKUs in the packing list
+        """
+        if self.processed_df is None:
+            return 0
+
+        try:
+            unique_skus = self.processed_df['SKU'].nunique()
+            return int(unique_skus)
+        except Exception as e:
+            logger.warning(f"Could not count unique SKUs: {e}")
+            return 0
+
+    def save_session_summary(
+        self,
+        summary_path: str = None,
+        worker_id: str = None,
+        worker_name: str = None,
+        session_type: str = "shopify"
+    ) -> str:
         """
         Generate and save session summary to JSON file.
 
         Args:
             summary_path: Optional path to save summary. If None, saves to work_dir/session_summary.json
+            worker_id: Worker who completed session (e.g., "worker_001")
+            worker_name: Worker display name (e.g., "Dolphin")
+            session_type: "shopify" or "excel"
 
         Returns:
             Path to saved summary file
@@ -1573,8 +1639,12 @@ class PackerLogic(QObject):
         Raises:
             IOError: If summary cannot be written to disk
         """
-        # Generate summary
-        summary = self.generate_session_summary()
+        # Generate summary with worker info
+        summary = self.generate_session_summary(
+            worker_id=worker_id,
+            worker_name=worker_name,
+            session_type=session_type
+        )
 
         # Determine output path
         if not summary_path:
@@ -1585,7 +1655,7 @@ class PackerLogic(QObject):
             with open(summary_path, 'w', encoding='utf-8') as f:
                 json.dump(summary, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"Session summary saved to: {summary_path}")
+            logger.info(f"Session summary (v1.3.0) saved to: {summary_path}")
             return summary_path
 
         except Exception as e:

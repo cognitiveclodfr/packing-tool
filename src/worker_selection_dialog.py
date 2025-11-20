@@ -66,12 +66,13 @@ class WorkerCard(QFrame):
 
         # Last active
         if self.worker.last_active:
-            from datetime import datetime
-            last_active = datetime.fromisoformat(self.worker.last_active)
-            time_str = self._format_time_ago(last_active)
-            active_label = QLabel(f"Last active: {time_str}")
-            active_label.setStyleSheet("color: #888; font-size: 11px;")
-            layout.addWidget(active_label)
+            from shared.metadata_utils import parse_timestamp
+            last_active = parse_timestamp(self.worker.last_active)
+            if last_active:
+                time_str = self._format_time_ago(last_active)
+                active_label = QLabel(f"Last active: {time_str}")
+                active_label.setStyleSheet("color: #888; font-size: 11px;")
+                layout.addWidget(active_label)
 
     def _format_stats(self) -> str:
         """Format statistics string"""
@@ -90,7 +91,8 @@ class WorkerCard(QFrame):
         """Format time ago string"""
         from datetime import datetime, timedelta
 
-        now = datetime.now()
+        # Use timezone-aware now() to match dt (which is now timezone-aware from parse_timestamp)
+        now = datetime.now().astimezone()
         delta = now - dt
 
         if delta < timedelta(minutes=1):

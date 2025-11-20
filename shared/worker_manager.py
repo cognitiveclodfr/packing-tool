@@ -17,14 +17,28 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WorkerProfile:
-    """Worker profile data structure"""
+    """Worker profile data structure (v1.3.0)"""
+    # Basic info
     id: str                    # e.g., "worker_001"
     name: str                  # Display name
-    created_at: str           # ISO timestamp
+    created_at: str           # ISO timestamp with timezone
+
+    # Aggregate counters
     total_sessions: int = 0
     total_orders: int = 0
     total_items: int = 0
-    last_active: Optional[str] = None  # ISO timestamp
+    total_duration_seconds: int = 0
+
+    # Calculated metrics (automatically updated)
+    avg_time_per_order: float = 0.0        # Average seconds per order
+    avg_orders_per_session: float = 0.0    # Average orders per session
+
+    # Activity tracking
+    last_active: Optional[str] = None      # ISO timestamp with timezone
+    last_session_id: Optional[str] = None  # Last completed session
+
+    # Metadata
+    version: str = "1.3.0"
 
     def to_dict(self) -> dict:
         """Convert to dictionary"""
@@ -32,8 +46,40 @@ class WorkerProfile:
 
     @classmethod
     def from_dict(cls, data: dict) -> 'WorkerProfile':
-        """Create from dictionary"""
-        return cls(**data)
+        """Create from dictionary with backward compatibility"""
+        # Provide defaults for new fields
+        defaults = {
+            'total_duration_seconds': 0,
+            'avg_time_per_order': 0.0,
+            'avg_orders_per_session': 0.0,
+            'last_session_id': None,
+            'version': '1.3.0'
+        }
+
+        # Merge data with defaults
+        merged_data = {**defaults, **data}
+
+        return cls(**merged_data)
+
+    def recalculate_averages(self):
+        """Recalculate derived metrics from aggregate counters"""
+        # Calculate average time per order
+        if self.total_orders > 0 and self.total_duration_seconds > 0:
+            self.avg_time_per_order = round(
+                self.total_duration_seconds / self.total_orders,
+                1
+            )
+        else:
+            self.avg_time_per_order = 0.0
+
+        # Calculate average orders per session
+        if self.total_sessions > 0:
+            self.avg_orders_per_session = round(
+                self.total_orders / self.total_sessions,
+                1
+            )
+        else:
+            self.avg_orders_per_session = 0.0
 
 
 class WorkerManager:
@@ -99,12 +145,15 @@ class WorkerManager:
             raise
 
     def _save_workers_registry(self, data: Dict[str, list]):
-        """Save workers.json registry
+        """Save workers.json registry with version
 
         Args:
-            data: {"workers": [list of worker dicts]}
+            data: {"workers": [list of worker dicts], "version": "1.3.0"}
         """
         try:
+            # Add version to root level
+            data['version'] = "1.3.0"
+
             # Atomic write: tmp file + rename
             tmp_file = self.workers_file.with_suffix('.json.tmp')
 
@@ -114,7 +163,7 @@ class WorkerManager:
             # Rename (atomic on Windows)
             tmp_file.replace(self.workers_file)
 
-            logger.debug(f"Saved {len(data['workers'])} workers to registry")
+            logger.debug(f"Saved {len(data['workers'])} workers to registry (v1.3.0)")
 
         except Exception as e:
             logger.error(f"Failed to save workers registry: {e}", exc_info=True)
@@ -177,14 +226,21 @@ class WorkerManager:
         worker_id = self._generate_worker_id(existing)
 
         # Create profile
+        from shared.metadata_utils import get_current_timestamp
+
         worker = WorkerProfile(
             id=worker_id,
             name=name,
-            created_at=datetime.now().isoformat(),
+            created_at=get_current_timestamp(),
             total_sessions=0,
             total_orders=0,
             total_items=0,
-            last_active=None
+            total_duration_seconds=0,
+            avg_time_per_order=0.0,
+            avg_orders_per_session=0.0,
+            last_active=None,
+            last_session_id=None,
+            version="1.3.0"
         )
 
         # Save to registry
@@ -223,7 +279,9 @@ class WorkerManager:
         worker_id: str,
         sessions: int = 0,
         orders: int = 0,
-        items: int = 0
+        items: int = 0,
+        duration_seconds: int = 0,
+        session_id: str = None
     ):
         """Update worker statistics (incremental)
 
@@ -232,23 +290,45 @@ class WorkerManager:
             sessions: Number of sessions to add
             orders: Number of orders to add
             items: Number of items to add
+            duration_seconds: Duration in seconds to add (new in v1.3.0)
+            session_id: Last completed session ID (new in v1.3.0)
         """
+        from shared.metadata_utils import get_current_timestamp
+
         data = self._load_workers_registry()
         workers = data.get('workers', [])
 
-        for worker in workers:
-            if worker['id'] == worker_id:
-                # Increment stats
-                worker['total_sessions'] += sessions
-                worker['total_orders'] += orders
-                worker['total_items'] += items
-                worker['last_active'] = datetime.now().isoformat()
+        for worker_dict in workers:
+            if worker_dict['id'] == worker_id:
+                # Increment aggregate counters
+                worker_dict['total_sessions'] = worker_dict.get('total_sessions', 0) + sessions
+                worker_dict['total_orders'] = worker_dict.get('total_orders', 0) + orders
+                worker_dict['total_items'] = worker_dict.get('total_items', 0) + items
+                worker_dict['total_duration_seconds'] = worker_dict.get('total_duration_seconds', 0) + duration_seconds
+
+                # Update activity tracking
+                worker_dict['last_active'] = get_current_timestamp()
+                if session_id:
+                    worker_dict['last_session_id'] = session_id
+
+                # Ensure version field exists
+                worker_dict['version'] = "1.3.0"
+
+                # Recalculate averages using WorkerProfile
+                worker = WorkerProfile.from_dict(worker_dict)
+                worker.recalculate_averages()
+
+                # Update dict with recalculated values
+                worker_dict.update(worker.to_dict())
 
                 # Save
                 self._save_workers_registry(data)
 
-                logger.info(f"Updated stats for {worker_id}: "
-                           f"+{sessions} sessions, +{orders} orders, +{items} items")
+                logger.info(
+                    f"Updated stats for {worker_id}: "
+                    f"+{sessions} sessions, +{orders} orders, +{items} items, "
+                    f"+{duration_seconds}s duration (avg {worker.avg_time_per_order}s/order)"
+                )
                 return
 
         logger.warning(f"Worker not found for stats update: {worker_id}")
