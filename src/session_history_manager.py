@@ -372,17 +372,19 @@ class SessionHistoryManager:
             state_timestamp = packing_state.get('timestamp')
             if state_timestamp:
                 try:
-                    end_time = datetime.fromisoformat(state_timestamp)
+                    from shared.metadata_utils import parse_timestamp
+                    end_time = parse_timestamp(state_timestamp)
                     if start_time and end_time:
                         duration_seconds = (end_time - start_time).total_seconds()
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
 
             # If no end time from state, use file modification time
             if not end_time:
                 try:
+                    from datetime import timezone
                     mtime = state_file.stat().st_mtime
-                    end_time = datetime.fromtimestamp(mtime)
+                    end_time = datetime.fromtimestamp(mtime, tz=timezone.utc)
                     if start_time:
                         duration_seconds = (end_time - start_time).total_seconds()
                 except Exception:
@@ -427,14 +429,18 @@ class SessionHistoryManager:
         Parse timestamp from session ID.
 
         Session IDs are typically in format: YYYYMMDD_HHMMSS
+        Returns timezone-aware datetime (UTC).
         """
+        from datetime import timezone
         try:
             # Try standard format: YYYYMMDD_HHMMSS
-            return datetime.strptime(session_id, "%Y%m%d_%H%M%S")
+            dt = datetime.strptime(session_id, "%Y%m%d_%H%M%S")
+            return dt.replace(tzinfo=timezone.utc)
         except ValueError:
             try:
                 # Try alternative formats
-                return datetime.strptime(session_id, "%Y%m%d-%H%M%S")
+                dt = datetime.strptime(session_id, "%Y%m%d-%H%M%S")
+                return dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 logger.debug(f"Could not parse timestamp from session ID: {session_id}")
                 return None

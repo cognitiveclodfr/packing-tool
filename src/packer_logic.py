@@ -333,7 +333,7 @@ class PackerLogic(QObject):
             "started_at": "2025-11-10T14:30:00",
             "last_updated": "2025-11-10T15:45:23",
             "status": "in_progress",
-            "worker_pc": "WAREHOUSE-PC-01",
+            "pc_name": "WAREHOUSE-PC-01",
             "progress": {...},
             "in_progress": {...},
             "completed": [...]
@@ -394,7 +394,7 @@ class PackerLogic(QObject):
             "started_at": self.started_at,
             "last_updated": get_current_timestamp(),
             "status": "completed" if completed_orders_count == total_orders and total_orders > 0 else "in_progress",
-            "worker_pc": self.worker_pc,
+            "pc_name": self.worker_pc,
 
             # Progress summary
             "progress": {

@@ -289,8 +289,8 @@ class TestSessionSummaryGeneration(unittest.TestCase):
         """Test summary contains accurate metrics"""
         packer = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
 
-        # Set specific started_at time for duration calculation
-        start_time = datetime(2025, 11, 18, 14, 0, 0)
+        # Set specific started_at time for duration calculation (timezone-aware)
+        start_time = datetime(2025, 11, 18, 14, 0, 0, tzinfo=timezone.utc)
         packer.started_at = start_time.isoformat()
         packer.session_id = "2025-11-18_14-00-00"
         packer.packing_list_name = "Test_Orders"
@@ -314,9 +314,10 @@ class TestSessionSummaryGeneration(unittest.TestCase):
         packer.session_packing_state['completed_orders'] = ['ORDER-1', 'ORDER-2', 'ORDER-3', 'ORDER-4']
 
         # Mock current time to be 1 hour after start (3600 seconds)
-        with patch('packer_logic.datetime') as mock_datetime:
-            mock_datetime.now.return_value = start_time.replace(hour=15)  # 1 hour later
-            mock_datetime.fromisoformat = datetime.fromisoformat
+        # Mock get_current_timestamp to return time 1 hour later
+        end_time = start_time.replace(hour=15)  # 1 hour later
+        with patch('shared.metadata_utils.get_current_timestamp') as mock_timestamp:
+            mock_timestamp.return_value = end_time.isoformat()
 
             summary = packer.generate_session_summary()
 
