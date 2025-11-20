@@ -417,9 +417,13 @@ class PackerLogic(QObject):
         from shared.metadata_utils import get_current_timestamp
 
         # Phase 2b: Build enhanced in_progress structure
+        # CRITICAL: Check session_packing_state first, not current_order_number!
+        # When user switches views (e.g., to Dashboard), current_order_number becomes None
+        # but the order is still in_progress and should be preserved.
         in_progress_data = None
+
         if self.current_order_number:
-            # Build items_remaining list
+            # Active order - save current state
             items_remaining = []
             items = self.orders_data[self.current_order_number]['items']
 
@@ -445,6 +449,25 @@ class PackerLogic(QObject):
                 "items_remaining": items_remaining,
                 "items_state": self.current_order_state.copy()  # Phase 2b: Save for restoration
             }
+        elif self.session_packing_state.get('in_progress'):
+            # No active order in memory, but there's in_progress data from previous state
+            # This happens when user switches views - preserve existing in_progress data
+            # Try to restore from _in_progress_enhanced if available
+            if hasattr(self, '_in_progress_enhanced') and self._in_progress_enhanced:
+                in_progress_data = self._in_progress_enhanced
+                logger.debug(f"Preserving in_progress data while order not active: {in_progress_data.get('order_number')}")
+            else:
+                # Fallback: build minimal in_progress structure from session_packing_state
+                for order_num, order_state in self.session_packing_state['in_progress'].items():
+                    in_progress_data = {
+                        "order_number": order_num,
+                        "started_at": None,  # Unknown - will use current time on resume
+                        "items_scanned": [],
+                        "items_remaining": [],
+                        "items_state": order_state if isinstance(order_state, list) else []
+                    }
+                    logger.debug(f"Built minimal in_progress data for order {order_num}")
+                    break  # Only one order can be in_progress at a time
 
         state_data = {
             # Version
@@ -1041,11 +1064,21 @@ class PackerLogic(QObject):
                     self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
                     logger.warning(f"Enhanced data mismatch for order {original_order_number}, using basic state")
             else:
-                # Old format - no enhanced data
-                self.current_order_start_time = get_current_timestamp()
-                self.current_order_items_scanned = []
+                # Old format or enhanced data lost - restore what we can
+                # Check if _in_progress_enhanced has minimal data (from fallback save)
+                if hasattr(self, '_in_progress_enhanced') and self._in_progress_enhanced:
+                    enhanced_data = self._in_progress_enhanced
+                    # Use started_at if available, otherwise current time
+                    self.current_order_start_time = enhanced_data.get('started_at') or get_current_timestamp()
+                    self.current_order_items_scanned = enhanced_data.get('items_scanned', []).copy()
+                    logger.info(f"Resuming order {original_order_number} (enhanced data from fallback)")
+                else:
+                    # True old format - no enhanced data at all
+                    self.current_order_start_time = get_current_timestamp()
+                    self.current_order_items_scanned = []
+                    logger.warning(f"Resuming order {original_order_number} (old format - timing will be inaccurate)")
+
                 self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
-                logger.info(f"Resuming order {original_order_number} (old format)")
         else:
             # New order - initialize fresh
             self.current_order_start_time = get_current_timestamp()
