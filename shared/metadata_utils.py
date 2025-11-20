@@ -99,24 +99,22 @@ def calculate_duration(start: str, end: str) -> int:
     return int((end_dt - start_dt).total_seconds())
 
 
-def load_session_summary_compat(path: Path) -> Dict[str, Any]:
-    """Load session summary with backward compatibility
-
-    Handles both old (v1.0-1.2) and new (v1.3.0+) formats.
-    Migrates old formats to the new unified v1.3.0 structure.
+def load_session_summary(path: Path) -> Dict[str, Any]:
+    """Load session summary in v1.3.0 format
 
     Args:
         path: Path to session_summary.json
 
     Returns:
-        dict: Unified v1.3.0 format
+        dict: Session summary in v1.3.0 format
 
     Raises:
         FileNotFoundError: If file does not exist
         json.JSONDecodeError: If file is not valid JSON
+        ValueError: If file is not in v1.3.0 format
 
     Example:
-        >>> summary = load_session_summary_compat(Path("session_summary.json"))
+        >>> summary = load_session_summary(Path("session_summary.json"))
         >>> print(summary['version'])
         "1.3.0"
     """
@@ -130,21 +128,16 @@ def load_session_summary_compat(path: Path) -> Dict[str, Any]:
         logger.error(f"Corrupted session summary at {path}: {e}")
         raise
 
-    # Detect version
-    version = data.get('version', '1.0')
+    # Check version
+    version = data.get('version')
+    if version != '1.3.0':
+        raise ValueError(f"Unsupported session summary version: {version}. Expected v1.3.0")
 
-    if version == '1.3.0':
-        # Already new format - validate structure and ensure all fields present
-        logger.debug(f"Session summary at {path} is already v1.3.0, validating structure")
-        validated = _validate_v1_3_0_format(data)
-        logger.debug(f"Validated v1.3.0 format with {len(validated)} fields")
-        return validated
+    # Validate structure and ensure all fields present
+    logger.debug(f"Loading session summary v1.3.0 from {path}")
+    validated = _validate_v1_3_0_format(data)
 
-    # Migrate from old format
-    logger.info(f"Migrating session summary from {version} to v1.3.0: {path}")
-    migrated = _migrate_to_v1_3_0(data)
-
-    return migrated
+    return validated
 
 
 def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -156,7 +149,7 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         dict: Validated data with default values for missing fields
     """
-    # Required fields with defaults (including backward compat fields)
+    # Required fields with defaults
     defaults = {
         'version': '1.3.0',
         'session_id': '',
@@ -166,16 +159,12 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
         'worker_id': None,
         'worker_name': 'Unknown',
         'pc_name': '',
-        'worker_pc': '',  # Backward compat alias
-        'packing_list_path': None,  # Backward compat field
         'started_at': '',
         'completed_at': '',
         'duration_seconds': 0,
         'total_orders': 0,
         'completed_orders': 0,
-        'in_progress_orders': 0,  # Backward compat field
         'total_items': 0,
-        'items_packed': 0,  # Backward compat alias
         'unique_skus': 0,
         'metrics': {
             'avg_time_per_order': 0,
@@ -184,18 +173,6 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
             'slowest_order_seconds': 0,
             'orders_per_hour': 0,
             'items_per_hour': 0
-        },
-        'summary': {  # Legacy nested format for backward compat
-            'total_orders': 0,
-            'completed_orders': 0,
-            'total_items': 0,
-            'average_order_time_seconds': 0
-        },
-        'performance': {  # Legacy nested format for backward compat
-            'orders_per_hour': 0,
-            'items_per_hour': 0,
-            'fastest_order_seconds': 0,
-            'slowest_order_seconds': 0
         },
         'orders': []
     }
@@ -213,240 +190,4 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
     else:
         data['metrics'] = defaults['metrics']
 
-    # Ensure summary has all required fields (backward compat)
-    if isinstance(data.get('summary'), dict):
-        for summary_key, summary_default in defaults['summary'].items():
-            if summary_key not in data['summary']:
-                data['summary'][summary_key] = summary_default
-    else:
-        data['summary'] = defaults['summary']
-
-    # Ensure performance has all required fields (backward compat)
-    if isinstance(data.get('performance'), dict):
-        for perf_key, perf_default in defaults['performance'].items():
-            if perf_key not in data['performance']:
-                data['performance'][perf_key] = perf_default
-    else:
-        data['performance'] = defaults['performance']
-
-    # Sync backward compat aliases if not set
-    if not data.get('worker_pc') and data.get('pc_name'):
-        data['worker_pc'] = data['pc_name']
-    if not data.get('items_packed') and data.get('total_items'):
-        data['items_packed'] = data['total_items']
-
     return data
-
-
-def _migrate_to_v1_3_0(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Migrate old format session summary to v1.3.0
-
-    Handles migration from:
-    - v1.0: Flat structure from main.py (lines 882-901)
-    - v1.1-1.2: Nested structure from packer_logic.py
-
-    Args:
-        data: Old format session summary
-
-    Returns:
-        dict: Migrated to v1.3.0 format
-    """
-    # Detect old format type
-    has_nested_summary = 'summary' in data and isinstance(data.get('summary'), dict)
-    has_nested_performance = 'performance' in data and isinstance(data.get('performance'), dict)
-
-    if has_nested_summary or has_nested_performance:
-        # Format from packer_logic.py (nested structure)
-        return _migrate_nested_format(data)
-    else:
-        # Format from main.py (flat structure)
-        return _migrate_flat_format(data)
-
-
-def _migrate_flat_format(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Migrate flat format (from main.py) to v1.3.0
-
-    Old format example:
-    {
-        "version": "1.0",
-        "session_id": "...",
-        "total_orders": 50,
-        "completed_orders": 50,
-        "worker_id": "worker_001",
-        ...
-    }
-    """
-    # Calculate metrics if we have the data
-    duration = data.get('duration_seconds', 0)
-    if duration is None:
-        duration = 0
-
-    completed = data.get('completed_orders', 0)
-    items = data.get('items_packed', data.get('total_items', 0))
-
-    avg_time_per_order = 0
-    avg_time_per_item = 0
-    orders_per_hour = 0
-    items_per_hour = 0
-
-    if duration and duration > 0:
-        if completed > 0:
-            avg_time_per_order = duration / completed
-            hours = duration / 3600.0
-            orders_per_hour = round(completed / hours, 1)
-        if items > 0:
-            avg_time_per_item = duration / items
-            hours = duration / 3600.0
-            items_per_hour = round(items / hours, 1)
-
-    migrated = {
-        # Metadata
-        "version": "1.3.0",
-        "session_id": data.get('session_id', ''),
-        "session_type": data.get('session_type', 'unknown'),
-        "client_id": data.get('client_id', ''),
-        "packing_list_name": data.get('packing_list_name', ''),
-
-        # Ownership
-        "worker_id": data.get('worker_id'),
-        "worker_name": data.get('worker_name', 'Unknown'),
-        "pc_name": data.get('pc_name', ''),
-        "worker_pc": data.get('pc_name', ''),  # Alias for backward compatibility
-        "packing_list_path": data.get('packing_list_path'),  # Preserve if exists
-
-        # Timing
-        "started_at": data.get('started_at', ''),
-        "completed_at": data.get('completed_at', ''),
-        "duration_seconds": duration,
-
-        # Counts
-        "total_orders": data.get('total_orders', 0),
-        "completed_orders": completed,
-        "in_progress_orders": data.get('in_progress_orders', 0),  # Preserve from old format
-        "total_items": items,
-        "items_packed": items,  # Alias for backward compat
-        "unique_skus": 0,  # Can't reconstruct from old format
-
-        # Metrics
-        "metrics": {
-            "avg_time_per_order": round(avg_time_per_order, 1),
-            "avg_time_per_item": round(avg_time_per_item, 1),
-            "fastest_order_seconds": 0,  # Not available in old format
-            "slowest_order_seconds": 0,  # Not available in old format
-            "orders_per_hour": orders_per_hour,
-            "items_per_hour": items_per_hour
-        },
-
-        # Orders (not available in old format)
-        "orders": [],
-
-        # Legacy nested format for backward compatibility with tests (even for flat format)
-        "summary": {
-            "total_orders": data.get('total_orders', 0),
-            "completed_orders": completed,
-            "total_items": items,
-            "average_order_time_seconds": avg_time_per_order
-        },
-        "performance": {
-            "orders_per_hour": orders_per_hour,
-            "items_per_hour": items_per_hour,
-            "fastest_order_seconds": 0,
-            "slowest_order_seconds": 0
-        }
-    }
-
-    logger.debug(f"Migrated flat format: {completed} orders, {items} items")
-    return migrated
-
-
-def _migrate_nested_format(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Migrate nested format (from packer_logic.py) to v1.3.0
-
-    Old format example:
-    {
-        "session_id": "...",
-        "summary": {
-            "total_orders": 45,
-            "completed_orders": 45,
-            ...
-        },
-        "performance": {
-            "orders_per_hour": 24.3,
-            ...
-        }
-    }
-    """
-    summary = data.get('summary', {})
-    performance = data.get('performance', {})
-
-    # Extract values from nested structure
-    duration = data.get('duration_seconds', 0)
-    if duration is None:
-        duration = 0
-
-    completed = summary.get('completed_orders', 0)
-    total_items = summary.get('total_items', 0)
-
-    avg_time_per_order = summary.get('average_order_time_seconds', 0)
-    avg_time_per_item = 0
-    if duration and duration > 0 and total_items > 0:
-        avg_time_per_item = duration / total_items
-
-    migrated = {
-        # Metadata
-        "version": "1.3.0",
-        "session_id": data.get('session_id', ''),
-        "session_type": data.get('session_type', 'unknown'),
-        "client_id": data.get('client_id', ''),
-        "packing_list_name": data.get('packing_list_name', ''),
-
-        # Ownership (may not be in old format)
-        "worker_id": data.get('worker_id'),
-        "worker_name": data.get('worker_name', 'Unknown'),
-        "pc_name": data.get('worker_pc', data.get('pc_name', '')),
-        "worker_pc": data.get('worker_pc', data.get('pc_name', '')),  # Alias for backward compat
-        "packing_list_path": data.get('packing_list_path'),  # Preserve if exists
-
-        # Timing
-        "started_at": data.get('started_at', ''),
-        "completed_at": data.get('completed_at', ''),
-        "duration_seconds": duration if duration else 0,
-
-        # Counts
-        "total_orders": summary.get('total_orders', 0),
-        "completed_orders": completed,
-        "in_progress_orders": data.get('in_progress_orders', 0),  # May exist in old format
-        "total_items": total_items,
-        "items_packed": total_items,  # Alias for backward compat
-        "unique_skus": 0,  # Can't reconstruct from old format
-
-        # Metrics (combine from summary and performance)
-        "metrics": {
-            "avg_time_per_order": round(avg_time_per_order, 1),
-            "avg_time_per_item": round(avg_time_per_item, 1),
-            "fastest_order_seconds": performance.get('fastest_order_seconds', 0),
-            "slowest_order_seconds": performance.get('slowest_order_seconds', 0),
-            "orders_per_hour": performance.get('orders_per_hour', 0),
-            "items_per_hour": performance.get('items_per_hour', 0)
-        },
-
-        # Orders (not available in old format)
-        "orders": [],
-
-        # Legacy nested format for backward compatibility with tests
-        "summary": {
-            "total_orders": summary.get('total_orders', 0),
-            "completed_orders": completed,
-            "total_items": total_items,
-            "average_order_time_seconds": avg_time_per_order
-        },
-        "performance": {
-            "orders_per_hour": performance.get('orders_per_hour', 0),
-            "items_per_hour": performance.get('items_per_hour', 0),
-            "fastest_order_seconds": performance.get('fastest_order_seconds', 0),
-            "slowest_order_seconds": performance.get('slowest_order_seconds', 0)
-        }
-    }
-
-    logger.debug(f"Migrated nested format: {completed} orders, {total_items} items")
-    return migrated

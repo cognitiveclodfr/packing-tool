@@ -11,7 +11,7 @@ from shared.metadata_utils import (
     get_current_timestamp,
     parse_timestamp,
     calculate_duration,
-    load_session_summary_compat
+    load_session_summary
 )
 
 
@@ -43,83 +43,12 @@ def test_timestamp_functions():
     assert duration == 9000, "Duration should be 9000 seconds (2.5 hours)"
 
 
-def test_compatibility_loader():
-    """Test backward compatibility loader"""
-    print("\n=== Testing Compatibility Loader ===")
+def test_session_summary_loader():
+    """Test session summary loader (v1.3.0 format only)"""
+    print("\n=== Testing Session Summary Loader ===")
 
-    # Test v1.0 flat format (from main.py)
-    old_flat_format = {
-        "version": "1.0",
-        "session_id": "2025-11-20_1",
-        "session_type": "shopify",
-        "client_id": "M",
-        "worker_id": "worker_001",
-        "worker_name": "Dolphin",
-        "total_orders": 50,
-        "completed_orders": 50,
-        "total_items": 185,
-        "items_packed": 185,
-        "started_at": "2025-11-20T10:00:00",
-        "completed_at": "2025-11-20T14:00:00",
-        "duration_seconds": 14400
-    }
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(old_flat_format, f)
-        temp_path = Path(f.name)
-
-    try:
-        migrated = load_session_summary_compat(temp_path)
-        print(f"✓ Migrated v1.0 flat format to v{migrated['version']}")
-        assert migrated['version'] == '1.3.0', "Should be migrated to v1.3.0"
-        assert migrated['worker_name'] == 'Dolphin', "Should preserve worker_name"
-        assert migrated['total_orders'] == 50, "Should preserve total_orders"
-        assert migrated['total_items'] == 185, "Should preserve total_items"
-        assert 'metrics' in migrated, "Should have metrics field"
-        assert migrated['metrics']['orders_per_hour'] > 0, "Should calculate orders_per_hour"
-        print(f"  - Orders per hour: {migrated['metrics']['orders_per_hour']}")
-    finally:
-        temp_path.unlink()
-
-    # Test v1.1 nested format (from old packer_logic.py)
-    old_nested_format = {
-        "session_id": "2025-11-20_1",
-        "client_id": "M",
-        "packing_list_name": "DHL_Orders",
-        "started_at": "2025-11-20T10:00:00",
-        "completed_at": "2025-11-20T14:00:00",
-        "duration_seconds": 14400,
-        "worker_pc": "WAREHOUSE-PC-01",
-        "summary": {
-            "total_orders": 45,
-            "completed_orders": 45,
-            "total_items": 156,
-            "average_order_time_seconds": 320
-        },
-        "performance": {
-            "orders_per_hour": 11.25,
-            "items_per_hour": 39.0
-        }
-    }
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(old_nested_format, f)
-        temp_path = Path(f.name)
-
-    try:
-        migrated = load_session_summary_compat(temp_path)
-        print(f"✓ Migrated v1.1 nested format to v{migrated['version']}")
-        assert migrated['version'] == '1.3.0', "Should be migrated to v1.3.0"
-        assert migrated['total_orders'] == 45, "Should extract from summary.total_orders"
-        assert migrated['total_items'] == 156, "Should extract from summary.total_items"
-        assert migrated['pc_name'] == 'WAREHOUSE-PC-01', "Should map worker_pc to pc_name"
-        assert migrated['metrics']['orders_per_hour'] == 11.25, "Should extract from performance"
-        print(f"  - Avg time per order: {migrated['metrics']['avg_time_per_order']}s")
-    finally:
-        temp_path.unlink()
-
-    # Test v1.3.0 format (no migration needed)
-    new_format = {
+    # Test v1.3.0 format
+    v130_format = {
         "version": "1.3.0",
         "session_id": "2025-11-20_1",
         "session_type": "shopify",
@@ -147,15 +76,20 @@ def test_compatibility_loader():
     }
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(new_format, f)
+        json.dump(v130_format, f)
         temp_path = Path(f.name)
 
     try:
-        loaded = load_session_summary_compat(temp_path)
-        print(f"✓ Loaded v1.3.0 format (no migration needed)")
-        assert loaded['version'] == '1.3.0', "Should remain v1.3.0"
+        loaded = load_session_summary(temp_path)
+        print(f"✓ Loaded v1.3.0 format successfully")
+        assert loaded['version'] == '1.3.0', "Should be v1.3.0"
+        assert loaded['worker_name'] == 'Dolphin', "Should preserve worker_name"
+        assert loaded['total_orders'] == 50, "Should preserve total_orders"
+        assert loaded['total_items'] == 185, "Should preserve total_items"
         assert loaded['unique_skus'] == 42, "Should preserve unique_skus"
         assert loaded['metrics']['avg_time_per_item'] == 77.8, "Should preserve all metrics"
+        print(f"  - Orders per hour: {loaded['metrics']['orders_per_hour']}")
+        print(f"  - Items per hour: {loaded['metrics']['items_per_hour']}")
     finally:
         temp_path.unlink()
 
@@ -227,7 +161,7 @@ def main():
 
     try:
         test_timestamp_functions()
-        test_compatibility_loader()
+        test_session_summary_loader()
         test_unified_format_structure()
 
         print("\n" + "=" * 60)
@@ -236,9 +170,9 @@ def main():
         print("\nPhase 2a implementation is complete and working correctly:")
         print("  ✓ Unified v1.3.0 session_summary.json format")
         print("  ✓ ISO 8601 timestamps with timezone")
-        print("  ✓ Backward compatibility with v1.0-1.2 formats")
         print("  ✓ Version fields in all metadata files")
         print("  ✓ Worker metrics and statistics")
+        print("  ✓ Only v1.3.0 format supported (no backward compatibility)")
 
         return 0
 

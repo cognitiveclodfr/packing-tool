@@ -276,9 +276,7 @@ class SessionHistoryManager:
         summary_file: Path
     ) -> Optional[SessionHistoryRecord]:
         """
-        Parse session_summary.json for completed sessions.
-
-        Uses backward compatible loader to handle both old (v1.0-1.2) and new (v1.3.0) formats.
+        Parse session_summary.json for completed sessions (v1.3.0 format only).
 
         Args:
             client_id: Client identifier
@@ -288,13 +286,13 @@ class SessionHistoryManager:
         Returns:
             SessionHistoryRecord or None if parsing fails
         """
-        from shared.metadata_utils import load_session_summary_compat, parse_timestamp
+        from shared.metadata_utils import load_session_summary, parse_timestamp
 
         session_id = session_dir.name
 
         try:
-            # Load with backward compatibility
-            summary = load_session_summary_compat(summary_file)
+            # Load v1.3.0 format
+            summary = load_session_summary(summary_file)
 
             # Parse timestamps using utility function
             start_time = parse_timestamp(summary.get('started_at', ''))
@@ -305,8 +303,7 @@ class SessionHistoryManager:
             if duration_seconds is None and start_time and end_time:
                 duration_seconds = (end_time - start_time).total_seconds()
 
-            # Map unified v1.3.0 format to SessionHistoryRecord
-            # The compatibility loader ensures we always get v1.3.0 format
+            # Map v1.3.0 format to SessionHistoryRecord
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
@@ -315,10 +312,10 @@ class SessionHistoryManager:
                 duration_seconds=duration_seconds,
                 total_orders=summary.get('total_orders', 0),
                 completed_orders=summary.get('completed_orders', 0),
-                in_progress_orders=summary.get('in_progress_orders', 0),  # Now preserved in v1.3.0
-                total_items_packed=summary.get('items_packed', summary.get('total_items', 0)),  # Support both
-                pc_name=summary.get('pc_name', summary.get('worker_pc')),  # Support both
-                packing_list_path=summary.get('packing_list_name'),  # v1.3.0 uses packing_list_name
+                in_progress_orders=0,  # No longer tracked in v1.3.0
+                total_items_packed=summary.get('total_items', 0),
+                pc_name=summary.get('pc_name', ''),
+                packing_list_path=summary.get('packing_list_name', ''),
                 session_path=str(session_dir)
             )
 

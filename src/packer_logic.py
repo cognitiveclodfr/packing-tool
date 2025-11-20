@@ -1554,9 +1554,6 @@ class PackerLogic(QObject):
                 avg_time_per_item = round(duration_seconds / total_items, 1)
                 items_per_hour = round(total_items / hours, 1)
 
-        # Calculate in-progress orders
-        in_progress_orders = len(self.session_packing_state.get('in_progress', {}))
-
         # Build unified v1.3.0 session summary
         summary = {
             # Metadata
@@ -1570,7 +1567,6 @@ class PackerLogic(QObject):
             "worker_id": worker_id,
             "worker_name": worker_name if worker_name else "Unknown",
             "pc_name": self.worker_pc,
-            "worker_pc": self.worker_pc,  # Alias for backward compatibility
 
             # Timing
             "started_at": self.started_at,
@@ -1580,12 +1576,10 @@ class PackerLogic(QObject):
             # Counts
             "total_orders": total_orders,
             "completed_orders": completed_orders,
-            "in_progress_orders": in_progress_orders,  # For backward compatibility
             "total_items": total_items,
-            "items_packed": total_items,  # Alias for backward compatibility
             "unique_skus": unique_skus,
 
-            # Metrics (flat structure)
+            # Metrics
             "metrics": {
                 "avg_time_per_order": avg_time_per_order,
                 "avg_time_per_item": avg_time_per_item,
@@ -1593,20 +1587,6 @@ class PackerLogic(QObject):
                 "slowest_order_seconds": 0,   # Future enhancement: per-order timing
                 "orders_per_hour": orders_per_hour,
                 "items_per_hour": items_per_hour
-            },
-
-            # Legacy nested format for backward compatibility with tests
-            "summary": {
-                "total_orders": total_orders,
-                "completed_orders": completed_orders,
-                "total_items": total_items,
-                "average_order_time_seconds": avg_time_per_order
-            },
-            "performance": {
-                "orders_per_hour": orders_per_hour,
-                "items_per_hour": items_per_hour,
-                "fastest_order_seconds": 0,
-                "slowest_order_seconds": 0
             },
 
             # Orders array (Phase 2b will populate with detailed order data)
