@@ -954,7 +954,7 @@ class MainWindow(QMainWindow):
 
         self.start_session_button.setEnabled(True)
         self.load_shopify_button.setEnabled(True)
-        self.restore_session_button.setEnabled(True)
+        self.session_browser_button.setEnabled(True)
         self.end_session_button.setEnabled(False)
         self.print_button.setEnabled(False)
         self.packer_mode_button.setEnabled(False)
@@ -1646,7 +1646,7 @@ class MainWindow(QMainWindow):
         # Disable session start buttons
         self.start_session_button.setEnabled(False)
         self.load_shopify_button.setEnabled(False)
-        self.restore_session_button.setEnabled(False)
+        self.session_browser_button.setEnabled(False)
 
         # Enable packing operation buttons
         self.end_session_button.setEnabled(True)
