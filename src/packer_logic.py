@@ -142,6 +142,7 @@ class PackerLogic(QObject):
         self.current_order_start_time = None  # When current order started
         self.current_order_items_scanned = []  # Items scanned with timestamps
         self.completed_orders_detailed = []  # Full completed orders with metadata
+        self._in_progress_enhanced = None  # Enhanced in_progress data for restoration
 
         # Initialize session packing state with new structure
         # This will be populated when loading an existing state or starting new
@@ -264,6 +265,7 @@ class PackerLogic(QObject):
         This method supports both old and new state file formats for backward compatibility:
         - Old format: {'in_progress': {...}, 'completed_orders': [...]}
         - New format: Full state with metadata (session_id, timestamps, progress, etc.)
+        - Phase 2b format: Enhanced in_progress structure with items_scanned
         """
         state_file = self._get_state_file_path()
 
@@ -284,24 +286,49 @@ class PackerLogic(QObject):
                 # Could be new format (with metadata) or old direct format
                 state_data = data
 
-            # Load core packing state
-            self.session_packing_state['in_progress'] = state_data.get('in_progress', {})
+            # Phase 2b: Load enhanced in_progress format
+            in_progress_data = state_data.get('in_progress')
+
+            if in_progress_data:
+                if isinstance(in_progress_data, dict) and 'order_number' in in_progress_data:
+                    # Phase 2b format: single object with order_number
+                    order_number = in_progress_data['order_number']
+
+                    # Convert back to old format for compatibility with existing code
+                    # We'll restore the enhanced data in start_order_packing()
+                    self.session_packing_state['in_progress'] = {
+                        order_number: in_progress_data.get('items_state', [])
+                    }
+
+                    # Store Phase 2b enhanced data separately for restoration
+                    self._in_progress_enhanced = in_progress_data
+                else:
+                    # Old format: dict of order_number -> order_state
+                    self.session_packing_state['in_progress'] = in_progress_data
+                    self._in_progress_enhanced = None
+            else:
+                self.session_packing_state['in_progress'] = {}
+                self._in_progress_enhanced = None
 
             # Handle both new format (completed: list of dicts) and old format (completed_orders: list of strings)
             if 'completed' in state_data:
-                # New format: list of dicts with metadata
+                # Phase 2b: Load detailed completed orders
                 completed_list = state_data.get('completed', [])
                 if completed_list and isinstance(completed_list[0], dict):
                     # Extract order numbers from metadata dicts
                     self.session_packing_state['completed_orders'] = [
                         item['order_number'] for item in completed_list if 'order_number' in item
                     ]
+                    # Restore detailed completed orders
+                    self.completed_orders_detailed = completed_list
                 else:
                     # Fallback if completed is just a list of strings
                     self.session_packing_state['completed_orders'] = completed_list
+                    self.completed_orders_detailed = []
             else:
                 # Old format: simple list of order numbers
                 self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
+                self.completed_orders_detailed = []
 
             # Load metadata if present (new format)
             if 'session_id' in state_data:
@@ -319,6 +346,7 @@ class PackerLogic(QObject):
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+            self._in_progress_enhanced = None
 
     def _save_session_state(self):
         """
@@ -414,7 +442,8 @@ class PackerLogic(QObject):
                 "order_number": self.current_order_number,
                 "started_at": self.current_order_start_time,
                 "items_scanned": self.current_order_items_scanned.copy(),
-                "items_remaining": items_remaining
+                "items_remaining": items_remaining,
+                "items_state": self.current_order_state.copy()  # Phase 2b: Save for restoration
             }
 
         state_data = {
@@ -983,20 +1012,49 @@ class PackerLogic(QObject):
         if original_order_number in self.session_packing_state['completed_orders']:
             return None, "ORDER_ALREADY_COMPLETED"
 
-        # Phase 2b: Record order start time
+        # Phase 2b: Check if order is already in progress
+        is_resuming = original_order_number in self.session_packing_state['in_progress']
+
         from shared.metadata_utils import get_current_timestamp
 
         self.current_order_number = original_order_number
-        self.current_order_start_time = get_current_timestamp()
-        self.current_order_items_scanned = []  # Reset items list
 
-        logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
+        if is_resuming:
+            # Resuming order - restore Phase 2b enhanced data
+            if hasattr(self, '_in_progress_enhanced') and self._in_progress_enhanced:
+                # Restore from Phase 2b format
+                enhanced_data = self._in_progress_enhanced
+                if enhanced_data.get('order_number') == original_order_number:
+                    self.current_order_start_time = enhanced_data.get('started_at')
+                    self.current_order_items_scanned = enhanced_data.get('items_scanned', []).copy()
+                    self.current_order_state = enhanced_data.get('items_state', [])
 
-        items = self.orders_data[original_order_number]['items']
-
-        if original_order_number in self.session_packing_state['in_progress']:
-            self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
+                    logger.info(
+                        f"Resuming order {original_order_number} - "
+                        f"started at {self.current_order_start_time}, "
+                        f"{len(self.current_order_items_scanned)} items already scanned"
+                    )
+                else:
+                    # Fallback: enhanced data doesn't match
+                    self.current_order_start_time = get_current_timestamp()
+                    self.current_order_items_scanned = []
+                    self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
+                    logger.warning(f"Enhanced data mismatch for order {original_order_number}, using basic state")
+            else:
+                # Old format - no enhanced data
+                self.current_order_start_time = get_current_timestamp()
+                self.current_order_items_scanned = []
+                self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
+                logger.info(f"Resuming order {original_order_number} (old format)")
         else:
+            # New order - initialize fresh
+            self.current_order_start_time = get_current_timestamp()
+            self.current_order_items_scanned = []
+
+            logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
+
+            items = self.orders_data[original_order_number]['items']
+
             self.current_order_state = []
             for i, item in enumerate(items):
                 sku = item.get('SKU')
@@ -1017,6 +1075,7 @@ class PackerLogic(QObject):
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state()
 
+        items = self.orders_data[original_order_number]['items']
         return items, "ORDER_LOADED"
 
     def process_sku_scan(self, sku: str) -> Tuple[Dict | None, str]:
