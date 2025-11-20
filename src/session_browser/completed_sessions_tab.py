@@ -147,8 +147,13 @@ class CompletedSessionsTab(QWidget):
 
         # Get filters
         selected_client = self.client_combo.currentData()
-        date_from = self.date_from.date().toPython()
-        date_to = self.date_to.date().toPython()
+
+        # Convert QDate to datetime (same as session_history_widget.py)
+        qdate_from = self.date_from.date()
+        qdate_to = self.date_to.date()
+        date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
+        date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
+
         search_term = self.search_input.text().strip()
 
         # Get sessions from SessionHistoryManager
