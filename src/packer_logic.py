@@ -138,6 +138,11 @@ class PackerLogic(QObject):
         self.started_at = None  # Session start timestamp
         self.worker_pc = os.environ.get('COMPUTERNAME', 'Unknown')  # PC name
 
+        # Phase 2b: Enhanced metadata tracking
+        self.current_order_start_time = None  # When current order started
+        self.current_order_items_scanned = []  # Items scanned with timestamps
+        self.completed_orders_detailed = []  # Full completed orders with metadata
+
         # Initialize session packing state with new structure
         # This will be populated when loading an existing state or starting new
         self.session_packing_state = {
@@ -383,6 +388,35 @@ class PackerLogic(QObject):
         # Build complete state structure with metadata
         from shared.metadata_utils import get_current_timestamp
 
+        # Phase 2b: Build enhanced in_progress structure
+        in_progress_data = None
+        if self.current_order_number:
+            # Build items_remaining list
+            items_remaining = []
+            items = self.orders_data[self.current_order_number]['items']
+
+            for item_state in self.current_order_state:
+                required = item_state['required']
+                packed = item_state['packed']
+
+                if packed < required:
+                    item_row = item_state['row']
+                    item_details = items[item_row] if item_row < len(items) else {}
+
+                    items_remaining.append({
+                        'sku': item_state['original_sku'],
+                        'title': item_details.get('Product_Name', ''),
+                        'quantity': required,
+                        'packed': packed
+                    })
+
+            in_progress_data = {
+                "order_number": self.current_order_number,
+                "started_at": self.current_order_start_time,
+                "items_scanned": self.current_order_items_scanned.copy(),
+                "items_remaining": items_remaining
+            }
+
         state_data = {
             # Version
             "version": "1.3.0",
@@ -405,9 +439,9 @@ class PackerLogic(QObject):
                 "packed_items": packed_items
             },
 
-            # Detailed packing state
-            "in_progress": self.session_packing_state.get('in_progress', {}),
-            "completed": self._build_completed_list()
+            # Phase 2b: Enhanced detailed packing state
+            "in_progress": in_progress_data,
+            "completed": self.completed_orders_detailed.copy()
         }
 
         try:
@@ -930,6 +964,8 @@ class PackerLogic(QObject):
         It looks up the order number, validates its status (e.g., not already
         completed), and loads its packing state into memory.
 
+        Phase 2b: Now tracks order start time for performance metrics.
+
         Args:
             scanned_text (str): The content from the scanned order barcode.
 
@@ -947,7 +983,15 @@ class PackerLogic(QObject):
         if original_order_number in self.session_packing_state['completed_orders']:
             return None, "ORDER_ALREADY_COMPLETED"
 
+        # Phase 2b: Record order start time
+        from shared.metadata_utils import get_current_timestamp
+
         self.current_order_number = original_order_number
+        self.current_order_start_time = get_current_timestamp()
+        self.current_order_items_scanned = []  # Reset items list
+
+        logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
+
         items = self.orders_data[original_order_number]['items']
 
         if original_order_number in self.session_packing_state['in_progress']:
@@ -1063,8 +1107,41 @@ class PackerLogic(QObject):
 
         # === STEP 4: Process successful match ===
         if found_item:
+            # Phase 2b: Record item timestamp
+            from shared.metadata_utils import get_current_timestamp, calculate_duration
+
             # Increment packed count for this item
             found_item['packed'] += 1
+
+            # Phase 2b: Record scan timestamp and calculate time from order start
+            scan_timestamp = get_current_timestamp()
+
+            if self.current_order_start_time:
+                time_from_start = calculate_duration(
+                    self.current_order_start_time,
+                    scan_timestamp
+                )
+            else:
+                time_from_start = 0
+
+            # Get item details from order data
+            items = self.orders_data[self.current_order_number]['items']
+            item_row = found_item['row']
+            item_details = items[item_row] if item_row < len(items) else {}
+
+            # Build item data with timestamp
+            scanned_item = {
+                'sku': found_item['original_sku'],
+                'title': item_details.get('Product_Name', ''),
+                'quantity': found_item['required'],
+                'scanned_at': scan_timestamp,
+                'time_from_order_start': time_from_start
+            }
+
+            # Add to current order's scanned items list
+            self.current_order_items_scanned.append(scanned_item)
+
+            logger.debug(f"Item scanned: {sku} at +{time_from_start}s from order start")
 
             # Check if this specific item is now complete
             # (all required quantity for this SKU has been packed)
@@ -1076,19 +1153,12 @@ class PackerLogic(QObject):
             # === Check if ENTIRE order is complete ===
             # An order is complete when ALL items have been packed
             # (not just the current item)
-            all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state)
+            all_items_complete = self._check_order_complete()
 
             if all_items_complete:
-                # Order is complete!
+                # Phase 2b: Use new completion method with full metadata
+                self._complete_current_order()
                 status = "ORDER_COMPLETE"
-
-                # Move order from "in_progress" to "completed_orders"
-                del self.session_packing_state['in_progress'][self.current_order_number]
-
-                # Add to completed list (if not already there)
-                # This check prevents duplicates in case of rare edge cases
-                if self.current_order_number not in self.session_packing_state['completed_orders']:
-                    self.session_packing_state['completed_orders'].append(self.current_order_number)
             else:
                 # Order still in progress
                 status = "SKU_OK"
@@ -1102,12 +1172,12 @@ class PackerLogic(QObject):
                 # This allows the UI to show "5/8 items packed" in real-time
                 self.item_packed.emit(self.current_order_number, total_packed, total_required)
 
-            # === CRITICAL: Save state to disk ===
-            # This is called after EVERY successful scan to ensure:
-            # - No data loss if application crashes
-            # - Session can be restored exactly where we left off
-            # - Multi-PC environments see consistent state
-            self._save_session_state()
+                # === CRITICAL: Save state to disk ===
+                # This is called after EVERY successful scan to ensure:
+                # - No data loss if application crashes
+                # - Session can be restored exactly where we left off
+                # - Multi-PC environments see consistent state
+                self._save_session_state()
 
             # Return success with detailed information
             return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
@@ -1461,10 +1531,13 @@ class PackerLogic(QObject):
         """
         Generate comprehensive session summary upon completion.
 
+        Phase 2b: Now includes detailed per-order and per-item metrics.
+
         Creates a unified v1.3.0 format session summary with:
         - Session metadata (ID, client, packing list, timestamps, worker info)
         - Counts (total orders, completed orders, items, unique SKUs)
         - Performance metrics (orders/hour, items/hour, average times)
+        - Full orders array with timestamps and items
 
         Args:
             worker_id: Worker who completed session (e.g., "worker_001")
@@ -1473,38 +1546,10 @@ class PackerLogic(QObject):
 
         Returns:
             dict: Unified session summary (v1.3.0 format, ready for JSON serialization)
-
-        Example structure:
-        {
-            "version": "1.3.0",
-            "session_id": "2025-11-10_1",
-            "session_type": "shopify",
-            "client_id": "M",
-            "packing_list_name": "DHL_Orders",
-            "worker_id": "worker_001",
-            "worker_name": "Dolphin",
-            "pc_name": "WAREHOUSE-PC-01",
-            "started_at": "2025-11-10T14:30:00+02:00",
-            "completed_at": "2025-11-10T16:20:45+02:00",
-            "duration_seconds": 6645,
-            "total_orders": 45,
-            "completed_orders": 45,
-            "total_items": 156,
-            "unique_skus": 42,
-            "metrics": {
-                "avg_time_per_order": 147.6,
-                "avg_time_per_item": 42.6,
-                "fastest_order_seconds": 0,
-                "slowest_order_seconds": 0,
-                "orders_per_hour": 24.3,
-                "items_per_hour": 84.2
-            },
-            "orders": []
-        }
         """
         from shared.metadata_utils import get_current_timestamp, calculate_duration
 
-        logger.info("Generating session summary (v1.3.0 format)")
+        logger.info("Generating session summary (v1.3.0 format with Phase 2b enhancements)")
 
         # Calculate timestamps and duration
         completed_at = get_current_timestamp()
@@ -1521,38 +1566,65 @@ class PackerLogic(QObject):
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Could not parse started_at for duration calculation: {e}")
 
+        # Phase 2b: Get completed orders from detailed list
+        completed_orders_list = self.completed_orders_detailed.copy()
+
         # Calculate order and item counts
         total_orders = len(self.orders_data) if self.orders_data else 0
-        completed_orders = len(self.session_packing_state.get('completed_orders', []))
+        completed_orders = len(completed_orders_list)
 
-        # Calculate total items
-        total_items = 0
-        if self.processed_df is not None:
-            try:
-                import pandas as pd
-                total_items = int(pd.to_numeric(self.processed_df['Quantity'], errors='coerce').sum())
-            except Exception as e:
-                logger.warning(f"Could not calculate total_items: {e}")
+        # Phase 2b: Calculate total items from completed orders
+        total_items = sum(order.get('items_count', 0) for order in completed_orders_list)
 
-        # Count unique SKUs
-        unique_skus = self._count_unique_skus()
+        # Count unique SKUs from completed orders
+        unique_skus = set()
+        for order in completed_orders_list:
+            for item in order.get('items', []):
+                if item.get('sku'):
+                    unique_skus.add(item['sku'])
 
-        # Calculate performance metrics
+        # Phase 2b: Calculate detailed performance metrics from order data
+        order_durations = [
+            order['duration_seconds']
+            for order in completed_orders_list
+            if order.get('duration_seconds')
+        ]
+
+        # Calculate per-item times from all scanned items
+        all_items = []
+        for order in completed_orders_list:
+            all_items.extend(order.get('items', []))
+
+        item_times = [
+            item['time_from_order_start']
+            for item in all_items
+            if 'time_from_order_start' in item
+        ]
+
+        # Calculate metrics
         avg_time_per_order = 0
         avg_time_per_item = 0
+        fastest_order_seconds = 0
+        slowest_order_seconds = 0
         orders_per_hour = 0
         items_per_hour = 0
+
+        if order_durations:
+            avg_time_per_order = round(sum(order_durations) / len(order_durations), 2)
+            fastest_order_seconds = min(order_durations)
+            slowest_order_seconds = max(order_durations)
+
+        if item_times:
+            avg_time_per_item = round(sum(item_times) / len(item_times), 2)
 
         if duration_seconds and duration_seconds > 0:
             hours = duration_seconds / 3600.0
 
             if completed_orders > 0:
-                avg_time_per_order = round(duration_seconds / completed_orders, 1)
-                orders_per_hour = round(completed_orders / hours, 1)
+                orders_per_hour = round(completed_orders / hours, 2)
 
             if total_items > 0:
-                avg_time_per_item = round(duration_seconds / total_items, 1)
-                items_per_hour = round(total_items / hours, 1)
+                items_per_hour = round(total_items / hours, 2)
 
         # Build unified v1.3.0 session summary
         summary = {
@@ -1577,26 +1649,27 @@ class PackerLogic(QObject):
             "total_orders": total_orders,
             "completed_orders": completed_orders,
             "total_items": total_items,
-            "unique_skus": unique_skus,
+            "unique_skus": len(unique_skus),
 
-            # Metrics
+            # Phase 2b: Enhanced metrics with per-order and per-item data
             "metrics": {
                 "avg_time_per_order": avg_time_per_order,
                 "avg_time_per_item": avg_time_per_item,
-                "fastest_order_seconds": 0,  # Future enhancement: per-order timing
-                "slowest_order_seconds": 0,   # Future enhancement: per-order timing
+                "fastest_order_seconds": fastest_order_seconds,
+                "slowest_order_seconds": slowest_order_seconds,
                 "orders_per_hour": orders_per_hour,
                 "items_per_hour": items_per_hour
             },
 
-            # Orders array (Phase 2b will populate with detailed order data)
-            "orders": []
+            # Phase 2b: Full orders array with detailed data
+            "orders": completed_orders_list
         }
 
         logger.info(
             f"Session summary generated (v1.3.0): {completed_orders}/{total_orders} orders, "
-            f"{total_items} items, {unique_skus} unique SKUs, "
-            f"{duration_seconds}s duration, {orders_per_hour} orders/hour"
+            f"{total_items} items, {len(unique_skus)} unique SKUs, "
+            f"{duration_seconds}s duration, {orders_per_hour} orders/hour, "
+            f"avg {avg_time_per_order}s/order, avg {avg_time_per_item}s/item"
         )
 
         return summary
@@ -1661,6 +1734,110 @@ class PackerLogic(QObject):
         except Exception as e:
             logger.error(f"Failed to save session summary: {e}", exc_info=True)
             raise IOError(f"Failed to save session summary: {e}")
+
+    def _check_order_complete(self) -> bool:
+        """Check if current order has all items packed
+
+        Returns:
+            bool: True if all items packed
+        """
+        if not self.current_order_number:
+            return False
+
+        # Check all items in current order state
+        for item_state in self.current_order_state:
+            if item_state['packed'] < item_state['required']:
+                return False
+
+        return True
+
+    def _complete_current_order(self):
+        """Complete current order with full metadata
+
+        Phase 2b: Records detailed order completion data including:
+        - Order timing (start, end, duration)
+        - All items with individual timestamps
+        - Performance metrics per item
+        """
+        from shared.metadata_utils import get_current_timestamp, calculate_duration
+
+        if not self.current_order_number:
+            logger.warning("No current order to complete")
+            return
+
+        # Calculate order duration
+        completed_at = get_current_timestamp()
+
+        if self.current_order_start_time:
+            duration = calculate_duration(
+                self.current_order_start_time,
+                completed_at
+            )
+        else:
+            duration = 0
+
+        # Build completed order record with full metadata
+        completed_order = {
+            "order_number": self.current_order_number,
+            "started_at": self.current_order_start_time,
+            "completed_at": completed_at,
+            "duration_seconds": duration,
+            "items_count": len(self.current_order_items_scanned),
+            "items": self.current_order_items_scanned.copy()  # Full items with timestamps
+        }
+
+        # Add to completed list (detailed version)
+        self.completed_orders_detailed.append(completed_order)
+
+        logger.info(
+            f"Order {self.current_order_number} completed in {duration}s "
+            f"with {completed_order['items_count']} items"
+        )
+
+        # Also update legacy completed_orders list for backward compatibility
+        if self.current_order_number not in self.session_packing_state['completed_orders']:
+            self.session_packing_state['completed_orders'].append(self.current_order_number)
+
+        # Remove from in_progress
+        if self.current_order_number in self.session_packing_state['in_progress']:
+            del self.session_packing_state['in_progress'][self.current_order_number]
+
+        # Reset current order tracking
+        self.current_order_number = None
+        self.current_order_start_time = None
+        self.current_order_items_scanned = []
+        self.current_order_state = {}
+
+        # Save state
+        self._save_session_state()
+
+    def _atomic_write(self, file_path: Path, data: dict):
+        """Write JSON file atomically (temp + rename)
+
+        Args:
+            file_path: Target file path
+            data: Dictionary to write
+
+        Raises:
+            IOError: If write fails
+        """
+        import json
+
+        # Write to temp file
+        tmp_file = file_path.with_suffix('.tmp')
+
+        try:
+            with open(tmp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            # Rename (atomic on Windows)
+            tmp_file.replace(file_path)
+
+        except Exception as e:
+            logger.error(f"Failed to write {file_path}: {e}", exc_info=True)
+            if tmp_file.exists():
+                tmp_file.unlink()
+            raise IOError(f"Failed to write {file_path}: {e}")
 
     def end_session_cleanup(self):
         """
