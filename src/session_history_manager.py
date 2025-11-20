@@ -125,6 +125,19 @@ class SessionHistoryManager:
         Returns:
             List of SessionHistoryRecord objects, sorted by start time (newest first)
         """
+        # Ensure date filters are timezone-aware for comparison with session timestamps
+        from datetime import timezone
+
+        if start_date is not None and start_date.tzinfo is None:
+            # Assume local timezone if naive
+            start_date = start_date.replace(tzinfo=timezone.utc)
+            logger.debug(f"Converted naive start_date to timezone-aware (UTC)")
+
+        if end_date is not None and end_date.tzinfo is None:
+            # Assume local timezone if naive
+            end_date = end_date.replace(tzinfo=timezone.utc)
+            logger.debug(f"Converted naive end_date to timezone-aware (UTC)")
+
         logger.info(f"Retrieving sessions for client {client_id}")
 
         try:
