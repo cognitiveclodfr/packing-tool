@@ -151,11 +151,17 @@ class PackerLogic(QObject):
         # Load session state if exists
         self._load_session_state()
 
+        # Phase 2b: Order-level timing tracking
+        self.current_order_start_time = None  # ISO timestamp when order scanning started
+        self.current_order_items_scanned = []  # List of items with scan timestamps
+        self.completed_orders_metadata = []  # List of completed orders with timing data
+
         logger.info(f"PackerLogic initialized for client {client_id}")
         logger.debug(f"Work directory: {self.work_dir}")
         logger.debug(f"Barcode directory: {self.barcode_dir}")
         logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
+        logger.debug("Phase 2b timing variables initialized")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
@@ -306,6 +312,29 @@ class PackerLogic(QObject):
                 # worker_pc is set from environment in __init__, but can be overridden from state
                 logger.debug(f"Loaded session metadata: {self.session_id}")
 
+            # Phase 2b: Restore completed orders metadata if present
+            if 'completed' in state_data:
+                completed_list = state_data['completed']
+
+                # Check if completed list has timing data (Phase 2b format)
+                if completed_list and len(completed_list) > 0 and isinstance(completed_list[0], dict) and 'started_at' in completed_list[0]:
+                    self.completed_orders_metadata = completed_list
+                    logger.debug(f"Restored {len(completed_list)} completed orders with timing")
+                else:
+                    # Old format or empty
+                    self.completed_orders_metadata = []
+                    logger.debug("No timing data in completed orders (old format or empty)")
+
+            # Phase 2b: Restore in-progress timing if present
+            if 'in_progress' in state_data and '_timing' in state_data['in_progress']:
+                timing_data = state_data['in_progress']['_timing']
+                self.current_order_start_time = timing_data.get('current_order_start_time')
+                self.current_order_items_scanned = timing_data.get('items_scanned', [])
+                logger.debug(f"Restored in-progress timing: started_at={self.current_order_start_time}")
+            else:
+                self.current_order_start_time = None
+                self.current_order_items_scanned = []
+
             in_progress_count = len(self.session_packing_state['in_progress'])
             completed_count = len(self.session_packing_state['completed_orders'])
 
@@ -406,8 +435,19 @@ class PackerLogic(QObject):
             },
 
             # Detailed packing state
-            "in_progress": self.session_packing_state.get('in_progress', {}),
-            "completed": self._build_completed_list()
+            # Phase 2b: Add timing metadata for in-progress order
+            "in_progress": {
+                **self.session_packing_state.get('in_progress', {}),
+                # Add timing data if there's a current order with timing info
+                **({
+                    "_timing": {
+                        "current_order_start_time": self.current_order_start_time,
+                        "items_scanned": self.current_order_items_scanned
+                    }
+                } if self.current_order_number and self.current_order_start_time else {})
+            },
+            # Phase 2b: Use completed_orders_metadata if available
+            "completed": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata else self._build_completed_list()
         }
 
         try:
@@ -470,6 +510,55 @@ class PackerLogic(QObject):
             })
 
         return completed_list
+
+    def _complete_current_order(self):
+        """Complete current order with timing metadata
+
+        Called when all items in order are scanned. Records completion time,
+        calculates duration, and stores detailed timing data for analytics.
+
+        Phase 2b: Enhanced timing tracking
+        """
+        from shared.metadata_utils import get_current_timestamp, calculate_duration
+
+        if not self.current_order_number:
+            logger.warning("_complete_current_order called but no current order")
+            return
+
+        # Record completion time
+        completed_at = get_current_timestamp()
+
+        # Calculate order duration
+        if self.current_order_start_time:
+            duration_seconds = calculate_duration(
+                self.current_order_start_time,
+                completed_at
+            )
+        else:
+            duration_seconds = 0
+            logger.warning(f"Order {self.current_order_number} has no start time")
+
+        # Build order metadata record
+        order_metadata = {
+            "order_number": self.current_order_number,
+            "started_at": self.current_order_start_time,
+            "completed_at": completed_at,
+            "duration_seconds": duration_seconds,
+            "items_count": len(self.current_order_items_scanned),
+            "items": self.current_order_items_scanned.copy()  # Full items with timestamps
+        }
+
+        # Add to completed orders metadata
+        self.completed_orders_metadata.append(order_metadata)
+
+        logger.info(
+            f"Order {self.current_order_number} completed: "
+            f"duration={duration_seconds}s, items={len(self.current_order_items_scanned)}"
+        )
+
+        # Note: We don't reset current_order_number here because it's still needed
+        # for legacy state management. The reset happens in clear_current_order() or
+        # when starting a new order.
 
     def _initialize_session_metadata(self, session_id: str = None, packing_list_name: str = None):
         """
@@ -973,6 +1062,13 @@ class PackerLogic(QObject):
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state()
 
+        # Phase 2b: Record order start time
+        from shared.metadata_utils import get_current_timestamp
+        self.current_order_start_time = get_current_timestamp()
+        self.current_order_items_scanned = []
+
+        logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
+
         return items, "ORDER_LOADED"
 
     def process_sku_scan(self, sku: str) -> Tuple[Dict | None, str]:
@@ -1070,6 +1166,39 @@ class PackerLogic(QObject):
             # (all required quantity for this SKU has been packed)
             is_complete = found_item['packed'] == found_item['required']
 
+            # Phase 2b: Record item scan with timestamp
+            from shared.metadata_utils import get_current_timestamp, calculate_duration
+
+            scan_timestamp = get_current_timestamp()
+
+            # Calculate time from order start
+            if self.current_order_start_time:
+                time_from_order_start = calculate_duration(
+                    self.current_order_start_time,
+                    scan_timestamp
+                )
+            else:
+                time_from_order_start = 0
+                logger.warning("Order start time not set, cannot calculate timing")
+
+            # Get item details from orders_data
+            items_list = self.orders_data[self.current_order_number]['items']
+            item_idx = found_item['row']
+
+            # Build item scan record
+            item_scan_record = {
+                "sku": normalized_final_sku,
+                "title": items_list[item_idx].get('Product_Name', normalized_final_sku),
+                "quantity": found_item['required'],
+                "scanned_at": scan_timestamp,
+                "time_from_order_start_seconds": time_from_order_start
+            }
+
+            # Add to scanned items list
+            self.current_order_items_scanned.append(item_scan_record)
+
+            logger.debug(f"Item {normalized_final_sku} scanned at +{time_from_order_start}s from order start")
+
             # Update session state (in-memory)
             self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
 
@@ -1081,6 +1210,9 @@ class PackerLogic(QObject):
             if all_items_complete:
                 # Order is complete!
                 status = "ORDER_COMPLETE"
+
+                # Phase 2b: Complete order with timing metadata
+                self._complete_current_order()
 
                 # Move order from "in_progress" to "completed_orders"
                 del self.session_packing_state['in_progress'][self.current_order_number]
@@ -1537,9 +1669,55 @@ class PackerLogic(QObject):
         # Count unique SKUs
         unique_skus = self._count_unique_skus()
 
-        # Calculate performance metrics
-        avg_time_per_order = 0
-        avg_time_per_item = 0
+        # Phase 2b: Calculate metrics from completed_orders_metadata
+        if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata:
+            orders_with_timing = self.completed_orders_metadata
+
+            # Extract durations
+            durations = [
+                order['duration_seconds']
+                for order in orders_with_timing
+                if order.get('duration_seconds')
+            ]
+
+            # Calculate order-level metrics
+            if durations:
+                avg_time_per_order = round(sum(durations) / len(durations), 1)
+                fastest_order_seconds = min(durations)
+                slowest_order_seconds = max(durations)
+            else:
+                avg_time_per_order = 0
+                fastest_order_seconds = 0
+                slowest_order_seconds = 0
+
+            # Calculate item-level metrics
+            all_items = []
+            for order in orders_with_timing:
+                all_items.extend(order.get('items', []))
+
+            if all_items:
+                item_times = [
+                    item['time_from_order_start_seconds']
+                    for item in all_items
+                    if 'time_from_order_start_seconds' in item
+                ]
+                avg_time_per_item = round(sum(item_times) / len(item_times), 1) if item_times else 0
+            else:
+                avg_time_per_item = 0
+
+            # Total items from metadata
+            total_items_from_metadata = sum(order.get('items_count', 0) for order in orders_with_timing)
+
+        else:
+            # Fallback for old sessions without timing
+            logger.warning("No timing metadata available, using fallback calculations")
+            avg_time_per_order = 0
+            avg_time_per_item = 0
+            fastest_order_seconds = 0
+            slowest_order_seconds = 0
+            total_items_from_metadata = 0
+
+        # Session-level performance (orders_per_hour, items_per_hour)
         orders_per_hour = 0
         items_per_hour = 0
 
@@ -1547,12 +1725,12 @@ class PackerLogic(QObject):
             hours = duration_seconds / 3600.0
 
             if completed_orders > 0:
-                avg_time_per_order = round(duration_seconds / completed_orders, 1)
                 orders_per_hour = round(completed_orders / hours, 1)
 
-            if total_items > 0:
-                avg_time_per_item = round(duration_seconds / total_items, 1)
-                items_per_hour = round(total_items / hours, 1)
+            # Use metadata total_items if available, otherwise fallback to processed_df total
+            items_for_rate = total_items_from_metadata if total_items_from_metadata > 0 else total_items
+            if items_for_rate > 0:
+                items_per_hour = round(items_for_rate / hours, 1)
 
         # Build unified v1.3.0 session summary
         summary = {
@@ -1583,14 +1761,14 @@ class PackerLogic(QObject):
             "metrics": {
                 "avg_time_per_order": avg_time_per_order,
                 "avg_time_per_item": avg_time_per_item,
-                "fastest_order_seconds": 0,  # Future enhancement: per-order timing
-                "slowest_order_seconds": 0,   # Future enhancement: per-order timing
+                "fastest_order_seconds": fastest_order_seconds,  # Phase 2b: Real data from timing
+                "slowest_order_seconds": slowest_order_seconds,   # Phase 2b: Real data from timing
                 "orders_per_hour": orders_per_hour,
                 "items_per_hour": items_per_hour
             },
 
-            # Orders array (Phase 2b will populate with detailed order data)
-            "orders": []
+            # Phase 2b: Populate orders array with timing data
+            "orders": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') else []
         }
 
         logger.info(
