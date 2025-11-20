@@ -174,7 +174,10 @@ class SessionHistoryManager:
                     continue
 
             # Sort by start time, newest first
-            sessions.sort(key=lambda s: s.start_time or datetime.min, reverse=True)
+            # Use timezone-aware min for compatibility with new timestamps
+            from datetime import timezone
+            min_dt = datetime.min.replace(tzinfo=timezone.utc)
+            sessions.sort(key=lambda s: s.start_time or min_dt, reverse=True)
 
             logger.info(f"Found {len(sessions)} sessions for client {client_id}")
             return sessions

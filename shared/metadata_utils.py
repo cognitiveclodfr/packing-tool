@@ -134,9 +134,11 @@ def load_session_summary_compat(path: Path) -> Dict[str, Any]:
     version = data.get('version', '1.0')
 
     if version == '1.3.0':
-        # Already new format - validate structure
-        logger.debug(f"Session summary at {path} is already v1.3.0")
-        return _validate_v1_3_0_format(data)
+        # Already new format - validate structure and ensure all fields present
+        logger.debug(f"Session summary at {path} is already v1.3.0, validating structure")
+        validated = _validate_v1_3_0_format(data)
+        logger.debug(f"Validated v1.3.0 format with {len(validated)} fields")
+        return validated
 
     # Migrate from old format
     logger.info(f"Migrating session summary from {version} to v1.3.0: {path}")
@@ -154,7 +156,7 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         dict: Validated data with default values for missing fields
     """
-    # Required fields with defaults
+    # Required fields with defaults (including backward compat fields)
     defaults = {
         'version': '1.3.0',
         'session_id': '',
@@ -164,12 +166,16 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
         'worker_id': None,
         'worker_name': 'Unknown',
         'pc_name': '',
+        'worker_pc': '',  # Backward compat alias
+        'packing_list_path': None,  # Backward compat field
         'started_at': '',
         'completed_at': '',
         'duration_seconds': 0,
         'total_orders': 0,
         'completed_orders': 0,
+        'in_progress_orders': 0,  # Backward compat field
         'total_items': 0,
+        'items_packed': 0,  # Backward compat alias
         'unique_skus': 0,
         'metrics': {
             'avg_time_per_order': 0,
@@ -178,6 +184,18 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
             'slowest_order_seconds': 0,
             'orders_per_hour': 0,
             'items_per_hour': 0
+        },
+        'summary': {  # Legacy nested format for backward compat
+            'total_orders': 0,
+            'completed_orders': 0,
+            'total_items': 0,
+            'average_order_time_seconds': 0
+        },
+        'performance': {  # Legacy nested format for backward compat
+            'orders_per_hour': 0,
+            'items_per_hour': 0,
+            'fastest_order_seconds': 0,
+            'slowest_order_seconds': 0
         },
         'orders': []
     }
@@ -194,6 +212,28 @@ def _validate_v1_3_0_format(data: Dict[str, Any]) -> Dict[str, Any]:
                 data['metrics'][metric_key] = metric_default
     else:
         data['metrics'] = defaults['metrics']
+
+    # Ensure summary has all required fields (backward compat)
+    if isinstance(data.get('summary'), dict):
+        for summary_key, summary_default in defaults['summary'].items():
+            if summary_key not in data['summary']:
+                data['summary'][summary_key] = summary_default
+    else:
+        data['summary'] = defaults['summary']
+
+    # Ensure performance has all required fields (backward compat)
+    if isinstance(data.get('performance'), dict):
+        for perf_key, perf_default in defaults['performance'].items():
+            if perf_key not in data['performance']:
+                data['performance'][perf_key] = perf_default
+    else:
+        data['performance'] = defaults['performance']
+
+    # Sync backward compat aliases if not set
+    if not data.get('worker_pc') and data.get('pc_name'):
+        data['worker_pc'] = data['pc_name']
+    if not data.get('items_packed') and data.get('total_items'):
+        data['items_packed'] = data['total_items']
 
     return data
 
