@@ -34,13 +34,13 @@ def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
     """Parse ISO timestamp to datetime object
 
     Handles both timezone-aware and timezone-naive timestamps for
-    backward compatibility.
+    backward compatibility. Always returns timezone-aware datetime.
 
     Args:
         timestamp_str: ISO 8601 timestamp
 
     Returns:
-        datetime or None if invalid
+        datetime (timezone-aware) or None if invalid
 
     Example:
         >>> dt = parse_timestamp("2025-11-20T14:15:00+02:00")
@@ -51,15 +51,22 @@ def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
         return None
 
     try:
-        return datetime.fromisoformat(timestamp_str)
+        dt = datetime.fromisoformat(timestamp_str)
+        # If naive (no timezone), assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except (ValueError, TypeError):
         # Try without timezone for backward compat
         try:
             # Handle 'Z' suffix (UTC)
             if timestamp_str.endswith('Z'):
                 return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-            # Try parsing without timezone (assume local)
-            return datetime.fromisoformat(timestamp_str)
+            # Try parsing without timezone (assume UTC)
+            dt = datetime.fromisoformat(timestamp_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except (ValueError, TypeError) as e:
             logger.warning(f"Could not parse timestamp '{timestamp_str}': {e}")
             return None
@@ -231,6 +238,9 @@ def _migrate_flat_format(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     # Calculate metrics if we have the data
     duration = data.get('duration_seconds', 0)
+    if duration is None:
+        duration = 0
+
     completed = data.get('completed_orders', 0)
     items = data.get('items_packed', data.get('total_items', 0))
 
@@ -239,7 +249,7 @@ def _migrate_flat_format(data: Dict[str, Any]) -> Dict[str, Any]:
     orders_per_hour = 0
     items_per_hour = 0
 
-    if duration > 0:
+    if duration and duration > 0:
         if completed > 0:
             avg_time_per_order = duration / completed
             hours = duration / 3600.0
@@ -261,6 +271,8 @@ def _migrate_flat_format(data: Dict[str, Any]) -> Dict[str, Any]:
         "worker_id": data.get('worker_id'),
         "worker_name": data.get('worker_name', 'Unknown'),
         "pc_name": data.get('pc_name', ''),
+        "worker_pc": data.get('pc_name', ''),  # Alias for backward compatibility
+        "packing_list_path": data.get('packing_list_path'),  # Preserve if exists
 
         # Timing
         "started_at": data.get('started_at', ''),
@@ -270,7 +282,9 @@ def _migrate_flat_format(data: Dict[str, Any]) -> Dict[str, Any]:
         # Counts
         "total_orders": data.get('total_orders', 0),
         "completed_orders": completed,
+        "in_progress_orders": data.get('in_progress_orders', 0),  # Preserve from old format
         "total_items": items,
+        "items_packed": items,  # Alias for backward compat
         "unique_skus": 0,  # Can't reconstruct from old format
 
         # Metrics
@@ -284,7 +298,21 @@ def _migrate_flat_format(data: Dict[str, Any]) -> Dict[str, Any]:
         },
 
         # Orders (not available in old format)
-        "orders": []
+        "orders": [],
+
+        # Legacy nested format for backward compatibility with tests (even for flat format)
+        "summary": {
+            "total_orders": data.get('total_orders', 0),
+            "completed_orders": completed,
+            "total_items": items,
+            "average_order_time_seconds": avg_time_per_order
+        },
+        "performance": {
+            "orders_per_hour": orders_per_hour,
+            "items_per_hour": items_per_hour,
+            "fastest_order_seconds": 0,
+            "slowest_order_seconds": 0
+        }
     }
 
     logger.debug(f"Migrated flat format: {completed} orders, {items} items")
@@ -313,12 +341,15 @@ def _migrate_nested_format(data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Extract values from nested structure
     duration = data.get('duration_seconds', 0)
+    if duration is None:
+        duration = 0
+
     completed = summary.get('completed_orders', 0)
     total_items = summary.get('total_items', 0)
 
     avg_time_per_order = summary.get('average_order_time_seconds', 0)
     avg_time_per_item = 0
-    if duration > 0 and total_items > 0:
+    if duration and duration > 0 and total_items > 0:
         avg_time_per_item = duration / total_items
 
     migrated = {
@@ -333,16 +364,20 @@ def _migrate_nested_format(data: Dict[str, Any]) -> Dict[str, Any]:
         "worker_id": data.get('worker_id'),
         "worker_name": data.get('worker_name', 'Unknown'),
         "pc_name": data.get('worker_pc', data.get('pc_name', '')),
+        "worker_pc": data.get('worker_pc', data.get('pc_name', '')),  # Alias for backward compat
+        "packing_list_path": data.get('packing_list_path'),  # Preserve if exists
 
         # Timing
         "started_at": data.get('started_at', ''),
         "completed_at": data.get('completed_at', ''),
-        "duration_seconds": duration,
+        "duration_seconds": duration if duration else 0,
 
         # Counts
         "total_orders": summary.get('total_orders', 0),
         "completed_orders": completed,
+        "in_progress_orders": data.get('in_progress_orders', 0),  # May exist in old format
         "total_items": total_items,
+        "items_packed": total_items,  # Alias for backward compat
         "unique_skus": 0,  # Can't reconstruct from old format
 
         # Metrics (combine from summary and performance)
@@ -356,7 +391,21 @@ def _migrate_nested_format(data: Dict[str, Any]) -> Dict[str, Any]:
         },
 
         # Orders (not available in old format)
-        "orders": []
+        "orders": [],
+
+        # Legacy nested format for backward compatibility with tests
+        "summary": {
+            "total_orders": summary.get('total_orders', 0),
+            "completed_orders": completed,
+            "total_items": total_items,
+            "average_order_time_seconds": avg_time_per_order
+        },
+        "performance": {
+            "orders_per_hour": performance.get('orders_per_hour', 0),
+            "items_per_hour": performance.get('items_per_hour', 0),
+            "fastest_order_seconds": performance.get('fastest_order_seconds', 0),
+            "slowest_order_seconds": performance.get('slowest_order_seconds', 0)
+        }
     }
 
     logger.debug(f"Migrated nested format: {completed} orders, {total_items} items")

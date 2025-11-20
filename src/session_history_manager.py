@@ -299,9 +299,9 @@ class SessionHistoryManager:
                 duration_seconds=duration_seconds,
                 total_orders=summary.get('total_orders', 0),
                 completed_orders=summary.get('completed_orders', 0),
-                in_progress_orders=0,  # v1.3.0 doesn't track this separately
-                total_items_packed=summary.get('total_items', 0),  # v1.3.0 uses 'total_items'
-                pc_name=summary.get('pc_name'),
+                in_progress_orders=summary.get('in_progress_orders', 0),  # Now preserved in v1.3.0
+                total_items_packed=summary.get('items_packed', summary.get('total_items', 0)),  # Support both
+                pc_name=summary.get('pc_name', summary.get('worker_pc')),  # Support both
                 packing_list_path=summary.get('packing_list_name'),  # v1.3.0 uses packing_list_name
                 session_path=str(session_dir)
             )
