@@ -7,9 +7,11 @@ Replaces old Restore Session dialog and Session Monitor.
 from .session_browser_widget import SessionBrowserWidget
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
+from .available_sessions_tab import AvailableSessionsTab
 
 __all__ = [
     'SessionBrowserWidget',
     'ActiveSessionsTab',
     'CompletedSessionsTab',
+    'AvailableSessionsTab',
 ]

@@ -315,16 +315,27 @@ class CompletedSessionsTab(QWidget):
 
         session = self.sessions[selected]
 
-        # TODO: Open SessionDetailsDialog (Phase 3.2)
-        # For now, show basic info
-        info = [
-            f"Session ID: {session.session_id}",
-            f"Client: {session.client_id}",
-            f"PC Name: {session.pc_name}",
-            f"Start: {session.start_time}",
-            f"Duration: {session.duration_seconds}s" if session.duration_seconds else "Duration: N/A",
-            f"Orders: {session.completed_orders}/{session.total_orders}",
-            f"Items: {session.total_items_packed}",
-        ]
+        # Import dialog
+        from .session_details_dialog import SessionDetailsDialog
 
-        QMessageBox.information(self, "Session Details", "\n".join(info))
+        # Create dialog
+        try:
+            dialog = SessionDetailsDialog(
+                session_data={
+                    'client_id': session.client_id,
+                    'session_id': session.session_id,
+                    'work_dir': None  # Will be found by get_session_details
+                },
+                session_history_manager=self.session_history_manager,
+                parent=self
+            )
+
+            dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Failed to open session details: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to load session details:\n{str(e)}"
+            )

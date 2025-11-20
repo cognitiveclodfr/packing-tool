@@ -4,7 +4,7 @@ All notable changes to Packing Tool will be documented in this file.
 
 ## [1.3.0] - In Progress
 
-### 🎯 Major Release - Session Browser (Phase 3.1)
+### 🎯 Major Release - Session Browser (Phase 3.1 + 3.2 Complete)
 
 ### ✨ Added
 
@@ -16,17 +16,42 @@ All notable changes to Packing Tool will be documented in this file.
   - Progress bars showing X/Y orders completed
   - Resume session action
   - Force unlock action for stale sessions
+  - View Details button for comprehensive session information
 - **Completed Sessions Tab**: Browse session history with analytics
   - Date range and client filters
   - Search functionality across multiple fields
-  - Export to Excel (PDF export coming in Phase 3.2)
+  - Export to Excel
   - Sortable columns for easy data analysis
+  - View Details button for detailed session analysis
+
+**Session Browser (Phase 3.2 - NEW):**
+- **Available Sessions Tab**: Shows Shopify sessions ready to start
+  - Scans for packing lists that haven't been started yet
+  - Displays session info, courier, order/item counts
+  - Start Packing button to begin new session directly from browser
+  - Client filtering
+  - Automatic detection of unstarted vs. started lists
+- **Session Details Dialog**: Comprehensive 3-tab view for any session
+  - **Overview Tab**: Session metadata, timing, progress summary
+  - **Orders Tab**: Hierarchical tree view with Phase 2b timing data
+    - Expandable orders showing all items
+    - Per-order duration and timestamps
+    - Per-item scan times and time-from-start metrics
+    - Search/filter by order number
+    - Expand/Collapse all functionality
+  - **Metrics Tab**: Performance statistics
+    - Average time per order/item
+    - Fastest/slowest orders
+    - Orders per hour and items per hour rates
+  - Excel export for session details with item-level timing data
+  - Graceful fallback for sessions without Phase 2b timing data
 
 **Session Management Enhancements:**
 - Session Browser integrates with SessionHistoryManager for completed sessions
 - Session Browser uses SessionLockManager for active session detection
 - Worker information displayed in session details
 - Enhanced session status visualization with color-coded indicators
+- Complete workflow: Browse Available → Start Packing → Active → Completed → Details
 
 ### 🔧 Changed
 - Replaced "Restore Session" button with "Session Browser" button
@@ -48,12 +73,20 @@ All notable changes to Packing Tool will be documented in this file.
 - SessionBrowserWidget: Main container with QTabWidget
 - ActiveSessionsTab: Scans for locked and paused sessions
 - CompletedSessionsTab: Uses SessionHistoryManager for history display
+- **AvailableSessionsTab** (Phase 3.2): Scans for Shopify packing_lists without work directories
+- **SessionDetailsDialog** (Phase 3.2): Dialog with 3 sub-tabs for detailed session view
+  - OverviewTab: Metadata and progress display
+  - OrdersTab: QTreeWidget for hierarchical order/item view
+  - MetricsTab: Performance statistics display
 - Integration with main.py via signals/slots
+- Excel export using pandas for detailed session data
+- Graceful error handling for missing timing data
 
-### ⏭️ Coming Next (Phase 3.2)
-- Available Sessions Tab (Shopify sessions ready to start)
-- Session Details Dialog (comprehensive session view)
-- PDF export for completed sessions
+### 🧪 Testing
+- Comprehensive unit tests for Phase 3.2 components
+- Test coverage for Available Sessions scanning logic
+- Test coverage for Session Details Dialog tabs
+- Mock-based testing for UI components
 
 ---
 
