@@ -5,10 +5,10 @@ Provides tabbed interface for browsing active, completed, and available packing 
 Replaces old Restore Session dialog and Session Monitor.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QMessageBox
 )
-from PyQt6.QtCore import pyqtSignal
+from PySide6.QtCore import Signal
 
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
@@ -24,8 +24,8 @@ class SessionBrowserWidget(QWidget):
     """
 
     # Signals
-    resume_session_requested = pyqtSignal(dict)  # {session_path, client_id, packing_list_name}
-    session_selected = pyqtSignal(dict)  # Generic session selection
+    resume_session_requested = Signal(dict)  # {session_path, client_id, packing_list_name}
+    session_selected = Signal(dict)  # Generic session selection
 
     def __init__(
         self,

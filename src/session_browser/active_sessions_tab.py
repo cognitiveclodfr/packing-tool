@@ -1,12 +1,12 @@
 """Active Sessions Tab - Shows in-progress sessions with lock status"""
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QMessageBox, QLabel
 )
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor
+from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QColor
 
 from pathlib import Path
 from datetime import datetime, timezone
@@ -21,7 +21,7 @@ class ActiveSessionsTab(QWidget):
     """Tab showing active/stale/paused sessions"""
 
     # Signals
-    resume_requested = pyqtSignal(dict)  # {session_path, client_id, packing_list_name, lock_info}
+    resume_requested = Signal(dict)  # {session_path, client_id, packing_list_name, lock_info}
 
     def __init__(self, profile_manager, session_lock_manager, worker_manager, parent=None):
         super().__init__(parent)

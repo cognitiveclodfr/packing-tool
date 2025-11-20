@@ -1,11 +1,11 @@
 """Completed Sessions Tab - Shows session history with analytics"""
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QLineEdit, QLabel, QDateEdit, QMessageBox, QFileDialog
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QDate
+from PySide6.QtCore import Signal, Qt, QDate
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,7 +20,7 @@ class CompletedSessionsTab(QWidget):
     """Tab showing completed session history"""
 
     # Signals
-    session_selected = pyqtSignal(dict)  # {session data}
+    session_selected = Signal(dict)  # {session data}
 
     def __init__(self, profile_manager, session_history_manager, parent=None):
         super().__init__(parent)
