@@ -412,6 +412,14 @@ class ActiveSessionsTab(QWidget):
 
         # Create dialog
         try:
+            # Get SessionBrowserWidget (find first parent that has session_history_manager)
+            browser_widget = self.parent()
+            while browser_widget and not hasattr(browser_widget, 'session_history_manager'):
+                browser_widget = browser_widget.parent()
+
+            if not browser_widget:
+                raise AttributeError("Could not find SessionBrowserWidget parent")
+
             dialog = SessionDetailsDialog(
                 session_data={
                     'client_id': session['client_id'],
@@ -419,7 +427,7 @@ class ActiveSessionsTab(QWidget):
                     'work_dir': session['work_dir'],
                     'lock_info': session.get('lock_info')
                 },
-                session_history_manager=self.parent().session_history_manager,
+                session_history_manager=browser_widget.session_history_manager,
                 parent=self
             )
 
@@ -431,4 +439,4 @@ class ActiveSessionsTab(QWidget):
                 self,
                 "Error",
                 f"Failed to load session details:\n{str(e)}"
-        )
+            )

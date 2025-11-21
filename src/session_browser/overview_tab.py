@@ -36,23 +36,24 @@ class OverviewTab(QWidget):
         record = self.details.get('record')
 
         if record:
-            session_form.addRow("Session ID:", QLabel(record.session_id))
-            session_form.addRow("Client:", QLabel(f"CLIENT_{record.client_id}"))
+            session_form.addRow("Session ID:", QLabel(record.get('session_id', 'Unknown')))
+            session_form.addRow("Client:", QLabel(f"CLIENT_{record.get('client_id', 'Unknown')}"))
 
             # Packing list
-            if record.packing_list_path:
+            packing_list_path = record.get('packing_list_path')
+            if packing_list_path:
                 from pathlib import Path
-                list_name = Path(record.packing_list_path).stem
+                list_name = Path(packing_list_path).stem
             else:
                 list_name = "Unknown"
             session_form.addRow("Packing List:", QLabel(list_name))
 
             # Worker
-            worker = record.worker_id or "Unknown"
+            worker = record.get('worker_id') or "Unknown"
             session_form.addRow("Worker:", QLabel(worker))
 
             # PC
-            pc = record.pc_name or "Unknown"
+            pc = record.get('pc_name') or "Unknown"
             session_form.addRow("PC:", QLabel(pc))
 
         session_group.setLayout(session_form)
@@ -64,16 +65,17 @@ class OverviewTab(QWidget):
 
         if record:
             # Started
-            started = self._format_datetime(record.start_time)
+            started = self._format_datetime(record.get('start_time'))
             timing_form.addRow("Started:", QLabel(started))
 
             # Completed
-            completed = self._format_datetime(record.end_time)
+            completed = self._format_datetime(record.get('end_time'))
             timing_form.addRow("Completed:", QLabel(completed))
 
             # Duration
-            if record.duration_seconds:
-                duration = self._format_duration(record.duration_seconds)
+            duration_seconds = record.get('duration_seconds')
+            if duration_seconds:
+                duration = self._format_duration(duration_seconds)
                 timing_form.addRow("Duration:", QLabel(duration))
 
         timing_group.setLayout(timing_form)
@@ -84,20 +86,25 @@ class OverviewTab(QWidget):
         progress_form = QFormLayout()
 
         if record:
+            total_orders = record.get('total_orders', 0)
+            completed_orders = record.get('completed_orders', 0)
+            in_progress_orders = record.get('in_progress_orders', 0)
+            total_items = record.get('total_items_packed', 0)
+
             progress_form.addRow(
                 "Orders:",
-                QLabel(f"{record.completed_orders} / {record.total_orders}")
+                QLabel(f"{completed_orders} / {total_orders}")
             )
             progress_form.addRow(
                 "Items:",
-                QLabel(str(record.total_items_packed))
+                QLabel(str(total_items))
             )
 
             # Status
-            if record.completed_orders == record.total_orders:
+            if completed_orders == total_orders:
                 status = "✅ Complete"
             else:
-                status = f"⚠️ Incomplete ({record.in_progress_orders} in progress)"
+                status = f"⚠️ Incomplete ({in_progress_orders} in progress)"
             progress_form.addRow("Status:", QLabel(status))
 
         progress_group.setLayout(progress_form)
