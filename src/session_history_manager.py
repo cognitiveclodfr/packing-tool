@@ -637,6 +637,18 @@ class SessionHistoryManager:
             # Load session info
             session_info = self._load_session_info(session_dir)
 
+            # Load session summary if exists (Phase 2b data)
+            session_summary = {}
+            work_dir_path = state_file.parent  # work_dir containing packing_state.json
+            summary_file = work_dir_path / "session_summary.json"
+            if summary_file.exists():
+                try:
+                    from shared.metadata_utils import load_session_summary
+                    session_summary = load_session_summary(summary_file)
+                    logger.info(f"Loaded session_summary.json for session {session_id} with {len(session_summary.get('orders', []))} orders")
+                except Exception as e:
+                    logger.warning(f"Failed to load session_summary.json: {e}")
+
             # Get session records (may be multiple for multi-list sessions)
             records = self._parse_session_directory(client_id, session_dir)
 
@@ -647,7 +659,8 @@ class SessionHistoryManager:
             return {
                 'record': record.to_dict() if record else None,
                 'packing_state': packing_state,
-                'session_info': session_info
+                'session_info': session_info,
+                'session_summary': session_summary
             }
 
         except Exception as e:
