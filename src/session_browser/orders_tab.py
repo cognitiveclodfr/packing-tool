@@ -7,6 +7,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from datetime import datetime
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class OrdersTab(QWidget):
@@ -36,6 +39,7 @@ class OrdersTab(QWidget):
         # Try session_summary first (Phase 2b data with full timing)
         if 'session_summary' in self.details:
             self.all_orders = self.details['session_summary'].get('orders', [])
+            logger.debug(f"Loaded {len(self.all_orders)} orders from session_summary")
             return
 
         # Fallback: Try packing_state (less detailed)

@@ -143,6 +143,12 @@ class ActiveSessionsTab(QWidget):
 
                     packing_list_name = work_dir.name
 
+                    # Skip completed packing lists (those with session_summary.json)
+                    summary_file = work_dir / "session_summary.json"
+                    if summary_file.exists():
+                        logger.debug(f"Skipping completed list: {packing_list_name}")
+                        continue  # Skip completed packing lists
+
                     # Check for lock or session_info
                     # Note: Lock file is in session_dir, not work_dir
                     is_locked, lock_info = self.session_lock_manager.is_locked(session_dir)
@@ -420,13 +426,45 @@ class ActiveSessionsTab(QWidget):
             if not browser_widget:
                 raise AttributeError("Could not find SessionBrowserWidget parent")
 
+            # Build standardized structure
+            work_dir_path = Path(session['work_dir'])
+
+            session_data = {
+                'session_id': session['session_id'],
+                'client_id': session['client_id'],
+                'packing_list_name': session['packing_list_name'],
+                'worker_id': session.get('worker_id'),
+                'worker_name': self._get_worker_name(session.get('worker_id', 'Unknown')),
+                'pc_name': session.get('pc_name'),
+                'status': session['status'],
+                'lock_age': session.get('lock_age_minutes'),
+                'session_path': session['session_path'],
+                'work_dir': session['work_dir'],
+            }
+
+            # Load additional data from session_info.json if needed
+            session_info_file = work_dir_path.parent / 'session_info.json'
+            if session_info_file.exists():
+                with open(session_info_file, 'r') as f:
+                    info = json.load(f)
+                    session_data.update({
+                        'started_at': info.get('started_at'),
+                        'orders_total': info.get('orders_total', 0),
+                        'items_total': info.get('items_total', 0),
+                    })
+
+            # Load progress from packing_state.json
+            state_file = work_dir_path / 'packing_state.json'
+            if state_file.exists():
+                with open(state_file, 'r') as f:
+                    state = json.load(f)
+                    data = state.get('data', {})
+                    orders = data.get('orders', [])
+                    completed_count = sum(1 for o in orders if o.get('status') == 'completed')
+                    session_data['orders_completed'] = completed_count
+
             dialog = SessionDetailsDialog(
-                session_data={
-                    'client_id': session['client_id'],
-                    'session_id': session['session_id'],
-                    'work_dir': session['work_dir'],
-                    'lock_info': session.get('lock_info')
-                },
+                session_data=session_data,
                 session_history_manager=browser_widget.session_history_manager,
                 parent=self
             )

@@ -88,6 +88,24 @@ All notable changes to Packing Tool will be documented in this file.
 - Test coverage for Session Details Dialog tabs
 - Mock-based testing for UI components
 
+### 🔧 Fixed
+
+**Session Browser Critical Issues:**
+- **Active Sessions Filter**: Fixed completed lists appearing in Active tab
+  - Added session_summary.json check to skip completed packing lists
+  - Completed sessions now properly filtered out from Active tab
+- **Completed Sessions Multiple Lists**: Fixed sessions with multiple packing lists showing only one record
+  - Removed early return in `_parse_session_directory()` that stopped after first list
+  - Sessions with 3 packing lists now correctly show 3 separate records
+- **View Details Consistency**: Standardized data structure passed to SessionDetailsDialog
+  - Active Sessions tab now provides complete session data including worker info and progress
+  - Completed Sessions tab provides standardized format matching active sessions
+  - SessionDetailsDialog handles both active and completed session data gracefully
+  - Overview, Orders, and Metrics tabs now display consistently regardless of source
+- **Test Fixes**:
+  - Fixed dict access in test_session_browser_phase32.py (record is dict, not object)
+  - Added timing metadata population in test_state_persistence.py for avg_time_per_order calculation
+
 ---
 
 ## [1.2.0] - 2025-11-19

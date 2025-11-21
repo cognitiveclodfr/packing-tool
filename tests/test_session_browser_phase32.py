@@ -254,7 +254,7 @@ class TestSessionDetailsDialog(unittest.TestCase):
         )
 
         self.assertIsNotNone(dialog.details)
-        self.assertEqual(dialog.details['record'].session_id, '2025-11-20_1')
+        self.assertEqual(dialog.details['record']['session_id'], '2025-11-20_1')
 
     def test_get_orders_for_export(self):
         """Test getting orders for Excel export."""
