@@ -24,7 +24,6 @@ from profile_manager import ProfileManager, ProfileManagerError, NetworkError, V
 from session_lock_manager import SessionLockManager
 from exceptions import SessionLockedError, StaleLockError
 from restore_session_dialog import RestoreSessionDialog
-from session_monitor_widget import SessionMonitorWidget
 from session_selector import SessionSelectorDialog
 from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
@@ -37,8 +36,6 @@ from shared.worker_manager import WorkerManager
 from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
-from dashboard_widget import DashboardWidget
-from session_history_widget import SessionHistoryWidget
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
@@ -283,10 +280,6 @@ class MainWindow(QMainWindow):
         self.sku_mapping_button.clicked.connect(self.open_sku_mapping_dialog)
         control_layout.addWidget(self.sku_mapping_button)
 
-        self.session_monitor_button = QPushButton("Session Monitor")
-        self.session_monitor_button.clicked.connect(self.open_session_monitor)
-        control_layout.addWidget(self.session_monitor_button)
-
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
         main_layout.addWidget(self.search_input)
@@ -302,15 +295,9 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
 
-        # Phase 1.3: Dashboard and History widgets
-        self.dashboard_widget = DashboardWidget(self.profile_manager, self.stats_manager)
-        self.history_widget = SessionHistoryWidget(self.profile_manager)
-
-        # Create tab widget for main views
+        # Create tab widget for main views (Dashboard and History removed)
         self.tab_widget = QTabWidget()
         self.tab_widget.addTab(self.session_widget, "Session")
-        self.tab_widget.addTab(self.dashboard_widget, "Dashboard")
-        self.tab_widget.addTab(self.history_widget, "History")
 
         # Stacked widget to switch between tabbed view and packer mode
         self.stacked_widget = QStackedWidget()
@@ -332,30 +319,12 @@ class MainWindow(QMainWindow):
         session_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(0))
         view_menu.addAction(session_action)
 
-        dashboard_action = QAction("&Dashboard", self)
-        dashboard_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(1))
-        view_menu.addAction(dashboard_action)
-
-        history_action = QAction("&History", self)
-        history_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(2))
-        view_menu.addAction(history_action)
-
-        view_menu.addSeparator()
-
-        refresh_action = QAction("&Refresh All", self)
-        refresh_action.triggered.connect(self._refresh_all_views)
-        view_menu.addAction(refresh_action)
-
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
 
         sku_mapping_action = QAction("SKU &Mapping", self)
         sku_mapping_action.triggered.connect(self.open_sku_mapping_dialog)
         tools_menu.addAction(sku_mapping_action)
-
-        session_monitor_action = QAction("Session &Monitor", self)
-        session_monitor_action.triggered.connect(self.open_session_monitor)
-        tools_menu.addAction(session_monitor_action)
 
     def _select_worker(self) -> bool:
         """Show worker selection dialog
@@ -388,16 +357,6 @@ class MainWindow(QMainWindow):
                 f"Failed to load worker profiles:\n{str(e)}\n\nApplication will exit."
             )
             return False
-
-    def _refresh_all_views(self):
-        """Refresh all dashboard and history views."""
-        try:
-            self.dashboard_widget.refresh()
-            self.history_widget.refresh()
-            QMessageBox.information(self, "Refresh Complete", "All views have been refreshed")
-        except Exception as e:
-            logger.error(f"Error refreshing views: {e}")
-            QMessageBox.warning(self, "Refresh Error", f"Failed to refresh views: {e}")
 
     def _update_dashboard(self):
         """Update the statistics dashboard with the latest data."""
@@ -457,10 +416,6 @@ class MainWindow(QMainWindow):
                     logger.info(f"Restored last selected client: {last_client}")
 
             logger.info(f"Loaded {len(clients)} clients")
-
-            # Phase 1.3: Load clients into dashboard and history widgets
-            self.dashboard_widget.load_clients(clients)
-            self.history_widget.load_clients(clients)
 
         except Exception as e:
             logger.error(f"Error loading clients: {e}", exc_info=True)
@@ -682,6 +637,25 @@ class MainWindow(QMainWindow):
                         f"Mappings saved successfully but failed to reload into current session:\n\n{e}\n\n"
                         f"Please restart the session to use new mappings."
                     )
+
+    def _start_heartbeat_timer(self):
+        """Start timer to update session lock heartbeat."""
+        if hasattr(self, 'heartbeat_timer'):
+            self.heartbeat_timer.stop()
+
+        self.heartbeat_timer = QTimer(self)
+        self.heartbeat_timer.timeout.connect(self._update_session_heartbeat)
+        self.heartbeat_timer.start(60000)  # 60 seconds
+        logger.debug("Heartbeat timer started")
+
+    def _update_session_heartbeat(self):
+        """Update heartbeat for active session lock."""
+        if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
+            try:
+                self.lock_manager.update_heartbeat(str(self.current_work_dir))
+                logger.debug("Lock heartbeat updated")
+            except Exception as e:
+                logger.error(f"Failed to update heartbeat: {e}")
 
     def end_session(self):
         """
@@ -932,6 +906,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")
             logger.error(f"Error during end_session: {e}")
+
+        # ✅ CRITICAL: Stop heartbeat timer and release lock
+        if hasattr(self, 'heartbeat_timer'):
+            self.heartbeat_timer.stop()
+            logger.debug("Heartbeat timer stopped")
+
+        if hasattr(self, 'current_work_dir') and self.current_work_dir:
+            try:
+                self.lock_manager.release_lock(str(self.current_work_dir))
+                logger.info("Lock released")
+            except Exception as e:
+                logger.error(f"Failed to release lock: {e}")
 
         # Cleanup PackerLogic state
         if self.logic:
@@ -1496,6 +1482,34 @@ class MainWindow(QMainWindow):
 
             logger.info(f"Work directory created via SessionManager: {work_dir}")
 
+            # ✅ CRITICAL: Acquire lock before initializing PackerLogic
+            # Check if this is a resume (existing packing_state.json)
+            is_resume = (work_dir / "packing_state.json").exists()
+
+            if not is_resume:
+                try:
+                    self.lock_manager.acquire_lock(str(work_dir))
+                    logger.info(f"Lock acquired for work directory: {work_dir}")
+                except SessionLockedError as e:
+                    QMessageBox.warning(self, "Session Locked", str(e))
+                    return
+            else:
+                # Resume: try to acquire lock, handle stale locks
+                try:
+                    self.lock_manager.acquire_lock(str(work_dir))
+                    logger.info(f"Lock re-acquired for resumed session: {work_dir}")
+                except StaleLockError:
+                    reply = QMessageBox.question(
+                        self, "Stale Lock Detected",
+                        "Previous session appears crashed. Force-release lock and continue?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        self.lock_manager.force_release(str(work_dir))
+                        self.lock_manager.acquire_lock(str(work_dir))
+                    else:
+                        return
+
             # Step 4: Create PackerLogic instance with unified work_dir
             # PackerLogic will create barcodes/ and reports/ subdirectories
             self.logic = PackerLogic(
@@ -1506,6 +1520,9 @@ class MainWindow(QMainWindow):
 
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)
+
+            # ✅ ADD: Start heartbeat timer
+            self._start_heartbeat_timer()
 
             # Step 5: Load data based on mode
             if load_mode == "packing_list":
@@ -1660,25 +1677,6 @@ class MainWindow(QMainWindow):
         )
 
         logger.info("Packing mode UI enabled successfully")
-
-    def open_session_monitor(self):
-        """Open the session monitor window."""
-        logger.info("Opening session monitor")
-
-        monitor_dialog = QDialog(self)
-        monitor_dialog.setWindowTitle("Active Sessions Monitor")
-        monitor_dialog.setMinimumSize(800, 400)
-
-        layout = QVBoxLayout(monitor_dialog)
-
-        monitor_widget = SessionMonitorWidget(self.lock_manager)
-        layout.addWidget(monitor_widget)
-
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(monitor_dialog.close)
-        layout.addWidget(close_button)
-
-        monitor_dialog.exec()
 
     def open_session_browser(self):
         """Open Session Browser dialog."""
@@ -1837,6 +1835,33 @@ class MainWindow(QMainWindow):
 
             logger.info(f"Work directory created: {work_dir}")
 
+            # ✅ CRITICAL: Acquire lock before initializing PackerLogic
+            is_resume = (work_dir / "packing_state.json").exists()
+
+            if not is_resume:
+                try:
+                    self.lock_manager.acquire_lock(str(work_dir))
+                    logger.info(f"Lock acquired for work directory: {work_dir}")
+                except SessionLockedError as e:
+                    QMessageBox.warning(self, "Session Locked", str(e))
+                    return
+            else:
+                # Resume: try to acquire lock, handle stale locks
+                try:
+                    self.lock_manager.acquire_lock(str(work_dir))
+                    logger.info(f"Lock re-acquired for resumed session: {work_dir}")
+                except StaleLockError:
+                    reply = QMessageBox.question(
+                        self, "Stale Lock Detected",
+                        "Previous session appears crashed. Force-release lock and continue?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        self.lock_manager.force_release(str(work_dir))
+                        self.lock_manager.acquire_lock(str(work_dir))
+                    else:
+                        return
+
             # Create PackerLogic instance
             self.logic = PackerLogic(
                 client_id=client_id,
@@ -1846,6 +1871,9 @@ class MainWindow(QMainWindow):
 
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)
+
+            # ✅ ADD: Start heartbeat timer
+            self._start_heartbeat_timer()
 
             # Load packing list JSON
             logger.info(f"Loading packing list from: {list_file}")
