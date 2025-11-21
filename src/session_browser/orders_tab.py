@@ -36,6 +36,7 @@ class OrdersTab(QWidget):
         # Try session_summary first (Phase 2b data with full timing)
         if 'session_summary' in self.details:
             self.all_orders = self.details['session_summary'].get('orders', [])
+            logger.debug(f"Loaded {len(self.all_orders)} orders from session_summary")
             return
 
         # Fallback: Try packing_state (less detailed)

@@ -335,7 +335,8 @@ class SessionDetailsDialog(QDialog):
                 try:
                     with open(summary_file, 'r', encoding='utf-8') as f:
                         session_summary = json.load(f)
-                        logger.info(f"Loaded session_summary.json for session {data.get('session_id')}")
+                        orders_count = len(session_summary.get('orders', []))
+                        logger.info(f"Loaded session_summary.json for session {data.get('session_id')} with {orders_count} orders")
 
                         # Update record with worker info from session_summary if available
                         if 'worker_id' in session_summary:
