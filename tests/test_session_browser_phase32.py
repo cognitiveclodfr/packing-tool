@@ -48,7 +48,7 @@ class TestAvailableSessionsTab(unittest.TestCase):
 
         # Mock managers
         self.mock_profile_manager = Mock()
-        self.mock_profile_manager.get_server_path.return_value = self.temp_dir
+        self.mock_profile_manager.get_sessions_root.return_value = self.sessions_base
         self.mock_profile_manager.list_clients.return_value = ['M', 'K']
 
         self.mock_session_manager = Mock()
@@ -60,6 +60,7 @@ class TestAvailableSessionsTab(unittest.TestCase):
 
     def _create_test_packing_list(self, client_id, session_id, list_name, total_orders=10, total_items=35):
         """Helper to create a test packing list."""
+        # sessions_base already points to Sessions/ directory
         session_dir = self.sessions_base / f"CLIENT_{client_id}" / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 

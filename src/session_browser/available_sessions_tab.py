@@ -108,7 +108,12 @@ class AvailableSessionsTab(QWidget):
         available_lists = []
         selected_client = self.client_combo.currentData()
 
-        sessions_base = self.profile_manager.get_server_path() / "Sessions"
+        # Get Sessions base path
+        try:
+            sessions_base = self.profile_manager.get_sessions_root()
+        except Exception as e:
+            logger.error(f"Failed to get sessions root: {e}")
+            return []
 
         if not sessions_base.exists():
             logger.info(f"Sessions directory not found: {sessions_base}")
