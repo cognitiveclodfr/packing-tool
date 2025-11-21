@@ -97,28 +97,8 @@ def mock_stats_manager():
         yield mock_stats
 
 @pytest.fixture
-def mock_widgets():
-    """Mock dashboard and history widgets to avoid initialization issues."""
-    from PySide6.QtWidgets import QWidget
-
-    with patch('main.DashboardWidget') as mock_dashboard, \
-         patch('main.SessionHistoryWidget') as mock_history:
-        # Create real QWidget instances instead of Mocks
-        dashboard_instance = QWidget()
-        # Add load_clients method as a spy
-        dashboard_instance.load_clients = Mock()
-        mock_dashboard.return_value = dashboard_instance
-
-        history_instance = QWidget()
-        # Add load_clients method as a spy
-        history_instance.load_clients = Mock()
-        mock_history.return_value = history_instance
-
-        yield mock_dashboard, mock_history
-
-@pytest.fixture
 def app_basic(qtbot, test_excel_file_basic, mock_profile_manager, mock_session_lock_manager,
-              mock_stats_manager, mock_widgets, tmp_path):
+              mock_stats_manager, tmp_path):
     """App fixture using the basic test file."""
     with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
          patch('main.SessionManager') as mock_session_mgr_class, \

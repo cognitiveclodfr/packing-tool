@@ -181,8 +181,6 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
 
-        self._update_dashboard()
-
         # Load available clients and restore last selected
         self.load_available_clients()
 
@@ -222,23 +220,7 @@ class MainWindow(QMainWindow):
 
         client_selection_layout.addStretch()
 
-        # Dashboard
-        dashboard_widget = QWidget()
-        dashboard_widget.setObjectName("Dashboard")
-        dashboard_layout = QHBoxLayout(dashboard_widget)
-        main_layout.addWidget(dashboard_widget)
-
-        self.total_orders_label = QLabel("Total Unique Orders: 0")
-        self.completed_label = QLabel("Total Completed: 0")
-
-        for label in [self.total_orders_label, self.completed_label]:
-            label.setAlignment(Qt.AlignCenter)
-            font = label.font()
-            font.setPointSize(14)
-            font.setBold(True)
-            label.setFont(font)
-            dashboard_layout.addWidget(label)
-
+        # Control panel (stats display removed)
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel)
         main_layout.addWidget(control_panel)
@@ -357,22 +339,6 @@ class MainWindow(QMainWindow):
                 f"Failed to load worker profiles:\n{str(e)}\n\nApplication will exit."
             )
             return False
-
-    def _update_dashboard(self):
-        """Update the statistics dashboard with the latest data."""
-        # Phase 1.4: Use unified StatsManager API
-        global_stats = self.stats_manager.get_global_stats()
-        total_packed = global_stats.get('total_orders_packed', 0)
-
-        # Get client-specific stats if client is selected
-        if self.current_client_id:
-            client_stats = self.stats_manager.get_client_stats(self.current_client_id)
-            client_packed = client_stats.get('orders_packed', 0)
-            self.total_orders_label.setText(f"Total Orders Packed: {total_packed}")
-            self.completed_label.setText(f"Client {self.current_client_id} Orders: {client_packed}")
-        else:
-            self.total_orders_label.setText(f"Total Orders Packed: {total_packed}")
-            self.completed_label.setText(f"Total Sessions: {global_stats.get('total_sessions', 0)}")
 
     # ========================================================================
     # CLIENT MANAGEMENT (NEW)
@@ -652,7 +618,8 @@ class MainWindow(QMainWindow):
         """Update heartbeat for active session lock."""
         if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                self.lock_manager.update_heartbeat(str(self.current_work_dir))
+                from pathlib import Path
+                self.lock_manager.update_heartbeat(Path(self.current_work_dir))
                 logger.debug("Lock heartbeat updated")
             except Exception as e:
                 logger.error(f"Failed to update heartbeat: {e}")
@@ -914,7 +881,8 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                self.lock_manager.release_lock(str(self.current_work_dir))
+                from pathlib import Path
+                self.lock_manager.release_lock(Path(self.current_work_dir))
                 logger.info("Lock released")
             except Exception as e:
                 logger.error(f"Failed to release lock: {e}")
@@ -1014,9 +982,6 @@ class MainWindow(QMainWindow):
             order_count = self.logic.process_data_and_generate_barcodes(mapping)
 
             self.setup_order_table()
-
-            # Phase 1.4: No need to record new orders - only record at session completion
-            self._update_dashboard()
 
             self.status_label.setText(f"Successfully processed {order_count} orders for session '{session_id}'.")
             self.start_session_button.setEnabled(False)
@@ -1486,29 +1451,40 @@ class MainWindow(QMainWindow):
             # Check if this is a resume (existing packing_state.json)
             is_resume = (work_dir / "packing_state.json").exists()
 
-            if not is_resume:
-                try:
-                    self.lock_manager.acquire_lock(str(work_dir))
-                    logger.info(f"Lock acquired for work directory: {work_dir}")
-                except SessionLockedError as e:
-                    QMessageBox.warning(self, "Session Locked", str(e))
-                    return
-            else:
-                # Resume: try to acquire lock, handle stale locks
-                try:
-                    self.lock_manager.acquire_lock(str(work_dir))
-                    logger.info(f"Lock re-acquired for resumed session: {work_dir}")
-                except StaleLockError:
+            success, error_msg = self.lock_manager.acquire_lock(
+                self.current_client_id,
+                work_dir,
+                worker_id=self.current_worker_id,
+                worker_name=self.current_worker_name
+            )
+
+            if not success:
+                # Check if stale lock (error message contains "stale" keyword)
+                if error_msg and "stale" in error_msg.lower():
                     reply = QMessageBox.question(
                         self, "Stale Lock Detected",
-                        "Previous session appears crashed. Force-release lock and continue?",
+                        f"{error_msg}\n\nForce-release lock and continue?",
                         QMessageBox.Yes | QMessageBox.No
                     )
                     if reply == QMessageBox.Yes:
-                        self.lock_manager.force_release(str(work_dir))
-                        self.lock_manager.acquire_lock(str(work_dir))
+                        self.lock_manager.force_release_lock(work_dir)
+                        success, error_msg = self.lock_manager.acquire_lock(
+                            self.current_client_id,
+                            work_dir,
+                            worker_id=self.current_worker_id,
+                            worker_name=self.current_worker_name
+                        )
+                        if not success:
+                            QMessageBox.warning(self, "Lock Failed", f"Failed to acquire lock: {error_msg}")
+                            return
                     else:
                         return
+                else:
+                    # Active lock by another user
+                    QMessageBox.warning(self, "Session Locked", error_msg or "Session is locked by another user")
+                    return
+
+            logger.info(f"Lock acquired for work directory: {work_dir}")
 
             # Step 4: Create PackerLogic instance with unified work_dir
             # PackerLogic will create barcodes/ and reports/ subdirectories
@@ -1838,29 +1814,40 @@ class MainWindow(QMainWindow):
             # ✅ CRITICAL: Acquire lock before initializing PackerLogic
             is_resume = (work_dir / "packing_state.json").exists()
 
-            if not is_resume:
-                try:
-                    self.lock_manager.acquire_lock(str(work_dir))
-                    logger.info(f"Lock acquired for work directory: {work_dir}")
-                except SessionLockedError as e:
-                    QMessageBox.warning(self, "Session Locked", str(e))
-                    return
-            else:
-                # Resume: try to acquire lock, handle stale locks
-                try:
-                    self.lock_manager.acquire_lock(str(work_dir))
-                    logger.info(f"Lock re-acquired for resumed session: {work_dir}")
-                except StaleLockError:
+            success, error_msg = self.lock_manager.acquire_lock(
+                client_id,
+                work_dir,
+                worker_id=self.current_worker_id,
+                worker_name=self.current_worker_name
+            )
+
+            if not success:
+                # Check if stale lock (error message contains "stale" keyword)
+                if error_msg and "stale" in error_msg.lower():
                     reply = QMessageBox.question(
                         self, "Stale Lock Detected",
-                        "Previous session appears crashed. Force-release lock and continue?",
+                        f"{error_msg}\n\nForce-release lock and continue?",
                         QMessageBox.Yes | QMessageBox.No
                     )
                     if reply == QMessageBox.Yes:
-                        self.lock_manager.force_release(str(work_dir))
-                        self.lock_manager.acquire_lock(str(work_dir))
+                        self.lock_manager.force_release_lock(work_dir)
+                        success, error_msg = self.lock_manager.acquire_lock(
+                            client_id,
+                            work_dir,
+                            worker_id=self.current_worker_id,
+                            worker_name=self.current_worker_name
+                        )
+                        if not success:
+                            QMessageBox.warning(self, "Lock Failed", f"Failed to acquire lock: {error_msg}")
+                            return
                     else:
                         return
+                else:
+                    # Active lock by another user
+                    QMessageBox.warning(self, "Session Locked", error_msg or "Session is locked by another user")
+                    return
+
+            logger.info(f"Lock acquired for work directory: {work_dir}")
 
             # Create PackerLogic instance
             self.logic = PackerLogic(
