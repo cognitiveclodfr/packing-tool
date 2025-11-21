@@ -90,6 +90,34 @@ All notable changes to Packing Tool will be documented in this file.
 
 ### 🔧 Fixed
 
+**Priority 2 - Lock, Resume, and Cleanup Fixes:**
+- **CRITICAL: Lock Creation for Shopify Sessions**: Fixed missing lock files for Shopify workflow
+  - Added lock acquisition in `open_shopify_session()` after work_dir creation
+  - Added lock acquisition in `_handle_start_packing_from_browser()` for Session Browser integration
+  - Implemented heartbeat timer (60s interval) to keep locks alive during active sessions
+  - Lock properly released in `end_session()` with heartbeat timer cleanup
+  - Handles both new sessions and resume scenarios with stale lock detection
+  - Prevents concurrent access to same packing list across multiple PCs
+- **Session Resume Metadata Restoration**: Fixed lost timing data on session resume
+  - Restored `completed_orders_metadata` array when loading session state
+  - Phase 2b timing data (order durations, item scan times) now preserved across resume
+  - Removed duplicate restoration code for cleaner logic
+  - Graceful fallback for old format sessions without timing data
+- **UI Cleanup - Removed Deprecated Widgets**:
+  - Deleted `dashboard_widget.py` (replaced by Session Browser)
+  - Deleted `session_history_widget.py` (replaced by Session Browser Completed tab)
+  - Deleted `session_monitor_widget.py` (replaced by Session Browser Active tab)
+  - Removed all references and menu items for deprecated widgets
+  - Cleaned up client loading code that referenced removed widgets
+- **Worker Display Enhancement**: Improved Completed Sessions tab worker column
+  - Now shows "worker_id (worker_name)" format when available
+  - Graceful fallback to PC name for old sessions without worker info
+  - Better visibility of who completed each session
+- **Session Browser Auto-Refresh**: Added automatic refresh every 30 seconds
+  - Keeps session data up-to-date without manual refresh
+  - Timer properly stopped on browser close
+  - Improves multi-PC warehouse workflow visibility
+
 **Session Browser Critical Issues:**
 - **Active Sessions Filter**: Fixed completed lists appearing in Active tab
   - Added session_summary.json check to skip completed packing lists
