@@ -49,8 +49,15 @@ class OverviewTab(QWidget):
             session_form.addRow("Packing List:", QLabel(list_name))
 
             # Worker
-            worker = record.get('worker_id') or "Unknown"
-            session_form.addRow("Worker:", QLabel(worker))
+            worker_name = record.get('worker_name', '')
+            worker_id = record.get('worker_id', '')
+            if worker_name:
+                worker_display = f"{worker_name} ({worker_id})" if worker_id else worker_name
+            elif worker_id:
+                worker_display = worker_id
+            else:
+                worker_display = "Unknown"
+            session_form.addRow("Worker:", QLabel(worker_display))
 
             # PC
             pc = record.get('pc_name') or "Unknown"

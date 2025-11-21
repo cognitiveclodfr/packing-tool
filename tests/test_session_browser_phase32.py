@@ -179,20 +179,22 @@ class TestSessionDetailsDialog(unittest.TestCase):
         # Mock session history manager
         self.mock_history_manager = Mock()
 
-        # Create mock session record
-        self.mock_record = Mock()
-        self.mock_record.session_id = '2025-11-20_1'
-        self.mock_record.client_id = 'M'
-        self.mock_record.packing_list_path = '/path/to/DHL_Orders.json'
-        self.mock_record.worker_id = 'W001'
-        self.mock_record.pc_name = 'PC-001'
-        self.mock_record.start_time = None
-        self.mock_record.end_time = None
-        self.mock_record.duration_seconds = 1200
-        self.mock_record.total_orders = 10
-        self.mock_record.completed_orders = 10
-        self.mock_record.in_progress_orders = 0
-        self.mock_record.total_items_packed = 35
+        # Create mock session record (as dict, not Mock object)
+        self.mock_record = {
+            'session_id': '2025-11-20_1',
+            'client_id': 'M',
+            'packing_list_path': '/path/to/DHL_Orders.json',
+            'worker_id': 'W001',
+            'worker_name': 'John Doe',
+            'pc_name': 'PC-001',
+            'start_time': None,
+            'end_time': None,
+            'duration_seconds': 1200,
+            'total_orders': 10,
+            'completed_orders': 10,
+            'in_progress_orders': 0,
+            'total_items_packed': 35
+        }
 
         # Mock session details
         self.mock_details = {
@@ -284,19 +286,21 @@ class TestOverviewTab(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Create mock session record
-        self.mock_record = Mock()
-        self.mock_record.session_id = '2025-11-20_1'
-        self.mock_record.client_id = 'M'
-        self.mock_record.packing_list_path = '/path/to/DHL_Orders.json'
-        self.mock_record.worker_id = 'W001'
-        self.mock_record.pc_name = 'PC-001'
-        self.mock_record.start_time = None
-        self.mock_record.end_time = None
-        self.mock_record.duration_seconds = 1200
-        self.mock_record.total_orders = 10
-        self.mock_record.completed_orders = 10
-        self.mock_record.in_progress_orders = 0
-        self.mock_record.total_items_packed = 35
+        self.mock_record = {
+            'session_id': '2025-11-20_1',
+            'client_id': 'M',
+            'packing_list_path': '/path/to/DHL_Orders.json',
+            'worker_id': 'W001',
+            'worker_name': 'John Doe',
+            'pc_name': 'PC-001',
+            'start_time': None,
+            'end_time': None,
+            'duration_seconds': 1200,
+            'total_orders': 10,
+            'completed_orders': 10,
+            'in_progress_orders': 0,
+            'total_items_packed': 35
+        }
 
         self.mock_details = {'record': self.mock_record}
 

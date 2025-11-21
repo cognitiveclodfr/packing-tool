@@ -55,7 +55,90 @@ class SessionDetailsDialog(QDialog):
         session_id = self.session_data['session_id']
         work_dir = self.session_data.get('work_dir')
 
-        # Try to load using SessionHistoryManager first
+        # If work_dir specified explicitly, use it directly
+        if work_dir:
+            work_dir_path = Path(work_dir)
+
+            # Load packing_state.json for basic info
+            state_file = work_dir_path / "packing_state.json"
+            packing_state = {}
+            if state_file.exists():
+                try:
+                    with open(state_file, 'r', encoding='utf-8') as f:
+                        packing_state = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load packing_state.json: {e}")
+
+            # Load session_summary.json for Phase 2b data
+            summary_file = work_dir_path / "session_summary.json"
+            session_summary = {}
+            if summary_file.exists():
+                try:
+                    with open(summary_file, 'r', encoding='utf-8') as f:
+                        session_summary = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load session_summary.json: {e}")
+
+            # Load session_info.json for metadata
+            info_file = work_dir_path / "session_info.json"
+            session_info = {}
+            if info_file.exists():
+                try:
+                    with open(info_file, 'r', encoding='utf-8') as f:
+                        session_info = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load session_info.json: {e}")
+
+            # Build record from available data
+            # Prefer session_summary, fallback to packing_state
+            if session_summary:
+                record = {
+                    'session_id': session_summary.get('session_id', session_id),
+                    'client_id': session_summary.get('client_id', client_id),
+                    'packing_list_path': session_summary.get('packing_list_path', ''),
+                    'packing_list_name': session_summary.get('packing_list_name', ''),
+                    'worker_id': session_summary.get('worker_id', ''),
+                    'worker_name': session_summary.get('worker_name', ''),
+                    'pc_name': session_summary.get('pc_name', ''),
+                    'start_time': session_summary.get('started_at', ''),
+                    'end_time': session_summary.get('completed_at', ''),
+                    'duration_seconds': session_summary.get('duration_seconds', 0),
+                    'total_orders': session_summary.get('total_orders', 0),
+                    'completed_orders': session_summary.get('completed_orders', 0),
+                    'in_progress_orders': 0,
+                    'total_items_packed': session_summary.get('total_items', 0)
+                }
+            elif session_info:
+                record = {
+                    'session_id': session_info.get('session_id', session_id),
+                    'client_id': session_info.get('client_id', client_id),
+                    'packing_list_path': session_info.get('packing_list_path', ''),
+                    'packing_list_name': session_info.get('packing_list_name', ''),
+                    'worker_id': session_info.get('worker_id', ''),
+                    'worker_name': session_info.get('worker_name', ''),
+                    'pc_name': session_info.get('pc_name', ''),
+                    'start_time': session_info.get('started_at', ''),
+                    'end_time': None,
+                    'duration_seconds': 0,
+                    'total_orders': packing_state.get('total_orders', 0),
+                    'completed_orders': len(packing_state.get('completed', [])),
+                    'in_progress_orders': len(packing_state.get('in_progress', [])),
+                    'total_items_packed': sum(o.get('items_count', 0) for o in packing_state.get('completed', []))
+                }
+            else:
+                raise ValueError(f"No valid session data found in work_dir: {work_dir}")
+
+            self.details = {
+                'record': record,
+                'packing_state': packing_state,
+                'session_info': session_info,
+                'session_summary': session_summary
+            }
+
+            logger.info(f"Loaded session details from work_dir: {work_dir}")
+            return
+
+        # If no work_dir, try to load using SessionHistoryManager
         self.details = self.session_history_manager.get_session_details(
             client_id=client_id,
             session_id=session_id
@@ -63,20 +146,6 @@ class SessionDetailsDialog(QDialog):
 
         if not self.details:
             raise ValueError(f"Session not found: {session_id}")
-
-        # If work_dir specified, load session_summary.json directly for Phase 2b data
-        if work_dir:
-            summary_file = Path(work_dir) / "session_summary.json"
-            if summary_file.exists():
-                try:
-                    with open(summary_file, 'r', encoding='utf-8') as f:
-                        summary_data = json.load(f)
-
-                    # Merge with details
-                    self.details['session_summary'] = summary_data
-
-                except Exception as e:
-                    logger.warning(f"Failed to load session_summary.json: {e}")
 
     def _init_ui(self):
         """Initialize UI."""
