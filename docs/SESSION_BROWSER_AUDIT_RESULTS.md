@@ -981,4 +981,45 @@ The most impactful fix is **Priority 2 #5: Multiple packing lists support**, as 
 
 ---
 
+## FIX STATUS UPDATE
+
+**Date:** 2025-11-21
+**Branch:** claude/fix-session-browser-issues-017fdwxZBMQmAshfxR7xej9r
+
+### Issues FIXED ✅
+
+**Issue #1: Active Sessions Filter**
+- Status: ✅ FIXED
+- File: `src/session_browser/active_sessions_tab.py`
+- Change: Added session_summary.json check at line 146-150
+- Result: Completed packing lists no longer appear in Active Sessions tab
+
+**Issue #2: Completed Sessions Multiple Lists**
+- Status: ✅ FIXED
+- File: `src/session_history_manager.py`
+- Changes:
+  - Modified `_parse_session_directory()` to return List[SessionHistoryRecord] instead of single record
+  - Removed early returns that stopped after first packing list
+  - Updated `get_client_sessions()` to handle multiple records per session
+- Result: Sessions with 3 packing lists now show 3 separate records in Completed Sessions tab
+
+**Issue #3: View Details Data Consistency**
+- Status: ✅ FIXED
+- Files:
+  - `src/session_browser/active_sessions_tab.py` - Standardized session_data structure
+  - `src/session_browser/completed_sessions_tab.py` - Standardized session_data structure
+  - `src/session_browser/session_details_dialog.py` - Added helper methods to handle both formats
+- Result: SessionDetailsDialog now handles both active and completed session data consistently
+
+**Issue #4: Test Failures**
+- Status: ✅ FIXED
+- Files:
+  - `tests/test_session_browser_phase32.py` - Fixed dict access (line 257)
+  - `tests/test_state_persistence.py` - Added timing metadata population (lines 316-349)
+- Result: Tests now properly verify Phase 2b timing metrics
+
+**All Priority 1 fixes completed successfully!**
+
+---
+
 **End of Audit Report**
