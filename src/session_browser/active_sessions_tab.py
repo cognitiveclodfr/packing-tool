@@ -143,6 +143,12 @@ class ActiveSessionsTab(QWidget):
 
                     packing_list_name = work_dir.name
 
+                    # Skip completed packing lists (those with session_summary.json)
+                    summary_file = work_dir / "session_summary.json"
+                    if summary_file.exists():
+                        logger.debug(f"Skipping completed list: {packing_list_name}")
+                        continue  # Skip completed packing lists
+
                     # Check for lock or session_info
                     # Note: Lock file is in session_dir, not work_dir
                     is_locked, lock_info = self.session_lock_manager.is_locked(session_dir)

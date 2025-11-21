@@ -160,27 +160,28 @@ class SessionHistoryManager:
 
                 logger.debug(f"Parsing session directory: {session_dir.name}")
                 try:
-                    record = self._parse_session_directory(client_id, session_dir)
+                    records = self._parse_session_directory(client_id, session_dir)
 
-                    if record is None:
-                        logger.debug(f"Skipping session {session_dir.name}: _parse_session_directory returned None")
+                    if not records:
+                        logger.debug(f"Skipping session {session_dir.name}: _parse_session_directory returned empty list")
                         continue
 
-                    # Apply filters
-                    if not include_incomplete and record.in_progress_orders > 0:
-                        logger.debug(f"Skipping incomplete session: {session_dir.name}")
-                        continue
+                    # Apply filters to each record
+                    for record in records:
+                        if not include_incomplete and record.in_progress_orders > 0:
+                            logger.debug(f"Skipping incomplete packing list in session: {session_dir.name}")
+                            continue
 
-                    if start_date and record.start_time and record.start_time < start_date:
-                        logger.debug(f"Skipping session {session_dir.name}: before start_date")
-                        continue
+                        if start_date and record.start_time and record.start_time < start_date:
+                            logger.debug(f"Skipping session {session_dir.name}: before start_date")
+                            continue
 
-                    if end_date and record.start_time and record.start_time > end_date:
-                        logger.debug(f"Skipping session {session_dir.name}: after end_date")
-                        continue
+                        if end_date and record.start_time and record.start_time > end_date:
+                            logger.debug(f"Skipping session {session_dir.name}: after end_date")
+                            continue
 
-                    logger.debug(f"Adding session {session_dir.name} to results")
-                    sessions.append(record)
+                        logger.debug(f"Adding session {session_dir.name} to results")
+                        sessions.append(record)
 
                 except Exception as e:
                     logger.warning(f"Error parsing session {session_dir.name}: {e}", exc_info=True)
@@ -203,22 +204,23 @@ class SessionHistoryManager:
         self,
         client_id: str,
         session_dir: Path
-    ) -> Optional[SessionHistoryRecord]:
+    ) -> List[SessionHistoryRecord]:
         """
-        Parse a session directory and extract metrics.
+        Parse a session directory and extract metrics for all packing lists.
 
         Supports both:
-        - Phase 1 (Shopify): packing/*/packing_state.json
-        - Legacy (Excel): barcodes/packing_state.json
+        - Phase 1 (Shopify): packing/*/packing_state.json (multiple lists)
+        - Legacy (Excel): barcodes/packing_state.json (single list)
 
         Args:
             client_id: Client identifier
             session_dir: Path to session directory
 
         Returns:
-            SessionHistoryRecord or None if parsing fails
+            List of SessionHistoryRecord objects (one per packing list), or empty list if parsing fails
         """
         session_id = session_dir.name
+        records = []
 
         # ========================================
         # PHASE 1 (Shopify) - Try first
@@ -238,13 +240,23 @@ class SessionHistoryManager:
                 summary_file = work_dir / "session_summary.json"
                 if summary_file.exists():
                     logger.info(f"Found session_summary.json in {session_id}/{work_dir.name}")
-                    return self._parse_session_summary(client_id, session_dir, summary_file)
+                    record = self._parse_session_summary(client_id, session_dir, summary_file)
+                    if record:
+                        records.append(record)
+                    continue  # Continue to next work_dir instead of returning
 
                 # Check for packing_state.json (in-progress or completed)
                 state_file = work_dir / "packing_state.json"
                 if state_file.exists():
                     logger.info(f"Found packing_state.json in {session_id}/{work_dir.name}")
-                    return self._parse_packing_state(client_id, session_dir, state_file)
+                    record = self._parse_packing_state(client_id, session_dir, state_file)
+                    if record:
+                        records.append(record)
+                    continue  # Continue to next work_dir instead of returning
+
+            if records:
+                logger.info(f"Found {len(records)} packing list(s) in Phase 1 structure for {session_id}")
+                return records
 
             logger.debug(f"No packing data found in Phase 1 structure for {session_id}")
 
@@ -255,19 +267,23 @@ class SessionHistoryManager:
         state_file = session_dir / "barcodes" / "packing_state.json"
         if state_file.exists():
             logger.info(f"Found Legacy Excel packing_state.json in {session_id}")
-            return self._parse_packing_state(client_id, session_dir, state_file)
+            record = self._parse_packing_state(client_id, session_dir, state_file)
+            if record:
+                return [record]
 
         # Check barcodes/session_summary.json (if exists)
         summary_file = session_dir / "barcodes" / "session_summary.json"
         if summary_file.exists():
             logger.info(f"Found Legacy Excel session_summary.json in {session_id}")
-            return self._parse_session_summary(client_id, session_dir, summary_file)
+            record = self._parse_session_summary(client_id, session_dir, summary_file)
+            if record:
+                return [record]
 
         # ========================================
         # NO PACKING DATA FOUND
         # ========================================
         logger.info(f"No packing data found for session {session_id} - session will be skipped")
-        return None
+        return []
 
     def _parse_session_summary(
         self,
@@ -621,8 +637,12 @@ class SessionHistoryManager:
             # Load session info
             session_info = self._load_session_info(session_dir)
 
-            # Get session record
-            record = self._parse_session_directory(client_id, session_dir)
+            # Get session records (may be multiple for multi-list sessions)
+            records = self._parse_session_directory(client_id, session_dir)
+
+            # For backward compatibility, return the first record
+            # TODO: Future enhancement - support selecting specific packing list
+            record = records[0] if records else None
 
             return {
                 'record': record.to_dict() if record else None,
