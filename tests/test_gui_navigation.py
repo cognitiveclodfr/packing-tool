@@ -145,22 +145,11 @@ Environment = test
         try:
             window = MainWindow()
 
-            # Check tabs exist
-            self.assertEqual(window.tab_widget.count(), 3)
+            # Check Session tab exists (Dashboard and History removed in Priority 2)
+            self.assertEqual(window.tab_widget.count(), 1)
             self.assertEqual(window.tab_widget.tabText(0), "Session")
-            self.assertEqual(window.tab_widget.tabText(1), "Dashboard")
-            self.assertEqual(window.tab_widget.tabText(2), "History")
 
-            # Switch to Dashboard
-            window.tab_widget.setCurrentIndex(1)
-            self.assertEqual(window.tab_widget.currentWidget(), window.dashboard_widget)
-
-            # Switch to History
-            window.tab_widget.setCurrentIndex(2)
-            self.assertEqual(window.tab_widget.currentWidget(), window.history_widget)
-
-            # Back to Session
-            window.tab_widget.setCurrentIndex(0)
+            # Verify current tab is Session
             self.assertEqual(window.tab_widget.currentWidget(), window.session_widget)
 
         finally:

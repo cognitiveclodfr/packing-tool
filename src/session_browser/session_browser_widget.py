@@ -8,7 +8,7 @@ Replaces old Restore Session dialog and Session Monitor.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QMessageBox
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer
 
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
@@ -59,6 +59,14 @@ class SessionBrowserWidget(QWidget):
 
         self._init_ui()
         self._connect_signals()
+
+        # ✅ ADD: Auto-refresh timer (30 seconds)
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_all)
+        self.refresh_timer.start(30000)  # 30 seconds
+        from logger import get_logger
+        logger = get_logger(__name__)
+        logger.debug("Auto-refresh enabled (30s interval)")
 
     def _init_ui(self):
         """Initialize UI components."""
@@ -147,3 +155,9 @@ class SessionBrowserWidget(QWidget):
 
         if tab_name in tab_map:
             self.tab_widget.setCurrentIndex(tab_map[tab_name])
+
+    def closeEvent(self, event):
+        """Stop refresh timer on close."""
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+        event.accept()

@@ -297,12 +297,31 @@ class PackerLogic(QObject):
                     self.session_packing_state['completed_orders'] = [
                         item['order_number'] for item in completed_list if 'order_number' in item
                     ]
+
+                    # ✅ CRITICAL: Restore timing metadata for Phase 2b
+                    self.completed_orders_metadata = []
+                    for item in completed_list:
+                        metadata = {
+                            'order_number': item['order_number'],
+                            'started_at': item.get('started_at'),
+                            'completed_at': item.get('completed_at'),
+                            'duration_seconds': item.get('duration_seconds', 0),
+                            'items_count': item.get('items_count', 0),
+                            'items': item.get('items', [])
+                        }
+                        self.completed_orders_metadata.append(metadata)
+
+                    logger.info(f"Restored {len(self.completed_orders_metadata)} orders with timing metadata")
                 else:
                     # Fallback if completed is just a list of strings
                     self.session_packing_state['completed_orders'] = completed_list
+                    self.completed_orders_metadata = []
+                    logger.debug("Loaded old format state (no timing metadata)")
             else:
                 # Old format: simple list of order numbers
                 self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
+                self.completed_orders_metadata = []
+                logger.debug("Old format: no timing metadata available")
 
             # Load metadata if present (new format)
             if 'session_id' in state_data:
@@ -311,19 +330,6 @@ class PackerLogic(QObject):
                 self.started_at = state_data.get('started_at')
                 # worker_pc is set from environment in __init__, but can be overridden from state
                 logger.debug(f"Loaded session metadata: {self.session_id}")
-
-            # Phase 2b: Restore completed orders metadata if present
-            if 'completed' in state_data:
-                completed_list = state_data['completed']
-
-                # Check if completed list has timing data (Phase 2b format)
-                if completed_list and len(completed_list) > 0 and isinstance(completed_list[0], dict) and 'started_at' in completed_list[0]:
-                    self.completed_orders_metadata = completed_list
-                    logger.debug(f"Restored {len(completed_list)} completed orders with timing")
-                else:
-                    # Old format or empty
-                    self.completed_orders_metadata = []
-                    logger.debug("No timing data in completed orders (old format or empty)")
 
             # Phase 2b: Restore in-progress timing if present
             if 'in_progress' in state_data and '_timing' in state_data['in_progress']:
