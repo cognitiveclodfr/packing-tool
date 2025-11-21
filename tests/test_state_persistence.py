@@ -313,6 +313,41 @@ class TestSessionSummaryGeneration(unittest.TestCase):
         # Complete 4 out of 5 orders
         packer.session_packing_state['completed_orders'] = ['ORDER-1', 'ORDER-2', 'ORDER-3', 'ORDER-4']
 
+        # Populate timing metadata (Phase 2b) for avg_time_per_order calculation
+        import time
+        base_timestamp = start_time.timestamp()
+
+        packer.completed_orders_metadata = [
+            {
+                'order_number': 'ORDER-1',
+                'started_at': datetime.fromtimestamp(base_timestamp, tz=timezone.utc).isoformat(),
+                'completed_at': datetime.fromtimestamp(base_timestamp + 900, tz=timezone.utc).isoformat(),
+                'duration_seconds': 900,
+                'items': []
+            },
+            {
+                'order_number': 'ORDER-2',
+                'started_at': datetime.fromtimestamp(base_timestamp + 900, tz=timezone.utc).isoformat(),
+                'completed_at': datetime.fromtimestamp(base_timestamp + 1800, tz=timezone.utc).isoformat(),
+                'duration_seconds': 900,
+                'items': []
+            },
+            {
+                'order_number': 'ORDER-3',
+                'started_at': datetime.fromtimestamp(base_timestamp + 1800, tz=timezone.utc).isoformat(),
+                'completed_at': datetime.fromtimestamp(base_timestamp + 2700, tz=timezone.utc).isoformat(),
+                'duration_seconds': 900,
+                'items': []
+            },
+            {
+                'order_number': 'ORDER-4',
+                'started_at': datetime.fromtimestamp(base_timestamp + 2700, tz=timezone.utc).isoformat(),
+                'completed_at': datetime.fromtimestamp(base_timestamp + 3600, tz=timezone.utc).isoformat(),
+                'duration_seconds': 900,
+                'items': []
+            },
+        ]
+
         # Mock current time to be 1 hour after start (3600 seconds)
         # Mock get_current_timestamp to return time 1 hour later
         end_time = start_time.replace(hour=15)  # 1 hour later
