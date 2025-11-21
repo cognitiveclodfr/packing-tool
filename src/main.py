@@ -1032,7 +1032,11 @@ class MainWindow(QMainWindow):
                 order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
             elif order_number in in_progress_orders:
                 order_state = in_progress_orders[order_number]
-                total_packed = sum(s['packed'] for s in order_state.values())
+                # Handle both list format (current) and dict format (legacy)
+                if isinstance(order_state, list):
+                    total_packed = sum(s['packed'] for s in order_state)
+                else:
+                    total_packed = sum(s['packed'] for s in order_state.values())
                 order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {int(total_required)}"
                 if total_packed > 0:
                     order_summary.at[index, 'Status'] = 'In Progress'

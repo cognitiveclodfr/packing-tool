@@ -205,7 +205,7 @@ def app_basic(qtbot, test_excel_file_basic, mock_profile_manager, mock_session_l
 
 @pytest.fixture
 def app_duplicates(qtbot, test_excel_file_duplicates, mock_profile_manager, mock_session_lock_manager,
-                   mock_stats_manager, mock_widgets, tmp_path):
+                   mock_stats_manager, tmp_path):
     """App fixture using the test file with duplicate SKUs."""
     with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog, \
          patch('main.SessionManager') as mock_session_mgr_class, \

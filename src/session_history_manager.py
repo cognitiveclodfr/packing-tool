@@ -31,6 +31,8 @@ class SessionHistoryRecord:
         completed_orders: Number of completed orders
         in_progress_orders: Number of in-progress orders
         total_items_packed: Total number of items packed
+        worker_id: Worker ID who completed the session (e.g., "worker_001")
+        worker_name: Worker display name (e.g., "Dolphin")
         pc_name: Computer name where session was executed
         packing_list_path: Original packing list file path
         session_path: Full path to session directory
@@ -44,9 +46,11 @@ class SessionHistoryRecord:
     completed_orders: int
     in_progress_orders: int
     total_items_packed: int
-    pc_name: Optional[str]
-    packing_list_path: Optional[str]
-    session_path: str
+    worker_id: Optional[str] = None
+    worker_name: Optional[str] = None
+    pc_name: Optional[str] = None
+    packing_list_path: Optional[str] = None
+    session_path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with datetime objects as ISO strings."""
@@ -330,6 +334,8 @@ class SessionHistoryManager:
                 completed_orders=summary.get('completed_orders', 0),
                 in_progress_orders=0,  # No longer tracked in v1.3.0
                 total_items_packed=summary.get('total_items', 0),
+                worker_id=summary.get('worker_id'),
+                worker_name=summary.get('worker_name'),
                 pc_name=summary.get('pc_name', ''),
                 packing_list_path=summary.get('packing_list_name', ''),
                 session_path=str(session_dir)
@@ -410,6 +416,10 @@ class SessionHistoryManager:
             pc_name = session_info.get('pc_name') if session_info else None
             packing_list_path = session_info.get('packing_list_path') if session_info else None
 
+            # Try to extract worker info from packing_state (v1.3.0+)
+            worker_id = packing_state.get('worker_id')
+            worker_name = packing_state.get('worker_name')
+
             return SessionHistoryRecord(
                 session_id=session_id,
                 client_id=client_id,
@@ -420,6 +430,8 @@ class SessionHistoryManager:
                 completed_orders=completed_orders,
                 in_progress_orders=in_progress_orders,
                 total_items_packed=total_items_packed,
+                worker_id=worker_id,
+                worker_name=worker_name,
                 pc_name=pc_name,
                 packing_list_path=packing_list_path,
                 session_path=str(session_dir)
