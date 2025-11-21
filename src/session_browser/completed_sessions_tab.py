@@ -233,8 +233,20 @@ class CompletedSessionsTab(QWidget):
                 list_name = "Unknown"
             self.table.setItem(row, 2, QTableWidgetItem(list_name))
 
-            # Worker (PC name for now)
-            worker_display = session.pc_name if session.pc_name else "Unknown"
+            # Worker (enhanced to show worker_id and worker_name if available)
+            worker_id = getattr(session, 'worker_id', None)
+            worker_name = getattr(session, 'worker_name', None)
+
+            if worker_id and worker_name:
+                worker_display = f"{worker_id} ({worker_name})"
+            elif worker_id:
+                worker_display = worker_id
+            elif worker_name:
+                worker_display = worker_name
+            else:
+                # Fallback to PC name for old sessions without worker info
+                worker_display = session.pc_name if session.pc_name else "Unknown"
+
             self.table.setItem(row, 3, QTableWidgetItem(worker_display))
 
             # Start Time
