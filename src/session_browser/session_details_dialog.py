@@ -49,7 +49,13 @@ class SessionDetailsDialog(QDialog):
         self.resize(900, 700)
 
     def _load_session_details(self):
-        """Load session details from files."""
+        """Load session details from files or use provided session_data."""
+
+        # Check if session_data already has complete information (standardized format)
+        if self._is_standardized_data(self.session_data):
+            # Use the standardized data directly
+            self._build_details_from_standardized_data()
+            return
 
         client_id = self.session_data['client_id']
         session_id = self.session_data['session_id']
@@ -261,3 +267,82 @@ class SessionDetailsDialog(QDialog):
             return completed
 
         return []
+
+    def _is_standardized_data(self, data: dict) -> bool:
+        """Check if session_data is in standardized format (has all required fields)."""
+        required_fields = ['session_id', 'client_id', 'packing_list_name', 'status']
+        return all(field in data for field in required_fields)
+
+    def _build_details_from_standardized_data(self):
+        """Build self.details from standardized session_data format."""
+        from datetime import datetime
+
+        data = self.session_data
+
+        # Convert ISO timestamp strings to datetime objects if needed
+        start_time = data.get('started_at')
+        if start_time and isinstance(start_time, str):
+            try:
+                start_time = datetime.fromisoformat(start_time)
+            except (ValueError, TypeError):
+                pass
+
+        end_time = data.get('ended_at')
+        if end_time and isinstance(end_time, str):
+            try:
+                end_time = datetime.fromisoformat(end_time)
+            except (ValueError, TypeError):
+                pass
+
+        # Build record in expected format
+        record = {
+            'session_id': data.get('session_id'),
+            'client_id': data.get('client_id'),
+            'packing_list_path': data.get('packing_list_name', ''),  # Name, not full path
+            'packing_list_name': data.get('packing_list_name', ''),
+            'worker_id': data.get('worker_id', 'Unknown'),
+            'worker_name': data.get('worker_name', ''),
+            'pc_name': data.get('pc_name', 'Unknown'),
+            'start_time': start_time,
+            'end_time': end_time,
+            'duration_seconds': data.get('duration_seconds', 0),
+            'total_orders': data.get('orders_total', 0),
+            'completed_orders': data.get('orders_completed', 0),
+            'in_progress_orders': 0,
+            'total_items_packed': data.get('items_packed', 0)
+        }
+
+        # Load additional data from work_dir if available
+        work_dir = data.get('work_dir')
+        packing_state = {}
+        session_summary = {}
+
+        if work_dir:
+            work_dir_path = Path(work_dir)
+
+            # Load packing_state.json
+            state_file = work_dir_path / "packing_state.json"
+            if state_file.exists():
+                try:
+                    with open(state_file, 'r', encoding='utf-8') as f:
+                        packing_state = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load packing_state.json: {e}")
+
+            # Load session_summary.json
+            summary_file = work_dir_path / "session_summary.json"
+            if summary_file.exists():
+                try:
+                    with open(summary_file, 'r', encoding='utf-8') as f:
+                        session_summary = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load session_summary.json: {e}")
+
+        self.details = {
+            'record': record,
+            'packing_state': packing_state,
+            'session_info': {},
+            'session_summary': session_summary
+        }
+
+        logger.info(f"Built session details from standardized data for session: {data.get('session_id')}")

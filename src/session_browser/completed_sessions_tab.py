@@ -320,12 +320,31 @@ class CompletedSessionsTab(QWidget):
 
         # Create dialog
         try:
+            # Standardize structure (session is a SessionHistoryRecord)
+            packing_list_name = 'Unknown'
+            if session.packing_list_path:
+                packing_list_name = Path(session.packing_list_path).stem
+
+            session_data = {
+                'session_id': session.session_id,
+                'client_id': session.client_id,
+                'packing_list_name': packing_list_name,
+                'worker_id': None,  # Not stored in v1.3.0 summary
+                'worker_name': None,  # Not stored in v1.3.0 summary
+                'pc_name': session.pc_name,
+                'started_at': session.start_time.isoformat() if session.start_time else None,
+                'ended_at': session.end_time.isoformat() if session.end_time else None,
+                'duration_seconds': session.duration_seconds,
+                'orders_completed': session.completed_orders,
+                'orders_total': session.total_orders,
+                'items_packed': session.total_items_packed,
+                'session_path': session.session_path,
+                'status': 'Completed',
+                'work_dir': None,  # Will be found by SessionDetailsDialog
+            }
+
             dialog = SessionDetailsDialog(
-                session_data={
-                    'client_id': session.client_id,
-                    'session_id': session.session_id,
-                    'work_dir': None  # Will be found by get_session_details
-                },
+                session_data=session_data,
                 session_history_manager=self.session_history_manager,
                 parent=self
             )
