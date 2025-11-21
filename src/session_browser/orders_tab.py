@@ -7,6 +7,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from datetime import datetime
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class OrdersTab(QWidget):
