@@ -98,6 +98,7 @@ All notable changes to Packing Tool will be documented in this file.
   - Lock properly released in `end_session()` with heartbeat timer cleanup
   - Handles both new sessions and resume scenarios with stale lock detection
   - Prevents concurrent access to same packing list across multiple PCs
+  - **BUGFIX**: Fixed TypeError in lock acquisition (client_id argument, return tuple handling, Path objects)
 - **Session Resume Metadata Restoration**: Fixed lost timing data on session resume
   - Restored `completed_orders_metadata` array when loading session state
   - Phase 2b timing data (order durations, item scan times) now preserved across resume
@@ -109,6 +110,8 @@ All notable changes to Packing Tool will be documented in this file.
   - Deleted `session_monitor_widget.py` (replaced by Session Browser Active tab)
   - Removed all references and menu items for deprecated widgets
   - Cleaned up client loading code that referenced removed widgets
+  - Removed stats display labels from main toolbar (Total Orders Packed, Total Sessions)
+  - Removed `_update_dashboard()` method
 - **Worker Display Enhancement**: Improved Completed Sessions tab worker column
   - Now shows "worker_id (worker_name)" format when available
   - Graceful fallback to PC name for old sessions without worker info
@@ -133,6 +136,8 @@ All notable changes to Packing Tool will be documented in this file.
 - **Test Fixes**:
   - Fixed dict access in test_session_browser_phase32.py (record is dict, not object)
   - Added timing metadata population in test_state_persistence.py for avg_time_per_order calculation
+  - Removed mock_widgets fixture (DashboardWidget, SessionHistoryWidget no longer exist)
+  - Updated test_tab_navigation to expect 1 tab instead of 3 (Dashboard/History removed)
 
 ---
 
