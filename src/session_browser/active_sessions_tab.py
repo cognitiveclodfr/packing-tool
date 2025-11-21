@@ -407,15 +407,36 @@ class ActiveSessionsTab(QWidget):
 
         session = self.sessions[selected]
 
-        # TODO: Open SessionDetailsDialog (Phase 3.2)
-        QMessageBox.information(
-            self,
-            "Session Details",
-            f"Session ID: {session['session_id']}\n"
-            f"Client: {session['client_id']}\n"
-            f"Packing List: {session['packing_list_name']}\n"
-            f"Status: {session['status']}\n"
-            f"Worker: {self._get_worker_name(session['worker_id'])}\n"
-            f"PC: {session['pc_name']}\n"
-            f"Progress: {session['progress']['completed']}/{session['progress']['total']}"
-        )
+        # Import dialog
+        from .session_details_dialog import SessionDetailsDialog
+
+        # Create dialog
+        try:
+            # Get SessionBrowserWidget (find first parent that has session_history_manager)
+            browser_widget = self.parent()
+            while browser_widget and not hasattr(browser_widget, 'session_history_manager'):
+                browser_widget = browser_widget.parent()
+
+            if not browser_widget:
+                raise AttributeError("Could not find SessionBrowserWidget parent")
+
+            dialog = SessionDetailsDialog(
+                session_data={
+                    'client_id': session['client_id'],
+                    'session_id': session['session_id'],
+                    'work_dir': session['work_dir'],
+                    'lock_info': session.get('lock_info')
+                },
+                session_history_manager=browser_widget.session_history_manager,
+                parent=self
+            )
+
+            dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Failed to open session details: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to load session details:\n{str(e)}"
+            )

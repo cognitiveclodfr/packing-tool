@@ -12,7 +12,7 @@ from PySide6.QtCore import Signal
 
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
-# from .available_sessions_tab import AvailableSessionsTab  # Phase 3.2
+from .available_sessions_tab import AvailableSessionsTab
 
 
 class SessionBrowserWidget(QWidget):
@@ -25,6 +25,7 @@ class SessionBrowserWidget(QWidget):
 
     # Signals
     resume_session_requested = Signal(dict)  # {session_path, client_id, packing_list_name}
+    start_packing_requested = Signal(dict)  # {session_path, client_id, packing_list_name, list_file}
     session_selected = Signal(dict)  # Generic session selection
 
     def __init__(
@@ -81,10 +82,16 @@ class SessionBrowserWidget(QWidget):
             parent=self
         )
 
+        self.available_tab = AvailableSessionsTab(
+            profile_manager=self.profile_manager,
+            session_manager=self.session_manager,
+            parent=self
+        )
+
         # Add tabs
         self.tab_widget.addTab(self.active_tab, "Active Sessions")
         self.tab_widget.addTab(self.completed_tab, "Completed Sessions")
-        # Available tab - Phase 3.2
+        self.tab_widget.addTab(self.available_tab, "Available Sessions")
 
         layout.addWidget(self.tab_widget)
 
@@ -96,6 +103,9 @@ class SessionBrowserWidget(QWidget):
         # Completed tab signals
         self.completed_tab.session_selected.connect(self.session_selected.emit)
 
+        # Available tab signals
+        self.available_tab.start_packing_requested.connect(self._handle_start_packing_request)
+
     def _handle_resume_request(self, session_info: dict):
         """
         Handle resume request from Active tab.
@@ -106,10 +116,21 @@ class SessionBrowserWidget(QWidget):
         # Emit signal to main.py
         self.resume_session_requested.emit(session_info)
 
+    def _handle_start_packing_request(self, packing_info: dict):
+        """
+        Handle start packing request from Available tab.
+
+        Args:
+            packing_info: Dict with session_path, client_id, packing_list_name, list_file
+        """
+        # Emit signal to main.py
+        self.start_packing_requested.emit(packing_info)
+
     def refresh_all(self):
         """Refresh all tabs."""
         self.active_tab.refresh()
         self.completed_tab.refresh()
+        self.available_tab.refresh()
 
     def set_current_tab(self, tab_name: str):
         """
@@ -121,7 +142,7 @@ class SessionBrowserWidget(QWidget):
         tab_map = {
             "active": 0,
             "completed": 1,
-            # "available": 2  # Phase 3.2
+            "available": 2
         }
 
         if tab_name in tab_map:

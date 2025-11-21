@@ -1706,6 +1706,9 @@ class MainWindow(QMainWindow):
         browser.resume_session_requested.connect(
             lambda info: self._handle_resume_session_from_browser(browser_dialog, info)
         )
+        browser.start_packing_requested.connect(
+            lambda info: self._handle_start_packing_from_browser(browser_dialog, info)
+        )
 
         layout.addWidget(browser)
 
@@ -1771,6 +1774,132 @@ class MainWindow(QMainWindow):
                 self,
                 "Resume Failed",
                 f"Failed to resume session:\n{str(e)}"
+            )
+
+    def _handle_start_packing_from_browser(self, dialog, packing_info: dict):
+        """
+        Handle start packing request from Session Browser Available tab.
+
+        Args:
+            dialog: Session Browser dialog to close
+            packing_info: Dict with session_path, client_id, packing_list_name, list_file
+        """
+        try:
+            logger.info(f"Starting packing session from browser: {packing_info.get('packing_list_name', 'Unknown')}")
+
+            # Close browser dialog
+            dialog.accept()
+
+            # Extract info
+            session_path = Path(packing_info['session_path'])
+            client_id = packing_info['client_id']
+            packing_list_name = packing_info['packing_list_name']
+            list_file = Path(packing_info['list_file'])
+
+            # Set current client if different
+            if self.current_client_id != client_id:
+                # Find client index in combo
+                for i in range(self.client_combo.count()):
+                    if self.client_combo.itemData(i) == client_id:
+                        self.client_combo.setCurrentIndex(i)
+                        break
+
+            # Check if session already active
+            if self.session_manager and self.session_manager.is_active():
+                logger.warning("Attempted to start packing while session is already active")
+                QMessageBox.warning(
+                    self,
+                    "Session Active",
+                    "A session is already active. Please end it first."
+                )
+                return
+
+            # Create SessionManager for this client if not exists
+            if not self.session_manager or self.session_manager.client_id != client_id:
+                self.session_manager = SessionManager(
+                    client_id=client_id,
+                    profile_manager=self.profile_manager,
+                    lock_manager=self.lock_manager,
+                    worker_id=self.current_worker_id,
+                    worker_name=self.current_worker_name
+                )
+
+            # Create work directory via SessionManager
+            work_dir = self.session_manager.get_packing_work_dir(
+                session_path=str(session_path),
+                packing_list_name=packing_list_name
+            )
+
+            # Store current session info
+            self.current_session_path = str(session_path)
+            self.current_packing_list = packing_list_name
+            self.current_work_dir = str(work_dir)
+
+            logger.info(f"Work directory created: {work_dir}")
+
+            # Create PackerLogic instance
+            self.logic = PackerLogic(
+                client_id=client_id,
+                profile_manager=self.profile_manager,
+                work_dir=str(work_dir)
+            )
+
+            # Connect signals
+            self.logic.item_packed.connect(self._on_item_packed)
+
+            # Load packing list JSON
+            logger.info(f"Loading packing list from: {list_file}")
+            order_count, list_name = self.logic.load_packing_list_json(list_file)
+
+            # Set minimal packing data for UI
+            self.packing_data = {
+                'list_name': list_name,
+                'total_orders': order_count,
+                'orders': []  # PackerLogic has the data
+            }
+
+            logger.info(f"Loaded packing list '{list_name}': {order_count} orders")
+
+            # Update session metadata
+            if hasattr(self.session_manager, 'update_session_metadata'):
+                try:
+                    self.session_manager.update_session_metadata(
+                        self.current_session_path,
+                        self.current_packing_list,
+                        'in_progress'
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not update session metadata: {e}")
+
+            # Setup order table
+            self.setup_order_table()
+
+            # Update UI
+            self.status_label.setText(
+                f"Loaded: {session_path.name} / {packing_list_name}\n"
+                f"Orders: {order_count}\n"
+                f"Barcodes generated successfully"
+            )
+
+            # Enable packing mode
+            self.enable_packing_mode()
+
+            QMessageBox.information(
+                self,
+                "Session Loaded",
+                f"Loaded packing list: {list_name}\n"
+                f"Orders: {order_count}\n\n"
+                f"Barcodes have been generated and are ready to print."
+            )
+
+            logger.info("Packing session started successfully from Session Browser")
+
+        except Exception as e:
+            logger.error(f"Failed to start packing from browser: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Start Packing Failed",
+                f"Failed to start packing session:\n{str(e)}"
             )
 
     def _handle_session_locked_error(self, error: SessionLockedError):
