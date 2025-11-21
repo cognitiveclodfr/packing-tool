@@ -325,6 +325,14 @@ class CompletedSessionsTab(QWidget):
             if session.packing_list_path:
                 packing_list_name = Path(session.packing_list_path).stem
 
+            # Construct work_dir for completed sessions (Phase 1 structure)
+            work_dir = None
+            if session.session_path and session.packing_list_path:
+                # Try to find the work directory
+                potential_work_dir = Path(session.session_path) / "packing" / session.packing_list_path
+                if potential_work_dir.exists():
+                    work_dir = str(potential_work_dir)
+
             session_data = {
                 'session_id': session.session_id,
                 'client_id': session.client_id,
@@ -340,7 +348,7 @@ class CompletedSessionsTab(QWidget):
                 'items_packed': session.total_items_packed,
                 'session_path': session.session_path,
                 'status': 'Completed',
-                'work_dir': None,  # Will be found by SessionDetailsDialog
+                'work_dir': work_dir,  # Found work directory for loading session files
             }
 
             dialog = SessionDetailsDialog(

@@ -85,8 +85,8 @@ class SessionDetailsDialog(QDialog):
                 except Exception as e:
                     logger.warning(f"Failed to load session_summary.json: {e}")
 
-            # Load session_info.json for metadata
-            info_file = work_dir_path / "session_info.json"
+            # Load session_info.json for metadata (in parent directory, not work_dir)
+            info_file = work_dir_path.parent / "session_info.json"
             session_info = {}
             if info_file.exists():
                 try:
@@ -335,6 +335,13 @@ class SessionDetailsDialog(QDialog):
                 try:
                     with open(summary_file, 'r', encoding='utf-8') as f:
                         session_summary = json.load(f)
+                        logger.info(f"Loaded session_summary.json for session {data.get('session_id')}")
+
+                        # Update record with worker info from session_summary if available
+                        if 'worker_id' in session_summary:
+                            record['worker_id'] = session_summary['worker_id']
+                        if 'worker_name' in session_summary:
+                            record['worker_name'] = session_summary['worker_name']
                 except Exception as e:
                     logger.warning(f"Failed to load session_summary.json: {e}")
 

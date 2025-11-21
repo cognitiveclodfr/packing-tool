@@ -138,9 +138,11 @@ class TestSessionHistoryManager(unittest.TestCase):
         """Test that session metrics are correctly extracted."""
         session_dir = self._create_test_session("M", "20250101_120000", completed_orders=3, in_progress_orders=2)
 
-        record = self.manager._parse_session_directory("M", session_dir)
+        records = self.manager._parse_session_directory("M", session_dir)
 
-        self.assertIsNotNone(record)
+        self.assertIsNotNone(records)
+        self.assertEqual(len(records), 1)
+        record = records[0]
         self.assertEqual(record.session_id, "20250101_120000")
         self.assertEqual(record.client_id, "M")
         self.assertEqual(record.total_orders, 5)  # 3 completed + 2 in progress
@@ -264,10 +266,12 @@ class TestSessionHistoryManager(unittest.TestCase):
             json.dump(packing_state, f)
 
         # Test parsing
-        record = self.manager._parse_session_directory("SHOPIFY_TEST", session_dir)
+        records = self.manager._parse_session_directory("SHOPIFY_TEST", session_dir)
 
         # Assert
-        self.assertIsNotNone(record, "Phase 1 Shopify session should be parsed successfully")
+        self.assertIsNotNone(records, "Phase 1 Shopify session should be parsed successfully")
+        self.assertEqual(len(records), 1)
+        record = records[0]
         self.assertEqual(record.session_id, "2025-11-19_1")
         self.assertEqual(record.client_id, "SHOPIFY_TEST")
         self.assertEqual(record.total_orders, 3)  # 1 in progress + 2 completed
@@ -308,10 +312,12 @@ class TestSessionHistoryManager(unittest.TestCase):
             json.dump(session_summary, f)
 
         # Test parsing
-        record = self.manager._parse_session_directory("SHOPIFY_TEST", session_dir)
+        records = self.manager._parse_session_directory("SHOPIFY_TEST", session_dir)
 
         # Assert
-        self.assertIsNotNone(record, "Phase 1 Shopify session with summary should be parsed")
+        self.assertIsNotNone(records, "Phase 1 Shopify session with summary should be parsed")
+        self.assertEqual(len(records), 1)
+        record = records[0]
         self.assertEqual(record.session_id, "2025-11-19_2")
         self.assertEqual(record.total_orders, 10)
         self.assertEqual(record.completed_orders, 10)
@@ -325,10 +331,12 @@ class TestSessionHistoryManager(unittest.TestCase):
                                                 completed_orders=5, in_progress_orders=2)
 
         # Test parsing
-        record = self.manager._parse_session_directory("LEGACY_TEST", session_dir)
+        records = self.manager._parse_session_directory("LEGACY_TEST", session_dir)
 
         # Assert
-        self.assertIsNotNone(record, "Legacy Excel session should be parsed successfully")
+        self.assertIsNotNone(records, "Legacy Excel session should be parsed successfully")
+        self.assertEqual(len(records), 1)
+        record = records[0]
         self.assertEqual(record.session_id, "20250101_120000")
         self.assertEqual(record.client_id, "LEGACY_TEST")
         self.assertEqual(record.total_orders, 7)  # 5 completed + 2 in progress
@@ -371,12 +379,17 @@ class TestSessionHistoryManager(unittest.TestCase):
                 }
             }, f)
 
-        # Test parsing - should find first one
-        record = self.manager._parse_session_directory("MULTI", session_dir)
+        # Test parsing - should find both packing lists
+        records = self.manager._parse_session_directory("MULTI", session_dir)
 
-        # Assert - should parse one of the packing lists
-        self.assertIsNotNone(record, "Session with multiple packing lists should be parsed")
-        self.assertEqual(record.session_id, "2025-11-19_3")
+        # Assert - should parse both packing lists
+        self.assertIsNotNone(records, "Session with multiple packing lists should be parsed")
+        self.assertEqual(len(records), 2, "Should return 2 records for 2 packing lists")
+
+        # Verify both records have same session_id but different data
+        for record in records:
+            self.assertEqual(record.session_id, "2025-11-19_3")
+            self.assertEqual(record.client_id, "MULTI")
 
     def test_get_session_details_shopify_structure(self):
         """Test get_session_details with Phase 1 Shopify structure."""
