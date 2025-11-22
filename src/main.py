@@ -11,10 +11,11 @@ if str(project_root) not in sys.path:
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
     QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
-    QDialogButtonBox, QTabWidget
+    QDialogButtonBox, QTabWidget, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
+    QGroupBox, QScrollArea
 )
-from PySide6.QtGui import QAction
-from PySide6.QtCore import QTimer, Qt, QSettings
+from PySide6.QtGui import QAction, QFont, QPalette, QColor
+from PySide6.QtCore import QTimer, Qt, QSettings, QSize
 from datetime import datetime
 from openpyxl.styles import PatternFill
 import pandas as pd
@@ -191,6 +192,42 @@ class MainWindow(QMainWindow):
         self.session_widget = QWidget()
         main_layout = QVBoxLayout(self.session_widget)
 
+        # Apply global styling
+        self.session_widget.setStyleSheet("""
+            QWidget {
+                font-size: 11pt;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+            QLabel {
+                padding: 2px;
+            }
+            QPushButton {
+                padding: 8px 15px;
+                font-size: 11pt;
+                border-radius: 4px;
+            }
+            QLineEdit {
+                padding: 5px;
+                font-size: 11pt;
+                border: 1px solid #cccccc;
+                border-radius: 3px;
+            }
+        """)
+
+        # Set minimum window size
+        self.setMinimumSize(1200, 700)
+
         # ====================================================================
         # CLIENT SELECTION (NEW)
         # ====================================================================
@@ -264,11 +301,30 @@ class MainWindow(QMainWindow):
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
+        self.search_input.textChanged.connect(self._filter_orders)
         main_layout.addWidget(self.search_input)
 
-        self.orders_table = QTableView()
-        self.orders_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        main_layout.addWidget(self.orders_table)
+        # Create tab widget for session views (Packing and Statistics)
+        self.session_tabs = QTabWidget()
+
+        # Tab 1: Packing View with expandable tree
+        packing_tab = QWidget()
+        packing_layout = QVBoxLayout(packing_tab)
+        packing_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._setup_order_tree()
+        packing_layout.addWidget(self.order_tree)
+
+        self.session_tabs.addTab(packing_tab, "📦 Packing")
+
+        # Tab 2: Statistics View
+        stats_tab = QWidget()
+        stats_layout = QVBoxLayout(stats_tab)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        self._setup_statistics_tab(stats_layout)
+        self.session_tabs.addTab(stats_tab, "📊 Statistics")
+
+        main_layout.addWidget(self.session_tabs)
 
         self.status_label = QLabel("Start a new session to load a packing list.")
         main_layout.addWidget(self.status_label)
@@ -287,26 +343,455 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.packer_mode_widget)
         self.setCentralWidget(self.stacked_widget)
 
-        # Create menu bar
+        # Create menu bar and toolbar
         self._init_menu_bar()
+        self._init_toolbar()
 
     def _init_menu_bar(self):
-        """Initialize the menu bar with actions."""
+        """Initialize the menu bar with organized actions."""
         menubar = self.menuBar()
 
-        # View menu
-        view_menu = menubar.addMenu("&View")
+        # File menu
+        file_menu = menubar.addMenu("📁 &File")
 
-        session_action = QAction("&Session", self)
-        session_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(0))
-        view_menu.addAction(session_action)
+        import_action = QAction("Import Packing List...", self)
+        import_action.triggered.connect(lambda: self.start_session())
+        file_menu.addAction(import_action)
 
-        # Tools menu
-        tools_menu = menubar.addMenu("&Tools")
+        file_menu.addSeparator()
 
-        sku_mapping_action = QAction("SKU &Mapping", self)
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # Session menu
+        session_menu = menubar.addMenu("📦 &Session")
+
+        new_session_action = QAction("Start New Session", self)
+        new_session_action.triggered.connect(lambda: self.start_session())
+        session_menu.addAction(new_session_action)
+
+        shopify_session_action = QAction("Open Shopify Session...", self)
+        shopify_session_action.triggered.connect(self.open_shopify_session)
+        session_menu.addAction(shopify_session_action)
+
+        browse_action = QAction("Session Browser...", self)
+        browse_action.triggered.connect(self.open_session_browser)
+        session_menu.addAction(browse_action)
+
+        session_menu.addSeparator()
+
+        end_action = QAction("End Current Session", self)
+        end_action.triggered.connect(self.end_session)
+        session_menu.addAction(end_action)
+
+        # Settings menu
+        settings_menu = menubar.addMenu("⚙️ &Settings")
+
+        worker_action = QAction("Select Worker...", self)
+        worker_action.triggered.connect(self._select_worker)
+        settings_menu.addAction(worker_action)
+
+        sku_mapping_action = QAction("SKU Mappings...", self)
         sku_mapping_action.triggered.connect(self.open_sku_mapping_dialog)
-        tools_menu.addAction(sku_mapping_action)
+        settings_menu.addAction(sku_mapping_action)
+
+    def _init_toolbar(self):
+        """Create balanced toolbar with session actions."""
+        from PySide6.QtWidgets import QToolBar
+
+        toolbar = QToolBar()
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(24, 24))
+
+        # Session actions
+        new_session_btn = QPushButton("📦 New Session")
+        new_session_btn.clicked.connect(lambda: self.start_session())
+        toolbar.addWidget(new_session_btn)
+
+        shopify_btn = QPushButton("🔍 Shopify Session")
+        shopify_btn.clicked.connect(self.open_shopify_session)
+        toolbar.addWidget(shopify_btn)
+
+        browser_btn = QPushButton("📋 Session Browser")
+        browser_btn.clicked.connect(self.open_session_browser)
+        toolbar.addWidget(browser_btn)
+
+        toolbar.addSeparator()
+
+        # Current session info
+        self.session_info_label = QLabel("No active session")
+        font = QFont()
+        font.setPointSize(10)
+        font.setBold(True)
+        self.session_info_label.setFont(font)
+        toolbar.addWidget(self.session_info_label)
+
+        toolbar.addSeparator()
+
+        # End session button
+        self.toolbar_end_btn = QPushButton("⏹️ End Session")
+        self.toolbar_end_btn.clicked.connect(self.end_session)
+        self.toolbar_end_btn.setEnabled(False)
+        toolbar.addWidget(self.toolbar_end_btn)
+
+        self.addToolBar(toolbar)
+
+    def _setup_order_tree(self):
+        """Setup expandable order tree view."""
+        self.order_tree = QTreeWidget()
+        self.order_tree.setHeaderLabels([
+            "Order / Item", "Product", "Quantity", "Status", "Courier"
+        ])
+
+        # Column widths
+        self.order_tree.setColumnWidth(0, 200)  # Order/SKU
+        self.order_tree.setColumnWidth(1, 300)  # Product
+        self.order_tree.setColumnWidth(2, 100)  # Quantity
+        self.order_tree.setColumnWidth(3, 120)  # Status
+        self.order_tree.setColumnWidth(4, 150)  # Courier
+
+        # Styling
+        font = QFont()
+        font.setPointSize(11)
+        self.order_tree.setFont(font)
+        self.order_tree.setAlternatingRowColors(True)
+        self.order_tree.setUniformRowHeights(False)
+        self.order_tree.setItemsExpandable(True)
+        self.order_tree.setRootIsDecorated(True)
+
+        # Row height and styling
+        self.order_tree.setStyleSheet("""
+            QTreeWidget::item {
+                height: 30px;
+                padding: 5px;
+            }
+            QTreeWidget::item:selected {
+                background-color: #0078d4;
+                color: white;
+            }
+        """)
+
+    def _populate_order_tree(self):
+        """Populate tree with orders and items."""
+        self.order_tree.clear()
+
+        if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
+            return
+
+        # Group by order number
+        grouped = self.logic.processed_df.groupby('Order_Number')
+
+        # Get completed and in-progress orders
+        completed_orders = self.logic.session_packing_state.get('completed_orders', [])
+        in_progress_orders = self.logic.session_packing_state.get('in_progress', {})
+
+        for order_num, order_items in grouped:
+            items_df = order_items
+            total_items = len(items_df)
+
+            # Check order status
+            is_completed = order_num in completed_orders
+
+            # Count scanned items
+            scanned_count = 0
+            if order_num in in_progress_orders:
+                order_state = in_progress_orders[order_num]
+                # Handle both list format (current) and dict format (legacy)
+                if isinstance(order_state, list):
+                    scanned_count = sum(1 for s in order_state if s.get('packed', 0) >= s.get('required', 1))
+                else:
+                    scanned_count = sum(1 for s in order_state.values() if s.get('packed', 0) >= s.get('required', 1))
+            elif is_completed:
+                scanned_count = total_items
+
+            # Order status
+            if is_completed:
+                status_text = "✅ Completed"
+                status_icon = "✅"
+            else:
+                status_text = f"⏳ {scanned_count}/{total_items} items"
+                status_icon = "⏳"
+
+            # Courier
+            courier = items_df.iloc[0].get('Courier', 'N/A') if 'Courier' in items_df.columns else 'N/A'
+
+            # Create top-level order item
+            order_item = QTreeWidgetItem([
+                f"📦 {order_num}",
+                f"{total_items} items",
+                "",
+                status_text,
+                courier
+            ])
+
+            # Bold font for order
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(11)
+            for col in range(5):
+                order_item.setFont(col, font)
+
+            # Add child items (SKUs)
+            for _, row in items_df.iterrows():
+                sku = row.get('SKU', 'Unknown')
+                product = row.get('Product_Name', 'Unknown')
+                qty = row.get('Quantity', 1)
+
+                # Check if scanned
+                scanned_qty = 0
+                if order_num in in_progress_orders:
+                    order_state = in_progress_orders[order_num]
+                    # Find this SKU in the order state
+                    if isinstance(order_state, list):
+                        for item_state in order_state:
+                            if item_state.get('sku') == sku:
+                                scanned_qty = item_state.get('packed', 0)
+                                break
+                    else:
+                        # Legacy dict format
+                        for item_state in order_state.values():
+                            if item_state.get('sku') == sku:
+                                scanned_qty = item_state.get('packed', 0)
+                                break
+                elif is_completed:
+                    try:
+                        scanned_qty = int(qty)
+                    except:
+                        scanned_qty = 1
+
+                try:
+                    qty_int = int(qty)
+                except:
+                    qty_int = 1
+
+                if scanned_qty >= qty_int:
+                    item_status = "✅ Scanned"
+                else:
+                    item_status = f"⏳ Pending ({scanned_qty}/{qty_int})"
+
+                # Create child item
+                child_item = QTreeWidgetItem([
+                    f"  {sku}",
+                    product,
+                    str(qty),
+                    item_status,
+                    ""
+                ])
+
+                # Normal font for items
+                item_font = QFont()
+                item_font.setPointSize(10)
+                for col in range(5):
+                    child_item.setFont(col, item_font)
+
+                order_item.addChild(child_item)
+
+            self.order_tree.addTopLevelItem(order_item)
+
+            # Expand completed orders, collapse pending
+            if is_completed:
+                order_item.setExpanded(False)  # Keep compact
+            else:
+                order_item.setExpanded(True)   # Show current work
+
+    def _filter_orders(self, text: str):
+        """Filter tree items by search text."""
+        if not hasattr(self, 'order_tree'):
+            return
+
+        if not text:
+            # Show all
+            for i in range(self.order_tree.topLevelItemCount()):
+                self.order_tree.topLevelItem(i).setHidden(False)
+            return
+
+        text = text.lower()
+
+        for i in range(self.order_tree.topLevelItemCount()):
+            order_item = self.order_tree.topLevelItem(i)
+            order_text = order_item.text(0).lower()
+
+            # Check if order matches
+            order_match = text in order_text
+
+            # Check if any child (SKU) matches
+            child_match = False
+            for j in range(order_item.childCount()):
+                child = order_item.child(j)
+                child_text = f"{child.text(0)} {child.text(1)}".lower()
+                if text in child_text:
+                    child_match = True
+                    break
+
+            # Show if order or child matches
+            order_item.setHidden(not (order_match or child_match))
+
+    def _setup_statistics_tab(self, layout):
+        """Create statistics overview tab."""
+
+        # Scroll area for stats
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+
+        # --- Session Totals ---
+        totals_group = QGroupBox("📋 Session Totals")
+        totals_layout = QFormLayout()
+        totals_layout.setSpacing(10)
+
+        font = QFont()
+        font.setPointSize(11)
+
+        self.stats_total_orders = QLabel("0")
+        self.stats_total_orders.setFont(font)
+        self.stats_completed_orders = QLabel("0")
+        self.stats_completed_orders.setFont(font)
+        self.stats_total_items = QLabel("0")
+        self.stats_total_items.setFont(font)
+        self.stats_unique_skus = QLabel("0")
+        self.stats_unique_skus.setFont(font)
+        self.stats_progress_pct = QLabel("0%")
+        self.stats_progress_pct.setFont(font)
+
+        totals_layout.addRow("Total Orders:", self.stats_total_orders)
+        totals_layout.addRow("Completed Orders:", self.stats_completed_orders)
+        totals_layout.addRow("Total Items:", self.stats_total_items)
+        totals_layout.addRow("Unique SKUs:", self.stats_unique_skus)
+        totals_layout.addRow("Progress:", self.stats_progress_pct)
+
+        totals_group.setLayout(totals_layout)
+        scroll_layout.addWidget(totals_group)
+
+        # --- By Courier ---
+        courier_group = QGroupBox("🚚 By Courier")
+        courier_layout = QVBoxLayout()
+        self.courier_stats_widget = QWidget()
+        self.courier_stats_layout = QVBoxLayout(self.courier_stats_widget)
+        courier_layout.addWidget(self.courier_stats_widget)
+        courier_group.setLayout(courier_layout)
+        scroll_layout.addWidget(courier_group)
+
+        # --- SKU Summary Table ---
+        sku_group = QGroupBox("📦 SKU Summary")
+        sku_layout = QVBoxLayout()
+
+        self.sku_table = QTableWidget()
+        self.sku_table.setColumnCount(4)
+        self.sku_table.setHorizontalHeaderLabels(["SKU", "Product", "Total Qty", "Status"])
+        self.sku_table.horizontalHeader().setStretchLastSection(True)
+        self.sku_table.setAlternatingRowColors(True)
+        self.sku_table.setFont(font)
+        self.sku_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.sku_table.setSelectionMode(QTableWidget.NoSelection)
+
+        sku_layout.addWidget(self.sku_table)
+        sku_group.setLayout(sku_layout)
+        scroll_layout.addWidget(sku_group)
+
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+
+    def _update_statistics(self):
+        """Refresh statistics tab with current data."""
+        if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
+            return
+
+        df = self.logic.processed_df
+
+        # Session totals
+        unique_orders = df['Order_Number'].unique()
+        total_orders = len(unique_orders)
+        completed_orders_list = self.logic.session_packing_state.get('completed_orders', [])
+        completed_orders = len(completed_orders_list)
+        total_items = len(df)
+        unique_skus = df['SKU'].nunique()
+        progress_pct = int((completed_orders / total_orders * 100)) if total_orders > 0 else 0
+
+        self.stats_total_orders.setText(str(total_orders))
+        self.stats_completed_orders.setText(str(completed_orders))
+        self.stats_total_items.setText(str(total_items))
+        self.stats_unique_skus.setText(str(unique_skus))
+        self.stats_progress_pct.setText(f"{progress_pct}%")
+
+        # By Courier
+        # Clear existing
+        for i in reversed(range(self.courier_stats_layout.count())):
+            widget = self.courier_stats_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+        if 'Courier' in df.columns:
+            courier_stats = df.groupby('Courier').agg({
+                'Order_Number': 'nunique',
+                'Quantity': lambda x: pd.to_numeric(x, errors='coerce').sum()
+            }).reset_index()
+
+            for _, row in courier_stats.iterrows():
+                courier = row['Courier']
+                orders = row['Order_Number']
+                items = int(row['Quantity']) if pd.notna(row['Quantity']) else 0
+                label = QLabel(f"• {courier}: {orders} orders ({items} items)")
+                font = QFont()
+                font.setPointSize(11)
+                label.setFont(font)
+                self.courier_stats_layout.addWidget(label)
+
+        # SKU Summary
+        sku_summary = df.groupby(['SKU', 'Product_Name']).agg({
+            'Quantity': lambda x: pd.to_numeric(x, errors='coerce').sum()
+        }).reset_index()
+
+        self.sku_table.setRowCount(len(sku_summary))
+
+        # Get scanned items tracking
+        in_progress_orders = self.logic.session_packing_state.get('in_progress', {})
+        scanned_by_sku = {}
+
+        # Count scanned quantities per SKU
+        for order_state in in_progress_orders.values():
+            if isinstance(order_state, list):
+                for item_state in order_state:
+                    sku = item_state.get('sku')
+                    packed = item_state.get('packed', 0)
+                    if sku:
+                        scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
+            else:
+                for item_state in order_state.values():
+                    sku = item_state.get('sku')
+                    packed = item_state.get('packed', 0)
+                    if sku:
+                        scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
+
+        # Add completed orders to scanned count
+        for order_num in completed_orders_list:
+            order_items = df[df['Order_Number'] == order_num]
+            for _, item in order_items.iterrows():
+                sku = item['SKU']
+                qty = pd.to_numeric(item['Quantity'], errors='coerce')
+                if pd.notna(qty):
+                    scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + int(qty)
+
+        for idx, row in sku_summary.iterrows():
+            sku = row['SKU']
+            product = row['Product_Name']
+            qty = row['Quantity']
+            qty_int = int(qty) if pd.notna(qty) else 0
+
+            # Check if fully scanned
+            scanned = scanned_by_sku.get(sku, 0)
+            if scanned >= qty_int:
+                status = "✅ Complete"
+            else:
+                status = f"⏳ {scanned}/{qty_int}"
+
+            self.sku_table.setItem(idx, 0, QTableWidgetItem(sku))
+            self.sku_table.setItem(idx, 1, QTableWidgetItem(product))
+            self.sku_table.setItem(idx, 2, QTableWidgetItem(str(qty_int)))
+            self.sku_table.setItem(idx, 3, QTableWidgetItem(status))
+
+        self.sku_table.resizeColumnsToContents()
 
     def _select_worker(self) -> bool:
         """Show worker selection dialog
@@ -492,8 +977,9 @@ class MainWindow(QMainWindow):
             self.status_label.setText("A session is already active. Please end it first.")
             return
 
-        # Clear existing table
-        self.orders_table.setModel(None)
+        # Clear existing tree
+        if hasattr(self, 'order_tree'):
+            self.order_tree.clear()
 
         # File selection dialog if no path provided
         if not file_path:
@@ -663,12 +1149,21 @@ class MainWindow(QMainWindow):
                 output_path = os.path.join(output_dir, new_filename)
                 logger.info(f"Saving Excel session report to: {output_path}")
 
-            status_map = self.order_summary_df.set_index('Order_Number')['Status'].to_dict()
-            completed_at_map = self.order_summary_df.set_index('Order_Number')['Completed At'].to_dict()
+            # Generate status map from session packing state
+            completed_orders_set = set(self.logic.session_packing_state.get('completed_orders', []))
+            in_progress_orders = self.logic.session_packing_state.get('in_progress', {})
 
             final_df = self.logic.packing_list_df.copy()
-            final_df['Status'] = final_df['Order_Number'].map(status_map).fillna('New')
-            final_df['Completed At'] = final_df['Order_Number'].map(completed_at_map).fillna('')
+
+            # Add Status column
+            final_df['Status'] = final_df['Order_Number'].apply(
+                lambda x: 'Completed' if x in completed_orders_set else ('In Progress' if x in in_progress_orders else 'New')
+            )
+
+            # Add Completed At column
+            final_df['Completed At'] = final_df['Order_Number'].apply(
+                lambda x: datetime.now().strftime("%Y-%m-%d %H:%M:%S") if x in completed_orders_set else ''
+            )
 
             with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                 final_df.to_excel(writer, index=False, sheet_name='Sheet1')
@@ -912,7 +1407,15 @@ class MainWindow(QMainWindow):
         self.end_session_button.setEnabled(False)
         self.print_button.setEnabled(False)
         self.packer_mode_button.setEnabled(False)
-        self.orders_table.setModel(None)
+
+        # Disable toolbar end button and reset session info
+        if hasattr(self, 'toolbar_end_btn'):
+            self.toolbar_end_btn.setEnabled(False)
+        if hasattr(self, 'session_info_label'):
+            self.session_info_label.setText("No active session")
+
+        if hasattr(self, 'order_tree'):
+            self.order_tree.clear()
         self.status_label.setText("Session ended. Start a new session to begin.")
 
         logger.info("Session ended and all variables cleared")
@@ -994,61 +1497,18 @@ class MainWindow(QMainWindow):
 
     def setup_order_table(self):
         """
-        Generates an aggregated summary and sets up the main orders table.
+        Sets up the expandable order tree and statistics display.
 
-        This method transforms the detailed, item-level DataFrame from
-        PackerLogic into a summarized, per-order view. It then initializes
-        the table model and the proxy model for filtering.
+        This method populates the tree widget with orders and items,
+        and updates the statistics tab with session metrics.
         """
-        df = self.logic.processed_df
-        extra_cols = [col for col in df.columns if col not in REQUIRED_COLUMNS]
+        # Populate the expandable tree
+        self._populate_order_tree()
 
-        agg_dict = {
-            'SKU': 'nunique',
-            'Quantity': lambda x: pd.to_numeric(x, errors='coerce').sum()
-        }
-        for col in extra_cols:
-            agg_dict[col] = 'first'
+        # Update statistics
+        self._update_statistics()
 
-        order_summary = df.groupby('Order_Number').agg(agg_dict).reset_index()
-        order_summary.rename(columns={'SKU': 'Total_SKUs', 'Quantity': 'Total_Quantity'}, inplace=True)
-
-        final_cols = ['Order_Number'] + extra_cols + ['Total_SKUs', 'Total_Quantity']
-        order_summary = order_summary[final_cols]
-
-        order_summary['Packing Progress'] = "0 / " + order_summary['Total_Quantity'].astype(int).astype(str)
-        order_summary['Status'] = 'New'
-        order_summary['Completed At'] = ''
-
-        completed_orders = self.logic.session_packing_state.get('completed_orders', [])
-        in_progress_orders = self.logic.session_packing_state.get('in_progress', {})
-
-        for index, row in order_summary.iterrows():
-            order_number = row['Order_Number']
-            total_required = order_summary.at[index, 'Total_Quantity']
-
-            if order_number in completed_orders:
-                order_summary.at[index, 'Status'] = 'Completed'
-                order_summary.at[index, 'Packing Progress'] = f"{int(total_required)} / {int(total_required)}"
-            elif order_number in in_progress_orders:
-                order_state = in_progress_orders[order_number]
-                # Handle both list format (current) and dict format (legacy)
-                if isinstance(order_state, list):
-                    total_packed = sum(s['packed'] for s in order_state)
-                else:
-                    total_packed = sum(s['packed'] for s in order_state.values())
-                order_summary.at[index, 'Packing Progress'] = f"{total_packed} / {int(total_required)}"
-                if total_packed > 0:
-                    order_summary.at[index, 'Status'] = 'In Progress'
-
-        self.order_summary_df = order_summary
-        self.table_model = OrderTableModel(self.order_summary_df)
-        self.proxy_model = CustomFilterProxyModel()
-        self.proxy_model.setSourceModel(self.table_model)
-        self.proxy_model.set_processed_df(self.logic.processed_df)
-        self.orders_table.setModel(self.proxy_model)
-        self.search_input.textChanged.connect(self.proxy_model.setFilterFixedString)
-        self.orders_table.resizeColumnsToContents()
+        logger.info("Order tree and statistics updated successfully")
 
     def switch_to_packer_mode(self):
         """Switches the view to the Packer Mode widget."""
@@ -1232,60 +1692,30 @@ class MainWindow(QMainWindow):
         Slot to handle real-time progress updates from the logic layer.
 
         This method is connected to the `item_packed` signal from PackerLogic.
-        It updates the 'Packing Progress' cell in the main orders table.
+        It refreshes the tree and statistics to reflect the updated progress.
 
         Args:
             order_number (str): The order number that was updated.
             packed_count (int): The new total of items packed for the order.
             required_count (int): The total items required for the order.
         """
-        try:
-            row_index = self.order_summary_df.index[self.order_summary_df['Order_Number'] == order_number][0]
-            progress_col_index = self.order_summary_df.columns.get_loc('Packing Progress')
-
-            new_progress = f"{packed_count} / {required_count}"
-            self.order_summary_df.iloc[row_index, progress_col_index] = new_progress
-
-            self.table_model.dataChanged.emit(
-                self.table_model.index(row_index, progress_col_index),
-                self.table_model.index(row_index, progress_col_index)
-            )
-        except (IndexError, KeyError):
-            pass
+        # Refresh tree and statistics to show updated progress
+        self._populate_order_tree()
+        self._update_statistics()
+        logger.debug(f"Order {order_number} progress: {packed_count}/{required_count}")
 
     def update_order_status(self, order_number: str, status: str):
         """
-        Updates the status and related fields of an order in the main table.
+        Updates the status of an order in the tree view.
 
         Args:
             order_number (str): The order number to update.
             status (str): The new status ('In Progress' or 'Completed').
         """
-        try:
-            row_index = self.order_summary_df.index[self.order_summary_df['Order_Number'] == order_number][0]
-
-            status_col_index = self.order_summary_df.columns.get_loc('Status')
-            self.order_summary_df.iloc[row_index, status_col_index] = status
-
-            progress_col_index = self.order_summary_df.columns.get_loc('Packing Progress')
-            if status == 'Completed':
-                total_quantity = self.order_summary_df.iloc[row_index]['Total_Quantity']
-                self.order_summary_df.iloc[row_index, progress_col_index] = f"{int(total_quantity)} / {int(total_quantity)}"
-                completed_col_index = self.order_summary_df.columns.get_loc('Completed At')
-                self.order_summary_df.iloc[row_index, completed_col_index] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            elif status == 'In Progress':
-                if order_number in self.logic.session_packing_state:
-                    order_state = self.logic.session_packing_state[order_number]
-                    total_packed = sum(s['packed'] for s in order_state.values())
-                    total_required = sum(s['required'] for s in order_state.values())
-                    self.order_summary_df.iloc[row_index, progress_col_index] = f"{total_packed} / {total_required}"
-
-            self.table_model.dataChanged.emit(
-                self.table_model.index(row_index, 0),
-                self.table_model.index(row_index, self.table_model.columnCount() - 1)
-            )
-        except (IndexError, KeyError):
-            logger.warning(f"Could not update status for order number {order_number}. Not found in summary table.")
+        # Simply refresh the tree and statistics to reflect the new status
+        self._populate_order_tree()
+        self._update_statistics()
+        logger.debug(f"Order {order_number} status updated to: {status}")
 
     def open_restore_session_dialog(self):
         """Open dialog to select and restore an incomplete session."""
@@ -1635,7 +2065,7 @@ class MainWindow(QMainWindow):
         This method:
         - Disables session start buttons
         - Enables packing operation buttons
-        - Updates status message
+        - Updates status message and toolbar
         - Prepares UI for packing operations
         """
         logger.info("Enabling packing mode UI")
@@ -1650,11 +2080,23 @@ class MainWindow(QMainWindow):
         self.print_button.setEnabled(True)
         self.packer_mode_button.setEnabled(True)
 
+        # Enable toolbar end button
+        if hasattr(self, 'toolbar_end_btn'):
+            self.toolbar_end_btn.setEnabled(True)
+
+        # Update session info label in toolbar
+        if hasattr(self, 'session_info_label') and hasattr(self, 'current_packing_list'):
+            session_name = self.current_packing_list if self.current_packing_list else "Active Session"
+            self.session_info_label.setText(f"📦 {session_name}")
+
         # Update status
-        self.status_label.setText(
-            f"Ready to pack: {self.current_packing_list}\n"
-            f"Orders: {self.packing_data.get('total_orders', 0)}"
-        )
+        if hasattr(self, 'packing_data') and self.packing_data:
+            self.status_label.setText(
+                f"Ready to pack: {self.current_packing_list}\n"
+                f"Orders: {self.packing_data.get('total_orders', 0)}"
+            )
+        else:
+            self.status_label.setText("Ready to pack")
 
         logger.info("Packing mode UI enabled successfully")
 
@@ -2230,12 +2672,25 @@ def restore_session(window: MainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # Load and apply stylesheet
+    # Apply Fusion style for modern cross-platform appearance
+    app.setStyle('Fusion')
+
+    # Optional: Light color palette
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(240, 240, 240))
+    palette.setColor(QPalette.WindowText, Qt.black)
+    palette.setColor(QPalette.Base, QColor(255, 255, 255))
+    palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))
+    palette.setColor(QPalette.Highlight, QColor(0, 120, 212))
+    palette.setColor(QPalette.HighlightedText, Qt.white)
+    app.setPalette(palette)
+
+    # Load and apply additional stylesheet (if exists)
     try:
         with open("src/styles.qss", "r") as f:
             app.setStyleSheet(f.read())
     except FileNotFoundError:
-        print("Warning: stylesheet 'src/styles.qss' not found.")
+        print("Warning: stylesheet 'src/styles.qss' not found (using Fusion style).")
 
     window = MainWindow()
 
