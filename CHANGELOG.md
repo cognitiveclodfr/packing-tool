@@ -4,9 +4,50 @@ All notable changes to Packing Tool will be documented in this file.
 
 ## [1.3.0] - In Progress
 
-### 🎯 Major Release - Session Browser (Phase 3.1 + 3.2 Complete)
+### 🎯 Major Release - Session Browser & UI/UX Enhancements
 
 ### ✨ Added
+
+**UI/UX Improvements:**
+- **Expandable Order Table**: Replaced flat table with hierarchical tree widget
+  - Orders display as expandable/collapsible tree nodes
+  - Child items show SKU, product name, quantity, and scan status
+  - Real-time status updates with visual icons (✅ Completed, ⏳ Pending)
+  - Automatic expand for in-progress orders, collapse for completed
+  - Bold formatting for order headers, normal for items
+  - Search/filter functionality across orders and SKUs
+
+- **Statistics Tab**: New comprehensive session analytics view
+  - **Session Totals**: Total orders, completed orders, items, unique SKUs, progress percentage
+  - **By Courier**: Breakdown showing order and item counts per courier
+  - **SKU Summary Table**: Complete inventory view with scan status per SKU
+  - Real-time updates during packing operations
+  - Scroll area for comfortable viewing of large datasets
+
+- **Modern UI Styling**:
+  - Styled group boxes with borders and rounded corners
+  - Consistent 11pt font sizing throughout application
+  - 30px row heights for comfortable reading
+  - Rounded buttons and input fields
+  - Professional padding and spacing
+
+- **Enhanced Menu Bar**:
+  - Organized into File, Session, and Settings menus
+  - Icons for visual clarity (📁, 📦, ⚙️)
+  - Quick access to all major functions
+  - Proper keyboard shortcuts
+
+- **New Toolbar**:
+  - Quick-access buttons for common operations
+  - Session info label showing active session
+  - End session button in toolbar
+  - Visual feedback for session state
+
+- **Improved Layout**:
+  - Minimum window size of 1200x700 for optimal viewing
+  - Responsive design with proper spacing
+  - Tab-based interface for Packing and Statistics views
+  - Professional appearance with consistent padding
 
 **Session Browser (Phase 3.1):**
 - New unified Session Browser widget replacing Restore Session dialog and Session Monitor

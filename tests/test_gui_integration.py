@@ -329,13 +329,12 @@ def test_start_session_and_load_data(app_basic):
     assert window.end_session_button.isEnabled()
     assert window.packer_mode_button.isEnabled()
 
-    # Check if the orders table is populated
-    model = window.orders_table.model()
-    assert model is not None
-    assert model.rowCount() > 0
-    assert model.columnCount() > 0
+    # Check if the orders tree is populated
+    assert hasattr(window, 'order_tree'), "Window should have order_tree attribute"
+    order_tree = window.order_tree
+    assert order_tree is not None
     # The test data has two unique orders
-    assert model.rowCount() == 2
+    assert order_tree.topLevelItemCount() == 2
 
 def test_packer_mode_and_scan_simulation(app_basic):
     """
@@ -395,35 +394,52 @@ def test_packer_mode_and_scan_simulation(app_basic):
 
 def test_search_filter(app_basic):
     """
-    Test Case 3: Verifies the search filter functionality on the main table.
+    Test Case 3: Verifies the search filter functionality on the order tree.
     """
     window, qtbot = app_basic
 
     # --- Setup: Start a session first ---
     qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
-    proxy_model = window.orders_table.model()
-    assert proxy_model.rowCount() == 2
+    order_tree = window.order_tree
+
+    # Helper function to count visible items
+    def count_visible_items():
+        count = 0
+        for i in range(order_tree.topLevelItemCount()):
+            if not order_tree.topLevelItem(i).isHidden():
+                count += 1
+        return count
+
+    assert count_visible_items() == 2
 
     # --- Step 1: Filter by Order Number ---
     qtbot.keyClicks(window.search_input, "ORD-001")
-    assert proxy_model.rowCount() == 1
+    assert count_visible_items() == 1
+    # Check that the correct order is shown
+    for i in range(order_tree.topLevelItemCount()):
+        item = order_tree.topLevelItem(i)
+        if not item.isHidden():
+            assert "ORD-001" in item.text(0)
 
     # --- Step 2: Filter by SKU ---
     window.search_input.clear()
     qtbot.keyClicks(window.search_input, "SKU-C")
-    assert proxy_model.rowCount() == 1
+    assert count_visible_items() == 1
     # Check that the correct order is shown
-    first_cell_index = proxy_model.index(0, 0)
-    assert proxy_model.data(first_cell_index) == "ORD-002"
+    for i in range(order_tree.topLevelItemCount()):
+        item = order_tree.topLevelItem(i)
+        if not item.isHidden():
+            assert "ORD-002" in item.text(0)
 
-    # --- Step 3: Filter by Status (no results expected) ---
+    # --- Step 3: Filter by Status (no results expected for "Completed" in new orders) ---
     window.search_input.clear()
     qtbot.keyClicks(window.search_input, "Completed")
-    assert proxy_model.rowCount() == 0
+    # New orders won't have "Completed" status, so count should be 0
+    assert count_visible_items() == 0
 
     # --- Step 4: Clear filter ---
     window.search_input.clear()
-    assert proxy_model.rowCount() == 2
+    assert count_visible_items() == 2
 
 def test_reload_in_progress_order_restores_ui_state(app_duplicates):
     """
