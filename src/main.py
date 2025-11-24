@@ -2672,25 +2672,12 @@ def restore_session(window: MainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # Apply Fusion style for modern cross-platform appearance
-    app.setStyle('Fusion')
-
-    # Optional: Light color palette
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(240, 240, 240))
-    palette.setColor(QPalette.WindowText, Qt.black)
-    palette.setColor(QPalette.Base, QColor(255, 255, 255))
-    palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))
-    palette.setColor(QPalette.Highlight, QColor(0, 120, 212))
-    palette.setColor(QPalette.HighlightedText, Qt.white)
-    app.setPalette(palette)
-
-    # Load and apply additional stylesheet (if exists)
+    # Load and apply stylesheet
     try:
         with open("src/styles.qss", "r") as f:
             app.setStyleSheet(f.read())
     except FileNotFoundError:
-        print("Warning: stylesheet 'src/styles.qss' not found (using Fusion style).")
+        print("Warning: stylesheet 'src/styles.qss' not found.")
 
     window = MainWindow()
 

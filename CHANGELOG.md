@@ -25,12 +25,11 @@ All notable changes to Packing Tool will be documented in this file.
   - Scroll area for comfortable viewing of large datasets
 
 - **Modern UI Styling**:
-  - Applied Fusion style for consistent cross-platform appearance
-  - Custom light color palette with professional blue highlights
   - Styled group boxes with borders and rounded corners
   - Consistent 11pt font sizing throughout application
   - 30px row heights for comfortable reading
   - Rounded buttons and input fields
+  - Professional padding and spacing
 
 - **Enhanced Menu Bar**:
   - Organized into File, Session, and Settings menus
