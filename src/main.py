@@ -545,13 +545,13 @@ class MainWindow(QMainWindow):
                     # Find this SKU in the order state
                     if isinstance(order_state, list):
                         for item_state in order_state:
-                            if item_state.get('sku') == sku:
+                            if item_state.get('original_sku') == sku:
                                 scanned_qty = item_state.get('packed', 0)
                                 break
                     else:
                         # Legacy dict format
                         for item_state in order_state.values():
-                            if item_state.get('sku') == sku:
+                            if item_state.get('original_sku') == sku:
                                 scanned_qty = item_state.get('packed', 0)
                                 break
                 elif is_completed:
@@ -753,13 +753,13 @@ class MainWindow(QMainWindow):
         for order_state in in_progress_orders.values():
             if isinstance(order_state, list):
                 for item_state in order_state:
-                    sku = item_state.get('sku')
+                    sku = item_state.get('original_sku')
                     packed = item_state.get('packed', 0)
                     if sku:
                         scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
             else:
                 for item_state in order_state.values():
-                    sku = item_state.get('sku')
+                    sku = item_state.get('original_sku')
                     packed = item_state.get('packed', 0)
                     if sku:
                         scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
@@ -2006,6 +2006,24 @@ class MainWindow(QMainWindow):
 
         except FileNotFoundError as e:
             logger.error(f"Packing list file not found: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "File Not Found",
@@ -2013,6 +2031,24 @@ class MainWindow(QMainWindow):
             )
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in packing list: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Invalid Data",
@@ -2020,6 +2056,24 @@ class MainWindow(QMainWindow):
             )
         except KeyError as e:
             logger.error(f"Missing required key in packing list: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Invalid Format",
@@ -2027,36 +2081,92 @@ class MainWindow(QMainWindow):
             )
         except ValueError as e:
             logger.error(f"Invalid packing data: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
+            # Cleanup on failure
+            if self.logic:
+                self.logic = None
+
             QMessageBox.critical(
                 self,
                 "Invalid Data",
                 f"Packing data validation failed:\n{str(e)}"
             )
+        except RuntimeError as e:
+            logger.error(f"Barcode generation failed: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             # Cleanup on failure
             if self.logic:
                 self.logic = None
-        except RuntimeError as e:
-            logger.error(f"Barcode generation failed: {e}", exc_info=True)
+
             QMessageBox.critical(
                 self,
                 "Generation Failed",
                 f"Failed to generate barcodes:\n{str(e)}"
             )
-            # Cleanup on failure
-            if self.logic:
-                self.logic = None
         except Exception as e:
             logger.error(f"Failed to load packing list: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Failed to load packing list:\n{str(e)}"
-            )
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
 
             # Cleanup on failure
             if self.session_manager:
                 self.session_manager = None
             self.logic = None
+
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to load packing list:\n{str(e)}"
+            )
 
     def enable_packing_mode(self):
         """
@@ -2357,6 +2467,24 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"Failed to start packing from browser: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    from pathlib import Path
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released after error in start_packing_from_browser")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Start Packing Failed",
