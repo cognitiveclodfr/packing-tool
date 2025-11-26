@@ -10,8 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox, QInputDialog, QHeaderView, QAbstractItemView,
     QLabel
 )
-from PySide6.QtCore import Qt
-from typing import Dict, Optional
+from typing import Dict
 
 from logger import get_logger
 

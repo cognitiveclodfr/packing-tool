@@ -7,9 +7,8 @@ No authentication - trust-based system.
 
 import logging
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QScrollArea, QWidget, QFrame, QMessageBox,
-    QInputDialog
+    QDialog, QVBoxLayout, QPushButton, QLabel,
+    QScrollArea, QWidget, QFrame, QMessageBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont

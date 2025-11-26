@@ -41,7 +41,6 @@ class PackingToolError(Exception):
     Note: This does NOT inherit from built-in errors like ValueError, IOError
     to maintain clear separation between application and system errors.
     """
-    pass
 
 
 class NetworkError(PackingToolError):
@@ -68,7 +67,6 @@ class NetworkError(PackingToolError):
                 f"Please check network connection and try again."
             )
     """
-    pass
 
 
 class SessionLockedError(PackingToolError):
@@ -288,7 +286,6 @@ class ProfileError(PackingToolError):
         if not validate_client_id(client_id):
             raise ProfileError(f"Invalid client ID: {client_id}")
     """
-    pass
 
 
 class ValidationError(PackingToolError):
@@ -313,4 +310,3 @@ class ValidationError(PackingToolError):
         if not is_valid:
             raise ValidationError(error_msg)
     """
-    pass

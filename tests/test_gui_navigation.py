@@ -8,7 +8,7 @@ Tests cover:
 - View switching
 """
 import unittest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 import tempfile
 import shutil

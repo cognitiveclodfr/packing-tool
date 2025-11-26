@@ -322,7 +322,6 @@ class TestFileLocking:
 
     def test_file_lock_timeout_raises_error(self, temp_base_path):
         """Test that file lock timeout raises appropriate error."""
-        from unittest.mock import patch, MagicMock
 
         manager = StatsManager(base_path=temp_base_path, max_retries=1)
 
@@ -349,7 +348,6 @@ class TestFileLocking:
 
     def test_retry_mechanism_on_lock_failure(self, temp_base_path):
         """Test that retry mechanism works on temporary lock failures."""
-        from unittest.mock import patch
 
         manager = StatsManager(base_path=temp_base_path, max_retries=3, retry_delay=0.05)
 

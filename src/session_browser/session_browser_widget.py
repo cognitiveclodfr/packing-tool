@@ -6,7 +6,7 @@ Replaces old Restore Session dialog and Session Monitor.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget, QMessageBox
+    QWidget, QVBoxLayout, QTabWidget
 )
 from PySide6.QtCore import Signal, QTimer
 

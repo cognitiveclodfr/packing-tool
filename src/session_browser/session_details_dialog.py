@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QMessageBox, QFileDialog
 )
-from PySide6.QtCore import Qt
 
 from .overview_tab import OverviewTab
 from .orders_tab import OrdersTab

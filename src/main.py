@@ -10,31 +10,27 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
-    QTableView, QHBoxLayout, QMessageBox, QHeaderView, QLineEdit, QComboBox, QDialog, QFormLayout,
-    QDialogButtonBox, QTabWidget, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
-    QGroupBox, QScrollArea
+    QHBoxLayout, QMessageBox, QLineEdit, QComboBox, QDialog, QFormLayout, QDialogButtonBox, QTabWidget,
+    QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QGroupBox, QScrollArea
 )
-from PySide6.QtGui import QAction, QFont, QPalette, QColor, QCloseEvent
-from PySide6.QtCore import QTimer, Qt, QSettings, QSize
+from PySide6.QtGui import QAction, QFont, QCloseEvent
+from PySide6.QtCore import QTimer, QSettings, QSize
 from datetime import datetime
 from openpyxl.styles import PatternFill
 import pandas as pd
 
 from logger import get_logger
-from profile_manager import ProfileManager, ProfileManagerError, NetworkError, ValidationError
+from profile_manager import ProfileManager, NetworkError, ValidationError
 from session_lock_manager import SessionLockManager
 from exceptions import SessionLockedError, StaleLockError
-from restore_session_dialog import RestoreSessionDialog
 from session_selector import SessionSelectorDialog
 from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
 from packer_mode_widget import PackerModeWidget
 from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
-from order_table_model import OrderTableModel
 from shared.stats_manager import StatsManager
 from shared.worker_manager import WorkerManager
-from custom_filter_proxy_model import CustomFilterProxyModel
 from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager

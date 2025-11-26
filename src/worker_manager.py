@@ -17,7 +17,6 @@ logger = get_logger(__name__)
 
 class WorkerManagerError(Exception):
     """Base exception for WorkerManager errors."""
-    pass
 
 
 class WorkerManager:

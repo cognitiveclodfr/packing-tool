@@ -9,7 +9,7 @@ Tests for:
 - Metrics Tab
 """
 import unittest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock
 from pathlib import Path
 import json
 import tempfile

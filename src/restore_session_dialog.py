@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QMessageBox
 )
 from PySide6.QtCore import Qt
-from datetime import datetime
 
 from logger import get_logger
 

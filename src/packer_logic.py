@@ -1,6 +1,5 @@
 # Standard library imports
 import os
-import sys
 import tempfile
 import shutil
 
@@ -24,7 +23,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, Signal
 
 # Type hints for better code documentation
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple
 
 # Local imports
 from logger import get_logger
