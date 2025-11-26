@@ -156,6 +156,13 @@ class MainWindow(QMainWindow):
         self.packing_data = None          # Loaded packing list data
 
         # Phase 1.4: Unified StatsManager for integration with Shopify Tool statistics
+        # Records packing statistics to shared Stats/global_stats.json on file server
+        # Used for:
+        # 1. Historical analytics and performance tracking across both tools
+        # 2. Integration with Shopify Tool (shared statistics file)
+        # 3. Warehouse operation audit trail and worker performance metrics
+        # 4. Per-client analytics and reporting
+        # Note: Called once per session (at completion) by design - records session totals
         self.stats_manager = StatsManager(base_path=str(base_path))
 
         # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
