@@ -296,8 +296,55 @@ class PackerLogic(QObject):
                 # Could be new format (with metadata) or old direct format
                 state_data = data
 
-            # Load core packing state
-            self.session_packing_state['in_progress'] = state_data.get('in_progress', {})
+            # Load core packing state with validation
+            # CRITICAL FIX: Validate in_progress structure to prevent AttributeError on resume
+            raw_in_progress = state_data.get('in_progress', {})
+            validated_in_progress = {}
+
+            if isinstance(raw_in_progress, dict):
+                for order_num, order_state in raw_in_progress.items():
+                    # Skip internal metadata keys (like _timing)
+                    if order_num.startswith('_'):
+                        continue
+
+                    # Validate that order_state is a list
+                    if not isinstance(order_state, list):
+                        logger.error(
+                            f"CRITICAL: Invalid order state for {order_num}: expected list, got {type(order_state).__name__}. "
+                            f"Skipping this order to prevent crash."
+                        )
+                        continue
+
+                    # Validate that each item in the list is a dict
+                    validated_items = []
+                    for idx, item_state in enumerate(order_state):
+                        if not isinstance(item_state, dict):
+                            logger.error(
+                                f"CRITICAL: Invalid item state in order {order_num} at index {idx}: "
+                                f"expected dict, got {type(item_state).__name__}. Skipping this item."
+                            )
+                            continue
+
+                        # Ensure required keys exist
+                        required_keys = ['original_sku', 'normalized_sku', 'required', 'packed', 'row']
+                        if all(key in item_state for key in required_keys):
+                            validated_items.append(item_state)
+                        else:
+                            missing_keys = [key for key in required_keys if key not in item_state]
+                            logger.error(
+                                f"CRITICAL: Item state in order {order_num} missing keys: {missing_keys}. Skipping item."
+                            )
+
+                    # Only include orders with valid items
+                    if validated_items:
+                        validated_in_progress[order_num] = validated_items
+                    else:
+                        logger.warning(f"Order {order_num} has no valid items after validation, skipping")
+            else:
+                logger.error(f"in_progress is not a dict: {type(raw_in_progress).__name__}, using empty state")
+
+            self.session_packing_state['in_progress'] = validated_in_progress
+            logger.debug(f"Loaded and validated {len(validated_in_progress)} in-progress orders")
 
             # Handle both new format (completed: list of dicts) and old format (completed_orders: list of strings)
             if 'completed' in state_data:
