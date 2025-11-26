@@ -252,25 +252,113 @@ class ActiveSessionsTab(QWidget):
             return 0.0
 
     def _get_progress(self, work_dir: Path) -> dict:
-        """Get packing progress from packing_state.json."""
+        """
+        Get packing progress from packing_state.json.
+
+        CRITICAL FIX: Updated to read from new state structure (v1.3.0) with
+        progress metadata. Also handles legacy formats for backward compatibility.
+
+        Returns:
+            dict: Progress information with keys:
+                - completed: Number of completed orders
+                - total: Total number of orders
+                - in_progress: Number of in-progress orders (optional)
+                - progress_pct: Completion percentage (optional)
+        """
         state_file = work_dir / "packing_state.json"
 
         if not state_file.exists():
-            return {'completed': 0, 'total': 0}
+            return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
 
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
                 state = json.load(f)
 
-            data = state.get('data', {})
-            orders = data.get('orders', [])
-            completed = sum(1 for o in orders if o.get('status') == 'completed')
+            # Try new format first (v1.3.0+)
+            if 'progress' in state:
+                # New format: direct progress metadata
+                progress_data = state.get('progress', {})
+                total = progress_data.get('total_orders', 0)
+                completed = progress_data.get('completed_orders', 0)
+                in_progress_count = len(state.get('in_progress', {}))
 
-            return {'completed': completed, 'total': len(orders)}
+                # Calculate percentage
+                progress_pct = (completed / total * 100) if total > 0 else 0.0
+
+                return {
+                    'completed': completed,
+                    'total': total,
+                    'in_progress': in_progress_count,
+                    'progress_pct': progress_pct
+                }
+
+            # Try legacy format with 'data' wrapper
+            elif 'data' in state:
+                data = state.get('data', {})
+
+                # Check if data has in_progress/completed structure
+                if 'in_progress' in data or 'completed' in data:
+                    in_progress_dict = data.get('in_progress', {})
+                    completed_list = data.get('completed', [])
+
+                    # Handle both list of strings and list of dicts
+                    if completed_list and isinstance(completed_list[0], dict):
+                        completed_count = len(completed_list)
+                    else:
+                        completed_count = len(completed_list) if isinstance(completed_list, list) else 0
+
+                    in_progress_count = len(in_progress_dict)
+                    total = completed_count + in_progress_count
+
+                    progress_pct = (completed_count / total * 100) if total > 0 else 0.0
+
+                    return {
+                        'completed': completed_count,
+                        'total': total,
+                        'in_progress': in_progress_count,
+                        'progress_pct': progress_pct
+                    }
+
+                # Older format with orders array
+                else:
+                    orders = data.get('orders', [])
+                    completed = sum(1 for o in orders if o.get('status') == 'completed')
+
+                    return {
+                        'completed': completed,
+                        'total': len(orders),
+                        'progress_pct': (completed / len(orders) * 100) if len(orders) > 0 else 0.0
+                    }
+
+            # Direct format without 'data' wrapper
+            else:
+                in_progress_dict = state.get('in_progress', {})
+                completed_list = state.get('completed', state.get('completed_orders', []))
+
+                # Handle both list of strings and list of dicts
+                if completed_list and isinstance(completed_list, list) and len(completed_list) > 0:
+                    if isinstance(completed_list[0], dict):
+                        completed_count = len(completed_list)
+                    else:
+                        completed_count = len(completed_list)
+                else:
+                    completed_count = 0
+
+                in_progress_count = len(in_progress_dict)
+                total = completed_count + in_progress_count
+
+                progress_pct = (completed_count / total * 100) if total > 0 else 0.0
+
+                return {
+                    'completed': completed_count,
+                    'total': total,
+                    'in_progress': in_progress_count,
+                    'progress_pct': progress_pct
+                }
 
         except Exception as e:
-            logger.warning(f"Failed to get progress: {e}")
-            return {'completed': 0, 'total': 0}
+            logger.error(f"Failed to get progress from {state_file}: {e}", exc_info=True)
+            return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
 
     def _populate_table(self):
         """Fill table with session data."""
@@ -309,10 +397,31 @@ class ActiveSessionsTab(QWidget):
             age_text = f"{int(lock_age)} min" if lock_age else "N/A"
             self.table.setItem(row, 6, QTableWidgetItem(age_text))
 
-            # Progress
+            # Progress (with percentage and color coding)
             progress = session['progress']
-            progress_text = f"{progress['completed']}/{progress['total']}"
-            self.table.setItem(row, 7, QTableWidgetItem(progress_text))
+            completed = progress.get('completed', 0)
+            total = progress.get('total', 0)
+            progress_pct = progress.get('progress_pct', 0.0)
+
+            # Format: "5/10 (50%)"
+            if total > 0:
+                progress_text = f"{completed}/{total} ({progress_pct:.0f}%)"
+            else:
+                progress_text = "N/A"
+
+            progress_item = QTableWidgetItem(progress_text)
+
+            # Color code based on progress percentage
+            if progress_pct >= 75:
+                progress_item.setForeground(QColor(0, 150, 0))  # Green - almost done
+            elif progress_pct >= 25:
+                progress_item.setForeground(QColor(200, 100, 0))  # Orange - in progress
+            elif progress_pct > 0:
+                progress_item.setForeground(QColor(100, 100, 100))  # Gray - just started
+            else:
+                progress_item.setForeground(QColor(150, 150, 150))  # Light gray - not started
+
+            self.table.setItem(row, 7, progress_item)
 
     def _get_worker_name(self, worker_id: str) -> str:
         """Get worker display name from worker_id."""
