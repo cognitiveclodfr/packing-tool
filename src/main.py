@@ -1144,6 +1144,189 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'packing_data'):
             self.packing_data = None
 
+    def start_shopify_packing_session(
+        self,
+        packing_list_path: Path,
+        work_dir: Path,
+        session_path: Path,
+        client_id: str,
+        packing_list_name: str
+    ) -> bool:
+        """
+        Start packing session for Shopify packing list (new or resumed).
+
+        This method handles BOTH:
+        - Resuming interrupted sessions (from Session Browser)
+        - Starting new sessions (from open_shopify_session)
+
+        Args:
+            packing_list_path: Path to packing list JSON file
+            work_dir: Path to work directory (packing/{list_name}/)
+            session_path: Path to session directory (Sessions/CLIENT_X/2025-XX-XX_X/)
+            client_id: Client identifier
+            packing_list_name: Name of the packing list
+
+        Returns:
+            bool: True if session started successfully, False otherwise
+
+        Raises:
+            FileNotFoundError: If packing list file not found
+            json.JSONDecodeError: If packing list JSON is invalid
+            ValueError: If packing data is invalid
+            RuntimeError: If barcode generation fails
+        """
+        try:
+            logger.info(f"Starting Shopify packing session: {packing_list_path}")
+            logger.info(f"Work directory: {work_dir}")
+            logger.info(f"Session path: {session_path}")
+
+            # 1. Validate packing list file exists
+            if not packing_list_path.exists():
+                raise FileNotFoundError(f"Packing list not found: {packing_list_path}")
+
+            # 2. Store session state
+            self.current_session_path = str(session_path)
+            self.current_packing_list = packing_list_name
+            self.current_work_dir = str(work_dir)
+
+            # 3. Acquire lock on work directory (with stale lock handling)
+            success, error_msg = self.lock_manager.acquire_lock(
+                client_id=client_id,
+                session_dir=work_dir,
+                worker_id=self.current_worker_id,
+                worker_name=self.current_worker_name
+            )
+
+            if not success:
+                # Check if stale lock (error message contains "stale" keyword)
+                if error_msg and "stale" in error_msg.lower():
+                    reply = QMessageBox.question(
+                        self, "Stale Lock Detected",
+                        f"{error_msg}\n\nForce-release lock and continue?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        self.lock_manager.force_release_lock(work_dir)
+                        success, error_msg = self.lock_manager.acquire_lock(
+                            client_id,
+                            work_dir,
+                            worker_id=self.current_worker_id,
+                            worker_name=self.current_worker_name
+                        )
+                        if not success:
+                            raise RuntimeError(f"Failed to acquire lock after force-release: {error_msg}")
+                    else:
+                        # User chose not to force-release
+                        return False
+                else:
+                    # Active lock by another user
+                    raise RuntimeError(error_msg or "Session is locked by another user")
+
+            logger.info(f"Lock acquired on {work_dir}")
+
+            # 4. Start heartbeat timer
+            self._start_heartbeat_timer()
+            logger.info("Heartbeat timer started")
+
+            # 5. Initialize PackerLogic
+            self.logic = PackerLogic(
+                client_id=client_id,
+                profile_manager=self.profile_manager,
+                work_dir=str(work_dir)
+            )
+
+            # 6. Connect signals
+            self.logic.item_packed.connect(self._on_item_packed)
+
+            # 7. Load packing data into PackerLogic
+            order_count, list_name = self.logic.load_packing_list_json(str(packing_list_path))
+
+            logger.info(f"Loaded {order_count} orders from packing list")
+
+            # 8. Set minimal packing data for UI
+            self.packing_data = {
+                'list_name': list_name,
+                'total_orders': order_count,
+                'orders': []  # Don't duplicate data - PackerLogic has it
+            }
+
+            # 9. Update session metadata
+            if hasattr(self.session_manager, 'update_session_metadata'):
+                try:
+                    self.session_manager.update_session_metadata(
+                        self.current_session_path,
+                        self.current_packing_list,
+                        'in_progress'
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not update session metadata: {e}")
+
+            # 10. Setup order table
+            self.setup_order_table()
+
+            # 11. Update UI state
+            self.status_label.setText(
+                f"Session: {session_path.name} / {packing_list_name}\n"
+                f"Orders: {order_count}\n"
+                f"Ready for packing"
+            )
+
+            # 12. Enable packing UI
+            self.enable_packing_mode()
+
+            logger.info("Shopify packing session started successfully")
+            return True
+
+        except FileNotFoundError as e:
+            logger.error(f"Packing list file not found: {e}", exc_info=True)
+            self._cleanup_failed_session_start()
+            QMessageBox.critical(
+                self,
+                "File Not Found",
+                f"Packing list file not found:\n{str(e)}"
+            )
+            return False
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in packing list: {e}", exc_info=True)
+            self._cleanup_failed_session_start()
+            QMessageBox.critical(
+                self,
+                "Invalid JSON",
+                f"Packing list contains invalid JSON:\n{str(e)}"
+            )
+            return False
+
+        except ValueError as e:
+            logger.error(f"Invalid packing data: {e}", exc_info=True)
+            self._cleanup_failed_session_start()
+            QMessageBox.critical(
+                self,
+                "Invalid Data",
+                f"Packing list contains invalid data:\n{str(e)}"
+            )
+            return False
+
+        except RuntimeError as e:
+            logger.error(f"Failed to start session: {e}", exc_info=True)
+            self._cleanup_failed_session_start()
+            QMessageBox.critical(
+                self,
+                "Session Start Failed",
+                f"Failed to start packing session:\n{str(e)}"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"Unexpected error starting session: {e}", exc_info=True)
+            self._cleanup_failed_session_start()
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Unexpected error starting packing session:\n{str(e)}"
+            )
+            return False
+
     def end_session(self):
         """
         Ends the current session gracefully.
