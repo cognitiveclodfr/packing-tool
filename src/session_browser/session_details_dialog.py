@@ -12,6 +12,7 @@ from .metrics_tab import MetricsTab
 from pathlib import Path
 import json
 from logger import get_logger
+from json_cache import get_cached_json
 
 logger = get_logger(__name__)
 
@@ -64,33 +65,30 @@ class SessionDetailsDialog(QDialog):
         if work_dir:
             work_dir_path = Path(work_dir)
 
-            # Load packing_state.json for basic info
+            # OPTIMIZED: Load packing_state.json for basic info (with caching)
             state_file = work_dir_path / "packing_state.json"
             packing_state = {}
             if state_file.exists():
                 try:
-                    with open(state_file, 'r', encoding='utf-8') as f:
-                        packing_state = json.load(f)
+                    packing_state = get_cached_json(state_file, default={})
                 except Exception as e:
                     logger.warning(f"Failed to load packing_state.json: {e}")
 
-            # Load session_summary.json for Phase 2b data
+            # OPTIMIZED: Load session_summary.json for Phase 2b data (with caching)
             summary_file = work_dir_path / "session_summary.json"
             session_summary = {}
             if summary_file.exists():
                 try:
-                    with open(summary_file, 'r', encoding='utf-8') as f:
-                        session_summary = json.load(f)
+                    session_summary = get_cached_json(summary_file, default={})
                 except Exception as e:
                     logger.warning(f"Failed to load session_summary.json: {e}")
 
-            # Load session_info.json for metadata (in parent directory, not work_dir)
+            # OPTIMIZED: Load session_info.json for metadata (with caching)
             info_file = work_dir_path.parent / "session_info.json"
             session_info = {}
             if info_file.exists():
                 try:
-                    with open(info_file, 'r', encoding='utf-8') as f:
-                        session_info = json.load(f)
+                    session_info = get_cached_json(info_file, default={})
                 except Exception as e:
                     logger.warning(f"Failed to load session_info.json: {e}")
 

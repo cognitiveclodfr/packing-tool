@@ -15,6 +15,7 @@ from datetime import datetime
 import json
 
 from logger import get_logger
+from json_cache import get_cached_json
 
 logger = get_logger(__name__)
 
@@ -154,8 +155,13 @@ class AvailableSessionsTab(QWidget):
 
                     # Load packing list data
                     try:
-                        with open(list_file, 'r', encoding='utf-8') as f:
-                            list_data = json.load(f)
+                        # OPTIMIZED: Use JSON cache for packing list metadata
+                        # When scanning multiple sessions, this reduces repeated disk reads
+                        list_data = get_cached_json(list_file, default={})
+
+                        if not list_data:
+                            logger.warning(f"Empty or invalid packing list: {list_file}")
+                            continue
 
                         available_lists.append({
                             'session_id': session_id,

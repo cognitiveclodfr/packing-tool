@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
 from logger import get_logger
+from json_cache import get_cached_json
 
 logger = get_logger(__name__)
 
@@ -364,9 +365,14 @@ class SessionHistoryManager:
         session_id = session_dir.name
 
         try:
-            # Load packing state
-            with open(state_file, 'r', encoding='utf-8') as f:
-                packing_state = json.load(f)
+            # OPTIMIZED: Load packing state with JSON caching
+            # When scanning 100+ sessions, this reduces I/O from seconds to milliseconds
+            packing_state = get_cached_json(state_file, default=None)
+
+            if packing_state is None:
+                # File exists but couldn't be parsed
+                logger.warning(f"Invalid or empty packing state: {state_file}")
+                return None
 
             # Extract session info if available
             session_info = self._load_session_info(session_dir)
@@ -445,8 +451,9 @@ class SessionHistoryManager:
         info_file = session_dir / "session_info.json"
         if info_file.exists():
             try:
-                with open(info_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                # OPTIMIZED: Use JSON cache for session_info.json
+                # This file is read repeatedly when scanning sessions
+                return get_cached_json(info_file, default=None)
             except Exception as e:
                 logger.warning(f"Error reading session_info.json: {e}")
         return None
@@ -642,8 +649,11 @@ class SessionHistoryManager:
                 logger.warning(f"No packing_state.json found for session {session_id}")
                 return None
 
-            with open(state_file, 'r', encoding='utf-8') as f:
-                packing_state = json.load(f)
+            # OPTIMIZED: Use JSON cache for packing state
+            packing_state = get_cached_json(state_file, default=None)
+            if packing_state is None:
+                logger.warning(f"Failed to load packing state: {state_file}")
+                return None
 
             # Load session info
             session_info = self._load_session_info(session_dir)
