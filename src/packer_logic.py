@@ -326,11 +326,28 @@ class PackerLogic(QObject):
                             continue
 
                         # Ensure critical keys exist (be lenient for backward compatibility)
-                        # Critical keys: either original_sku OR normalized_sku (for item identification)
-                        # packed and required can be defaulted to 0 if missing
-                        has_sku = 'original_sku' in item_state or 'normalized_sku' in item_state
+                        # Support multiple legacy formats for SKU identification:
+                        # - New format: 'original_sku' and/or 'normalized_sku'
+                        # - Legacy format: 'sku' (used by old tests and early versions)
+
+                        # Check if item has any form of SKU identifier
+                        has_sku = 'original_sku' in item_state or 'normalized_sku' in item_state or 'sku' in item_state
 
                         if has_sku:
+                            # Migrate legacy 'sku' field to new format if needed
+                            if 'sku' in item_state and 'original_sku' not in item_state:
+                                item_state['original_sku'] = item_state['sku']
+                                logger.debug(f"Migrated legacy 'sku' field to 'original_sku' in {order_num}")
+
+                            if 'original_sku' in item_state and 'normalized_sku' not in item_state:
+                                # Generate normalized_sku from original_sku if missing
+                                item_state['normalized_sku'] = self._normalize_sku(item_state['original_sku'])
+                                logger.debug(f"Generated normalized_sku from original_sku in {order_num}")
+                            elif 'normalized_sku' in item_state and 'original_sku' not in item_state:
+                                # Use normalized_sku as original_sku if original is missing
+                                item_state['original_sku'] = item_state['normalized_sku']
+                                logger.debug(f"Used normalized_sku as original_sku in {order_num}")
+
                             # Fill in missing optional fields with defaults
                             if 'packed' not in item_state:
                                 item_state['packed'] = 0
@@ -346,7 +363,7 @@ class PackerLogic(QObject):
                         else:
                             logger.error(
                                 f"CRITICAL: Item state in order {order_num} at index {idx} has no SKU identifier "
-                                f"(missing both 'original_sku' and 'normalized_sku'). Skipping item."
+                                f"(missing 'original_sku', 'normalized_sku', and 'sku'). Skipping item."
                             )
 
                     # Only include orders with valid items
