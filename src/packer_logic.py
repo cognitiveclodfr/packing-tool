@@ -27,6 +27,7 @@ from typing import List, Dict, Any, Tuple
 
 # Local imports
 from logger import get_logger
+from json_cache import get_cached_json, invalidate_json_cache
 
 # Initialize module-level logger
 logger = get_logger(__name__)
@@ -259,11 +260,14 @@ class PackerLogic(QObject):
 
     def _load_session_state(self):
         """
-        Load the packing state for the session from JSON file.
+        Load the packing state for the session from JSON file with caching.
 
         This method supports both old and new state file formats for backward compatibility:
         - Old format: {'in_progress': {...}, 'completed_orders': [...]}
         - New format: Full state with metadata (session_id, timestamps, progress, etc.)
+
+        Note: Uses JSON cache with short TTL (30s) for state files since they change frequently.
+        Cache is invalidated after every write to ensure consistency.
         """
         state_file = self._get_state_file_path()
 
@@ -273,8 +277,16 @@ class PackerLogic(QObject):
             return
 
         try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            # OPTIMIZED: Use JSON cache for faster repeated reads
+            # This helps when multiple workers/processes access the same state file
+            # Note: Cache is invalidated after writes in _save_session_state()
+            data = get_cached_json(state_file, default=None)
+
+            if data is None:
+                # File exists but couldn't be read (invalid JSON, etc.)
+                logger.error("Could not load session state, starting fresh")
+                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+                return
 
             # Handle both old and new format (with version)
             if isinstance(data, dict) and 'data' in data:
@@ -473,6 +485,10 @@ class PackerLogic(QObject):
 
             # Atomic replace (works on Windows too)
             shutil.move(tmp_path, state_file)
+
+            # OPTIMIZED: Invalidate JSON cache after write to ensure fresh data on next read
+            # This prevents serving stale cached data after state changes
+            invalidate_json_cache(state_file)
 
             logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
 
