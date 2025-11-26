@@ -1874,107 +1874,9 @@ class MainWindow(QMainWindow):
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
 
-    def _process_shopify_packing_data(self, packing_data: dict) -> int:
-        """
-        Process Shopify packing list data and generate barcodes.
-
-        This method converts the JSON packing list format from Shopify Tool
-        into the DataFrame format expected by PackerLogic, then generates barcodes.
-
-        Args:
-            packing_data: Dictionary containing orders data with structure:
-                {
-                    'orders': [
-                        {
-                            'order_number': str,
-                            'items': [{'sku': str, 'quantity': int, 'product_name': str}],
-                            'courier': str,
-                            ...other fields...
-                        }
-                    ],
-                    'total_orders': int,
-                    'total_items': int,
-                    ...
-                }
-
-        Returns:
-            int: Number of orders processed
-
-        Raises:
-            ValueError: If packing data is invalid or missing required fields
-            RuntimeError: If barcode generation fails
-        """
-        import pandas as pd
-
-        logger.info("Converting Shopify packing data to DataFrame")
-
-        # Extract orders list
-        orders_list = packing_data.get('orders', [])
-        if not orders_list:
-            error_msg = "No orders found in packing data"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # Convert to DataFrame (packing list format)
-        # Each order may have multiple items, need to flatten
-        rows = []
-
-        for order in orders_list:
-            order_number = order.get('order_number', 'UNKNOWN')
-            courier = order.get('courier', 'Unknown')
-            items = order.get('items', [])
-
-            for item in items:
-                row = {
-                    'Order_Number': order_number,
-                    'SKU': item.get('sku', ''),
-                    'Product_Name': item.get('product_name', ''),
-                    'Quantity': str(item.get('quantity', 1)),  # Convert to string for consistency
-                    'Courier': courier
-                }
-
-                # Add any extra fields from order
-                for key, value in order.items():
-                    if key not in ['order_number', 'courier', 'items']:
-                        # Capitalize key to match packing list style
-                        formatted_key = key.replace('_', ' ').title().replace(' ', '_')
-                        row[formatted_key] = str(value)
-
-                rows.append(row)
-
-        # Create DataFrame
-        df = pd.DataFrame(rows)
-
-        if df.empty:
-            logger.warning("No order items to process")
-            return 0
-
-        # Validate required columns
-        from packer_logic import REQUIRED_COLUMNS
-        missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-        if missing_cols:
-            error_msg = f"Missing required columns in packing data: {missing_cols}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # Store as packing_list_df and processed_df in logic
-        self.logic.packing_list_df = df
-        self.logic.processed_df = df.copy()
-
-        logger.info(f"Converted {len(df)} items from {len(orders_list)} orders to DataFrame")
-
-        # Generate barcodes
-        try:
-            order_count = self.logic.process_data_and_generate_barcodes(column_mapping=None)
-            logger.info(f"Successfully generated barcodes for {order_count} orders")
-            logger.info(f"Barcodes saved to: {self.logic.barcode_dir}")
-
-            return order_count
-
-        except Exception as e:
-            error_msg = f"Error generating barcodes from Shopify data: {e}"
-            logger.error(error_msg, exc_info=True)
-            raise RuntimeError(error_msg)
+    # REMOVED: _process_shopify_packing_data() method (dead code)
+    # This method was never called. Functionality replaced by PackerLogic.load_packing_list_json()
+    # which is used in start_shopify_packing_session()
 
     def _on_item_packed(self, order_number: str, packed_count: int, required_count: int):
         """
@@ -2006,65 +1908,9 @@ class MainWindow(QMainWindow):
         self._update_statistics()
         logger.debug(f"Order {order_number} status updated to: {status}")
 
-    def open_restore_session_dialog(self):
-        """Open dialog to select and restore an incomplete session."""
-        if not self.current_client_id:
-            logger.warning("Attempted to restore session without selecting client")
-            QMessageBox.warning(
-                self,
-                "No Client Selected",
-                "Please select a client first!"
-            )
-            return
-
-        # Check if session already active
-        if self.session_manager and self.session_manager.is_active():
-            logger.warning("Attempted to restore session while one is already active")
-            QMessageBox.warning(
-                self,
-                "Session Active",
-                "A session is already active. Please end it first."
-            )
-            return
-
-        logger.info(f"Opening restore session dialog for client {self.current_client_id}")
-
-        dialog = RestoreSessionDialog(
-            self.current_client_id,
-            self.profile_manager,
-            self.lock_manager,
-            self
-        )
-
-        if dialog.exec() == QDialog.Accepted:
-            selected_session = dialog.get_selected_session()
-            if selected_session:
-                logger.info(f"User selected session to restore: {selected_session}")
-
-                # Get session info to find packing list path
-                session_info_path = selected_session / "session_info.json"
-                try:
-                    import json
-                    with open(session_info_path, 'r', encoding='utf-8') as f:
-                        session_info = json.load(f)
-
-                    packing_list_path = session_info.get('packing_list_path')
-                    if packing_list_path:
-                        # Start session with restore_dir
-                        self.start_session(file_path=packing_list_path, restore_dir=str(selected_session))
-                    else:
-                        QMessageBox.warning(
-                            self,
-                            "Error",
-                            "Session info does not contain packing list path."
-                        )
-                except Exception as e:
-                    logger.error(f"Error reading session info: {e}", exc_info=True)
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        f"Failed to read session information:\n\n{e}"
-                    )
+    # REMOVED: open_restore_session_dialog() method (dead code)
+    # This method was never called. Functionality replaced by Session Browser's
+    # Active/Completed tabs which provide a better UX for session restoration
 
     def open_shopify_session(self):
         """
