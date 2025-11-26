@@ -1104,7 +1104,6 @@ class MainWindow(QMainWindow):
         """Update heartbeat for active session lock."""
         if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                from pathlib import Path
                 self.lock_manager.update_heartbeat(Path(self.current_work_dir))
                 logger.debug("Lock heartbeat updated")
             except Exception as e:
@@ -1135,7 +1134,6 @@ class MainWindow(QMainWindow):
             # Determine output path based on session type
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 # Shopify session - save to unified work directory
-                from pathlib import Path
                 report_dir = Path(self.current_work_dir) / "reports"
                 report_dir.mkdir(exist_ok=True, parents=True)
                 new_filename = "packing_completed.xlsx"
@@ -1376,7 +1374,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                from pathlib import Path
                 self.lock_manager.release_lock(Path(self.current_work_dir))
                 logger.info("Lock released")
             except Exception as e:
@@ -2018,7 +2015,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released for {self.current_work_dir}")
                 except Exception as lock_error:
@@ -2043,7 +2039,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released for {self.current_work_dir}")
                 except Exception as lock_error:
@@ -2068,7 +2063,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released for {self.current_work_dir}")
                 except Exception as lock_error:
@@ -2093,7 +2087,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released for {self.current_work_dir}")
                 except Exception as lock_error:
@@ -2122,7 +2115,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released for {self.current_work_dir}")
                 except Exception as lock_error:
@@ -2151,7 +2143,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released for {self.current_work_dir}")
                 except Exception as lock_error:
@@ -2415,7 +2406,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released after error in resume session")
                 except Exception as lock_error:
@@ -2600,7 +2590,6 @@ class MainWindow(QMainWindow):
             # Release lock if acquired
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 try:
-                    from pathlib import Path
                     self.lock_manager.release_lock(Path(self.current_work_dir))
                     logger.info(f"Lock released after error in start_packing_from_browser")
                 except Exception as lock_error:

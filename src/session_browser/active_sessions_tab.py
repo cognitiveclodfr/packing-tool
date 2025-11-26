@@ -150,8 +150,8 @@ class ActiveSessionsTab(QWidget):
                         continue  # Skip completed packing lists
 
                     # Check for lock or session_info
-                    # Note: Lock file is in session_dir, not work_dir
-                    is_locked, lock_info = self.session_lock_manager.is_locked(session_dir)
+                    # Note: Lock file is in work_dir (packing work directory)
+                    is_locked, lock_info = self.session_lock_manager.is_locked(work_dir)
                     session_info_file = session_dir / "session_info.json"
 
                     session_data = None
