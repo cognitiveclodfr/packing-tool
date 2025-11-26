@@ -535,11 +535,13 @@ class MainWindow(QMainWindow):
             for col in range(5):
                 order_item.setFont(col, font)
 
-            # Add child items (SKUs)
-            for _, row in items_df.iterrows():
-                sku = row.get('SKU', 'Unknown')
-                product = row.get('Product_Name', 'Unknown')
-                qty = row.get('Quantity', 1)
+            # Add child items (SKUs) - OPTIMIZED: replaced iterrows() with itertuples()
+            # itertuples() is 5-10x faster than iterrows() for DataFrame iteration
+            for row_tuple in items_df.itertuples(index=False):
+                # Access by column index from tuple
+                sku = getattr(row_tuple, 'SKU', 'Unknown') if hasattr(row_tuple, 'SKU') else 'Unknown'
+                product = getattr(row_tuple, 'Product_Name', 'Unknown') if hasattr(row_tuple, 'Product_Name') else 'Unknown'
+                qty = getattr(row_tuple, 'Quantity', 1) if hasattr(row_tuple, 'Quantity') else 1
 
                 # Check if scanned
                 scanned_qty = 0
@@ -731,10 +733,11 @@ class MainWindow(QMainWindow):
                 'Quantity': lambda x: pd.to_numeric(x, errors='coerce').sum()
             }).reset_index()
 
-            for _, row in courier_stats.iterrows():
-                courier = row['Courier']
-                orders = row['Order_Number']
-                items = int(row['Quantity']) if pd.notna(row['Quantity']) else 0
+            # OPTIMIZED: replaced iterrows() with itertuples() for 5-10x speedup
+            for row_tuple in courier_stats.itertuples(index=False):
+                courier = row_tuple.Courier
+                orders = row_tuple.Order_Number
+                items = int(row_tuple.Quantity) if pd.notna(row_tuple.Quantity) else 0
                 label = QLabel(f"• {courier}: {orders} orders ({items} items)")
                 font = QFont()
                 font.setPointSize(11)
@@ -768,18 +771,25 @@ class MainWindow(QMainWindow):
                         scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
 
         # Add completed orders to scanned count
-        for order_num in completed_orders_list:
-            order_items = df[df['Order_Number'] == order_num]
-            for _, item in order_items.iterrows():
-                sku = item['SKU']
-                qty = pd.to_numeric(item['Quantity'], errors='coerce')
-                if pd.notna(qty):
-                    scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + int(qty)
+        # OPTIMIZED: replaced nested loops + iterrows() with vectorized groupby
+        # This reduces O(n*m) iteration to O(n) vectorized operation
+        if completed_orders_list:
+            completed_items_df = df[df['Order_Number'].isin(completed_orders_list)]
+            if not completed_items_df.empty:
+                # Group by SKU and sum quantities (vectorized)
+                completed_by_sku = completed_items_df.groupby('SKU')['Quantity'].apply(
+                    lambda x: pd.to_numeric(x, errors='coerce').sum()
+                ).fillna(0).astype(int)
 
-        for idx, row in sku_summary.iterrows():
-            sku = row['SKU']
-            product = row['Product_Name']
-            qty = row['Quantity']
+                # Add to scanned_by_sku dict
+                for sku, qty in completed_by_sku.items():
+                    scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + qty
+
+        # OPTIMIZED: replaced iterrows() with enumerate(itertuples()) for 5-10x speedup
+        for idx, row_tuple in enumerate(sku_summary.itertuples(index=False)):
+            sku = row_tuple.SKU
+            product = row_tuple.Product_Name
+            qty = row_tuple.Quantity
             qty_int = int(qty) if pd.notna(qty) else 0
 
             # Check if fully scanned
