@@ -550,12 +550,22 @@ class MainWindow(QMainWindow):
                     # Find this SKU in the order state
                     if isinstance(order_state, list):
                         for item_state in order_state:
+                            # CRITICAL FIX: Validate item_state is dict before calling .get()
+                            if not isinstance(item_state, dict):
+                                logger.warning(f"Skipping invalid item_state in {order_num}: {type(item_state).__name__}")
+                                continue
+
                             if item_state.get('original_sku') == sku:
                                 scanned_qty = item_state.get('packed', 0)
                                 break
                     else:
                         # Legacy dict format
                         for item_state in order_state.values():
+                            # CRITICAL FIX: Validate item_state is dict before calling .get()
+                            if not isinstance(item_state, dict):
+                                logger.warning(f"Skipping invalid item_state in {order_num}: {type(item_state).__name__}")
+                                continue
+
                             if item_state.get('original_sku') == sku:
                                 scanned_qty = item_state.get('packed', 0)
                                 break
@@ -759,12 +769,22 @@ class MainWindow(QMainWindow):
         for order_state in in_progress_orders.values():
             if isinstance(order_state, list):
                 for item_state in order_state:
+                    # CRITICAL FIX: Validate item_state is dict before calling .get()
+                    if not isinstance(item_state, dict):
+                        logger.warning(f"Skipping invalid item_state (not a dict): {type(item_state).__name__}")
+                        continue
+
                     sku = item_state.get('original_sku')
                     packed = item_state.get('packed', 0)
                     if sku:
                         scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
             else:
                 for item_state in order_state.values():
+                    # CRITICAL FIX: Validate item_state is dict before calling .get()
+                    if not isinstance(item_state, dict):
+                        logger.warning(f"Skipping invalid item_state (not a dict): {type(item_state).__name__}")
+                        continue
+
                     sku = item_state.get('original_sku')
                     packed = item_state.get('packed', 0)
                     if sku:

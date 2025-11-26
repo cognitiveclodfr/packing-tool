@@ -296,8 +296,86 @@ class PackerLogic(QObject):
                 # Could be new format (with metadata) or old direct format
                 state_data = data
 
-            # Load core packing state
-            self.session_packing_state['in_progress'] = state_data.get('in_progress', {})
+            # Load core packing state with validation
+            # CRITICAL FIX: Validate in_progress structure to prevent AttributeError on resume
+            raw_in_progress = state_data.get('in_progress', {})
+            validated_in_progress = {}
+
+            if isinstance(raw_in_progress, dict):
+                for order_num, order_state in raw_in_progress.items():
+                    # Skip internal metadata keys (like _timing)
+                    if order_num.startswith('_'):
+                        continue
+
+                    # Validate that order_state is a list
+                    if not isinstance(order_state, list):
+                        logger.error(
+                            f"CRITICAL: Invalid order state for {order_num}: expected list, got {type(order_state).__name__}. "
+                            f"Skipping this order to prevent crash."
+                        )
+                        continue
+
+                    # Validate that each item in the list is a dict
+                    validated_items = []
+                    for idx, item_state in enumerate(order_state):
+                        if not isinstance(item_state, dict):
+                            logger.error(
+                                f"CRITICAL: Invalid item state in order {order_num} at index {idx}: "
+                                f"expected dict, got {type(item_state).__name__}. Skipping this item."
+                            )
+                            continue
+
+                        # Ensure critical keys exist (be lenient for backward compatibility)
+                        # Support multiple legacy formats for SKU identification:
+                        # - New format: 'original_sku' and/or 'normalized_sku'
+                        # - Legacy format: 'sku' (used by old tests and early versions)
+
+                        # Check if item has any form of SKU identifier
+                        has_sku = 'original_sku' in item_state or 'normalized_sku' in item_state or 'sku' in item_state
+
+                        if has_sku:
+                            # Migrate legacy 'sku' field to new format if needed
+                            if 'sku' in item_state and 'original_sku' not in item_state:
+                                item_state['original_sku'] = item_state['sku']
+                                logger.debug(f"Migrated legacy 'sku' field to 'original_sku' in {order_num}")
+
+                            if 'original_sku' in item_state and 'normalized_sku' not in item_state:
+                                # Generate normalized_sku from original_sku if missing
+                                item_state['normalized_sku'] = self._normalize_sku(item_state['original_sku'])
+                                logger.debug(f"Generated normalized_sku from original_sku in {order_num}")
+                            elif 'normalized_sku' in item_state and 'original_sku' not in item_state:
+                                # Use normalized_sku as original_sku if original is missing
+                                item_state['original_sku'] = item_state['normalized_sku']
+                                logger.debug(f"Used normalized_sku as original_sku in {order_num}")
+
+                            # Fill in missing optional fields with defaults
+                            if 'packed' not in item_state:
+                                item_state['packed'] = 0
+                                logger.debug(f"Added default packed=0 for item in {order_num}")
+                            if 'required' not in item_state:
+                                item_state['required'] = 0
+                                logger.debug(f"Added default required=0 for item in {order_num}")
+                            if 'row' not in item_state:
+                                item_state['row'] = idx
+                                logger.debug(f"Added default row={idx} for item in {order_num}")
+
+                            validated_items.append(item_state)
+                        else:
+                            logger.error(
+                                f"CRITICAL: Item state in order {order_num} at index {idx} has no SKU identifier "
+                                f"(missing 'original_sku', 'normalized_sku', and 'sku'). Skipping item."
+                            )
+
+                    # Only include orders with valid items
+                    if validated_items:
+                        validated_in_progress[order_num] = validated_items
+                    else:
+                        logger.warning(f"Order {order_num} has no valid items after validation, skipping")
+            else:
+                logger.error(f"in_progress is not a dict: {type(raw_in_progress).__name__}, using empty state")
+
+            self.session_packing_state['in_progress'] = validated_in_progress
+            logger.debug(f"Loaded and validated {len(validated_in_progress)} in-progress orders")
 
             # Handle both new format (completed: list of dicts) and old format (completed_orders: list of strings)
             if 'completed' in state_data:
