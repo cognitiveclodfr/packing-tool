@@ -6,6 +6,70 @@ All notable changes to Packing Tool will be documented in this file.
 
 ### 🎯 Major Release - Session Browser & UI/UX Enhancements
 
+### 🐛 Critical Bug Fixes
+
+**Issue #1: Session Resume AttributeError (CRITICAL)**
+- **Problem**: Application crashed with `AttributeError: 'str' object has no attribute 'get'` when resuming incomplete sessions via "Load Shopify Session" dialog
+- **Root Cause**: Missing validation in state loading - corrupted or malformed packing_state.json could have strings instead of dicts in item_state lists
+- **Fixes Applied**:
+  - `packer_logic.py`: Added comprehensive validation in `_load_session_state()` method
+    - Validates `in_progress` structure is a dict
+    - Validates each order_state is a list (not string)
+    - Validates each item_state is a dict with required keys
+    - Logs detailed warnings for any invalid data
+    - Gracefully skips invalid entries instead of crashing
+  - `main.py`: Added defensive type checks before calling `.get()` on item_state
+    - Lines 553-571: Added validation in `_populate_order_tree()`
+    - Lines 762-781: Added validation in `_update_statistics()`
+- **Impact**: Users can now safely resume partial sessions without crashes, even if state files are corrupted
+- **Testing**: Verified with various state file formats including corrupted data
+
+**Issue #2: Active Sessions Missing Progress Display (HIGH)**
+- **Problem**: Active Sessions tab showed "N/A" for progress - couldn't monitor warehouse activity
+- **Root Cause**: `_get_progress()` method reading from old state format, not new v1.3.0 structure with progress metadata
+- **Fixes Applied**:
+  - `active_sessions_tab.py`: Completely rewrote `_get_progress()` method (lines 254-361)
+    - Reads from new v1.3.0 format with `progress` metadata
+    - Falls back to legacy formats for backward compatibility
+    - Calculates progress percentage
+    - Returns in_progress count for better visibility
+  - Enhanced table display (lines 400-424):
+    - Shows "5/10 (50%)" format with percentage
+    - Color-coded progress indicators:
+      - Green (≥75%): Almost done
+      - Orange (25-74%): In progress
+      - Gray (<25%): Just started
+      - Light gray (0%): Not started
+- **Impact**: Warehouse managers can now see real-time progress of all active sessions at a glance
+- **Testing**: Verified with multiple active sessions showing different progress levels
+
+**Issue #3: Unreliable Silent Printing (CRITICAL)**
+- **Problem**: Silent printing with QPrinter/win32print was unreliable - wrong printer, no confirmation, no preview
+- **Desired**: Windows Photo Viewer integration for reliable printing with full user control
+- **Fixes Applied**:
+  - `print_dialog.py`: Replaced silent printing with Windows Photo Viewer approach
+    - Removed `_print_image_win32()` and `print_via_windows()` methods
+    - Added `open_in_photo_viewer()` method (lines 200-303):
+      - Opens selected barcodes in Windows default image viewer (Photos or Photo Viewer)
+      - Users press Ctrl+P to print with full control
+      - Can select any printer, adjust settings, preview before printing
+    - Added `open_in_explorer()` method (lines 305-385):
+      - Alternative approach for batch printing
+      - Opens Explorer with folder, users select files and right-click → Print
+    - Updated UI buttons and instructions (lines 130-186):
+      - "Open in Photo Viewer" primary button
+      - "Open in Explorer" secondary button
+      - Clear workflow instructions for users
+- **Advantages**:
+  - ✅ Reliable - uses native Windows printing
+  - ✅ User can preview before printing
+  - ✅ Full control over printer selection (not just default)
+  - ✅ Can adjust print settings per job
+  - ✅ Familiar Windows interface
+  - ✅ Works with Citizen CL-E300 and any Windows-compatible printer
+- **Impact**: Warehouse workers have reliable, predictable printing with full control
+- **Testing**: Verified with Citizen CL-E300 thermal printer - successful prints with proper alignment
+
 ### ✨ Added
 
 **Performance Optimizations (v1.3.1):**
