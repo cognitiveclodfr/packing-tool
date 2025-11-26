@@ -180,6 +180,26 @@ All notable changes to Packing Tool will be documented in this file.
   - Removed mock_widgets fixture (DashboardWidget, SessionHistoryWidget no longer exist)
   - Updated test_tab_navigation to expect 1 tab instead of 3 (Dashboard/History removed)
 
+**Priority 1 - Code Duplication & Crash Handler:**
+- **Unified Session Start Method**: Eliminated massive code duplication in session management
+  - Created `start_shopify_packing_session()` unified method for starting/resuming packing sessions
+  - Refactored `_handle_resume_session_from_browser()` to use unified method (reduced from ~180 to ~72 lines)
+  - Refactored `_handle_start_packing_from_browser()` to use unified method (reduced from ~183 to ~77 lines)
+  - Refactored `open_shopify_session()` packing_list mode to use unified method (simplified significantly)
+  - Created `_cleanup_failed_session_start()` helper to centralize error cleanup logic
+  - All error paths now consistently release locks and clean up resources
+  - Comprehensive exception handling with proper user feedback
+  - Improved code maintainability and reduced risk of inconsistencies
+- **Application Close Handler**: Added critical `closeEvent()` handler to MainWindow
+  - Prevents lock leaks when application closes unexpectedly
+  - Stops heartbeat timer before cleanup (prevents lock updates during shutdown)
+  - Saves packing state on unexpected close (preserves work progress)
+  - Releases all session locks immediately (no 2-minute stale lock timeout)
+  - Handles X button, Alt+F4, SIGTERM, and system shutdown gracefully
+  - All cleanup operations wrapped in try/except for robustness
+  - Never blocks shutdown (always accepts close event)
+  - Critical for multi-PC warehouse deployment reliability
+
 ---
 
 ## [1.2.0] - 2025-11-19
