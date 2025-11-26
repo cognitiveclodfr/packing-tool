@@ -325,14 +325,28 @@ class PackerLogic(QObject):
                             )
                             continue
 
-                        # Ensure required keys exist
-                        required_keys = ['original_sku', 'normalized_sku', 'required', 'packed', 'row']
-                        if all(key in item_state for key in required_keys):
+                        # Ensure critical keys exist (be lenient for backward compatibility)
+                        # Critical keys: either original_sku OR normalized_sku (for item identification)
+                        # packed and required can be defaulted to 0 if missing
+                        has_sku = 'original_sku' in item_state or 'normalized_sku' in item_state
+
+                        if has_sku:
+                            # Fill in missing optional fields with defaults
+                            if 'packed' not in item_state:
+                                item_state['packed'] = 0
+                                logger.debug(f"Added default packed=0 for item in {order_num}")
+                            if 'required' not in item_state:
+                                item_state['required'] = 0
+                                logger.debug(f"Added default required=0 for item in {order_num}")
+                            if 'row' not in item_state:
+                                item_state['row'] = idx
+                                logger.debug(f"Added default row={idx} for item in {order_num}")
+
                             validated_items.append(item_state)
                         else:
-                            missing_keys = [key for key in required_keys if key not in item_state]
                             logger.error(
-                                f"CRITICAL: Item state in order {order_num} missing keys: {missing_keys}. Skipping item."
+                                f"CRITICAL: Item state in order {order_num} at index {idx} has no SKU identifier "
+                                f"(missing both 'original_sku' and 'normalized_sku'). Skipping item."
                             )
 
                     # Only include orders with valid items
