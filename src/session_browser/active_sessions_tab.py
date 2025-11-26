@@ -150,8 +150,8 @@ class ActiveSessionsTab(QWidget):
                         continue  # Skip completed packing lists
 
                     # Check for lock or session_info
-                    # Note: Lock file is in session_dir, not work_dir
-                    is_locked, lock_info = self.session_lock_manager.is_locked(session_dir)
+                    # Note: Lock file is in work_dir (packing work directory)
+                    is_locked, lock_info = self.session_lock_manager.is_locked(work_dir)
                     session_info_file = session_dir / "session_info.json"
 
                     session_data = None
@@ -394,10 +394,19 @@ class ActiveSessionsTab(QWidget):
             try:
                 # Force release lock
                 work_dir = Path(session['work_dir'])
-                self.session_lock_manager.force_release_lock(work_dir)
+                success = self.session_lock_manager.force_release_lock(work_dir)
 
-                QMessageBox.information(self, "Success", "Lock released successfully.")
-                self.refresh()
+                if success:
+                    QMessageBox.information(self, "Success", "Lock released successfully.")
+                    logger.info(f"Lock successfully released for {work_dir}")
+                    self.refresh()
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Failed",
+                        f"Failed to release lock for session.\n\nThe lock file may not exist or cannot be deleted."
+                    )
+                    logger.warning(f"Failed to release lock for {work_dir}")
 
             except Exception as e:
                 logger.error(f"Failed to release lock: {e}", exc_info=True)

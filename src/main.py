@@ -545,13 +545,13 @@ class MainWindow(QMainWindow):
                     # Find this SKU in the order state
                     if isinstance(order_state, list):
                         for item_state in order_state:
-                            if item_state.get('sku') == sku:
+                            if item_state.get('original_sku') == sku:
                                 scanned_qty = item_state.get('packed', 0)
                                 break
                     else:
                         # Legacy dict format
                         for item_state in order_state.values():
-                            if item_state.get('sku') == sku:
+                            if item_state.get('original_sku') == sku:
                                 scanned_qty = item_state.get('packed', 0)
                                 break
                 elif is_completed:
@@ -753,13 +753,13 @@ class MainWindow(QMainWindow):
         for order_state in in_progress_orders.values():
             if isinstance(order_state, list):
                 for item_state in order_state:
-                    sku = item_state.get('sku')
+                    sku = item_state.get('original_sku')
                     packed = item_state.get('packed', 0)
                     if sku:
                         scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
             else:
                 for item_state in order_state.values():
-                    sku = item_state.get('sku')
+                    sku = item_state.get('original_sku')
                     packed = item_state.get('packed', 0)
                     if sku:
                         scanned_by_sku[sku] = scanned_by_sku.get(sku, 0) + packed
@@ -1104,7 +1104,6 @@ class MainWindow(QMainWindow):
         """Update heartbeat for active session lock."""
         if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                from pathlib import Path
                 self.lock_manager.update_heartbeat(Path(self.current_work_dir))
                 logger.debug("Lock heartbeat updated")
             except Exception as e:
@@ -1135,7 +1134,6 @@ class MainWindow(QMainWindow):
             # Determine output path based on session type
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
                 # Shopify session - save to unified work directory
-                from pathlib import Path
                 report_dir = Path(self.current_work_dir) / "reports"
                 report_dir.mkdir(exist_ok=True, parents=True)
                 new_filename = "packing_completed.xlsx"
@@ -1376,7 +1374,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                from pathlib import Path
                 self.lock_manager.release_lock(Path(self.current_work_dir))
                 logger.info("Lock released")
             except Exception as e:
@@ -2006,6 +2003,23 @@ class MainWindow(QMainWindow):
 
         except FileNotFoundError as e:
             logger.error(f"Packing list file not found: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "File Not Found",
@@ -2013,6 +2027,23 @@ class MainWindow(QMainWindow):
             )
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in packing list: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Invalid Data",
@@ -2020,6 +2051,23 @@ class MainWindow(QMainWindow):
             )
         except KeyError as e:
             logger.error(f"Missing required key in packing list: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Invalid Format",
@@ -2027,36 +2075,89 @@ class MainWindow(QMainWindow):
             )
         except ValueError as e:
             logger.error(f"Invalid packing data: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
+            # Cleanup on failure
+            if self.logic:
+                self.logic = None
+
             QMessageBox.critical(
                 self,
                 "Invalid Data",
                 f"Packing data validation failed:\n{str(e)}"
             )
+        except RuntimeError as e:
+            logger.error(f"Barcode generation failed: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             # Cleanup on failure
             if self.logic:
                 self.logic = None
-        except RuntimeError as e:
-            logger.error(f"Barcode generation failed: {e}", exc_info=True)
+
             QMessageBox.critical(
                 self,
                 "Generation Failed",
                 f"Failed to generate barcodes:\n{str(e)}"
             )
-            # Cleanup on failure
-            if self.logic:
-                self.logic = None
         except Exception as e:
             logger.error(f"Failed to load packing list: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Failed to load packing list:\n{str(e)}"
-            )
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released for {self.current_work_dir}")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
 
             # Cleanup on failure
             if self.session_manager:
                 self.session_manager = None
             self.logic = None
+
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to load packing list:\n{str(e)}"
+            )
 
     def enable_packing_mode(self):
         """
@@ -2153,6 +2254,7 @@ class MainWindow(QMainWindow):
             session_path = Path(session_info['session_path'])
             client_id = session_info['client_id']
             packing_list_name = session_info['packing_list_name']
+            work_dir = Path(session_info['work_dir'])
 
             # Set current client if different
             if self.current_client_id != client_id:
@@ -2161,6 +2263,16 @@ class MainWindow(QMainWindow):
                     if self.client_combo.itemData(i) == client_id:
                         self.client_combo.setCurrentIndex(i)
                         break
+
+            # Check if session already active
+            if self.session_manager and self.session_manager.is_active():
+                logger.warning("Attempted to resume session while one is already active")
+                QMessageBox.warning(
+                    self,
+                    "Session Active",
+                    "A session is already active. Please end it first."
+                )
+                return
 
             # Create SessionManager for this client if not exists
             if not self.session_manager or self.session_manager.client_id != client_id:
@@ -2172,24 +2284,133 @@ class MainWindow(QMainWindow):
                     worker_name=self.current_worker_name
                 )
 
-            # Load packing list
-            packing_data = self.session_manager.load_packing_list(
-                session_path=str(session_path),
-                packing_list_name=packing_list_name
+            # Store current session info
+            self.current_session_path = str(session_path)
+            self.current_packing_list = packing_list_name
+            self.current_work_dir = str(work_dir)
+
+            logger.info(f"Resuming from work directory: {work_dir}")
+
+            # ✅ CRITICAL: Acquire lock before initializing PackerLogic
+            success, error_msg = self.lock_manager.acquire_lock(
+                client_id,
+                work_dir,
+                worker_id=self.current_worker_id,
+                worker_name=self.current_worker_name
             )
 
-            # Resume session (using existing method)
-            self.start_shopify_packing_session(
-                session_path=str(session_path),
-                packing_list_name=packing_list_name,
-                packing_data=packing_data,
-                is_resume=True
+            if not success:
+                # Check if stale lock (error message contains "stale" keyword)
+                if error_msg and "stale" in error_msg.lower():
+                    reply = QMessageBox.question(
+                        self, "Stale Lock Detected",
+                        f"{error_msg}\n\nForce-release lock and continue?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        self.lock_manager.force_release_lock(work_dir)
+                        success, error_msg = self.lock_manager.acquire_lock(
+                            client_id,
+                            work_dir,
+                            worker_id=self.current_worker_id,
+                            worker_name=self.current_worker_name
+                        )
+                        if not success:
+                            QMessageBox.warning(self, "Lock Failed", f"Failed to acquire lock: {error_msg}")
+                            return
+                    else:
+                        return
+                else:
+                    # Active lock by another user
+                    QMessageBox.warning(self, "Session Locked", error_msg or "Session is locked by another user")
+                    return
+
+            logger.info(f"Lock acquired for work directory: {work_dir}")
+
+            # Create PackerLogic instance with resume flag
+            self.logic = PackerLogic(
+                client_id=client_id,
+                profile_manager=self.profile_manager,
+                work_dir=str(work_dir)
+            )
+
+            # Connect signals
+            self.logic.item_packed.connect(self._on_item_packed)
+
+            # ✅ ADD: Start heartbeat timer
+            self._start_heartbeat_timer()
+
+            # Load existing packing state (resume)
+            packing_state_file = work_dir / "packing_state.json"
+            if not packing_state_file.exists():
+                raise FileNotFoundError(f"Packing state file not found: {packing_state_file}")
+
+            # Load packing list to get order count
+            list_file = session_path / "packing_lists" / f"{packing_list_name}.json"
+            order_count, list_name = self.logic.load_packing_list_json(list_file)
+
+            # Set packing data for UI
+            self.packing_data = {
+                'list_name': list_name,
+                'total_orders': order_count,
+                'orders': []  # PackerLogic has the data
+            }
+
+            logger.info(f"Resumed packing list '{list_name}': {order_count} orders")
+
+            # Update session metadata
+            if hasattr(self.session_manager, 'update_session_metadata'):
+                try:
+                    self.session_manager.update_session_metadata(
+                        self.current_session_path,
+                        self.current_packing_list,
+                        'in_progress'
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not update session metadata: {e}")
+
+            # Setup order table
+            self.setup_order_table()
+
+            # Update UI
+            self.status_label.setText(
+                f"Resumed: {session_path.name} / {packing_list_name}\n"
+                f"Orders: {order_count}\n"
+                f"Session restored successfully"
+            )
+
+            # Enable packing mode
+            self.enable_packing_mode()
+
+            QMessageBox.information(
+                self,
+                "Session Resumed",
+                f"Successfully resumed packing list: {list_name}\n"
+                f"Orders: {order_count}\n\n"
+                f"Continue packing from where you left off."
             )
 
             logger.info("Session resumed successfully from Session Browser")
 
         except Exception as e:
             logger.error(f"Failed to resume session from browser: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released after error in resume session")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Resume Failed",
@@ -2357,6 +2578,23 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"Failed to start packing from browser: {e}", exc_info=True)
+
+            # Stop heartbeat timer if running
+            if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+                try:
+                    self.heartbeat_timer.stop()
+                    logger.debug("Heartbeat timer stopped in exception handler")
+                except Exception as timer_error:
+                    logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+            # Release lock if acquired
+            if hasattr(self, 'current_work_dir') and self.current_work_dir:
+                try:
+                    self.lock_manager.release_lock(Path(self.current_work_dir))
+                    logger.info(f"Lock released after error in start_packing_from_browser")
+                except Exception as lock_error:
+                    logger.warning(f"Failed to release lock: {lock_error}")
+
             QMessageBox.critical(
                 self,
                 "Start Packing Failed",
