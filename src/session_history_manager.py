@@ -4,11 +4,10 @@ Session History Manager - Manages historical session data and analytics.
 This module provides functionality to retrieve, analyze, and search through
 completed packing sessions, enabling historical reporting and analytics.
 """
-import os
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
 from logger import get_logger

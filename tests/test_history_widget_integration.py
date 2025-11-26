@@ -15,18 +15,15 @@ import json
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock
 
 try:
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtCore import Qt
     import sys
 
     # Import modules to test
     sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
     from session_history_widget import SessionHistoryWidget
-    from session_history_manager import SessionHistoryManager
 
     PYSIDE_AVAILABLE = True
 except ImportError:

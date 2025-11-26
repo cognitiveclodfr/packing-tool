@@ -10,7 +10,7 @@ import os
 import socket
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Optional, Tuple
 import shutil
 import tempfile
@@ -23,7 +23,6 @@ except ImportError:
     WINDOWS_LOCKING_AVAILABLE = False
 
 from logger import AppLogger
-from exceptions import SessionLockedError, StaleLockError
 
 
 class SessionLockManager:

@@ -15,7 +15,7 @@ import shutil
 import os
 from pathlib import Path
 from datetime import datetime, timezone
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 import pandas as pd
 
 # Import modules to test
@@ -314,7 +314,6 @@ class TestSessionSummaryGeneration(unittest.TestCase):
         packer.session_packing_state['completed_orders'] = ['ORDER-1', 'ORDER-2', 'ORDER-3', 'ORDER-4']
 
         # Populate timing metadata (Phase 2b) for avg_time_per_order calculation
-        import time
         base_timestamp = start_time.timestamp()
 
         packer.completed_orders_metadata = [

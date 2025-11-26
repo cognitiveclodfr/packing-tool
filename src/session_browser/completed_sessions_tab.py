@@ -5,9 +5,9 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QLineEdit, QLabel, QDateEdit, QMessageBox, QFileDialog
 )
-from PySide6.QtCore import Signal, Qt, QDate
+from PySide6.QtCore import Signal, QDate
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import pandas as pd
 

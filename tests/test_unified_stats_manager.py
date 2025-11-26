@@ -11,14 +11,12 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
-from unittest.mock import patch, MagicMock
 
 # Add parent directory to path for imports
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from shared.stats_manager import StatsManager, StatsManagerError, FileLockError
+from shared.stats_manager import StatsManager
 
 
 @pytest.fixture

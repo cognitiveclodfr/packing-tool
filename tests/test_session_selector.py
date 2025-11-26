@@ -14,7 +14,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QDate
 

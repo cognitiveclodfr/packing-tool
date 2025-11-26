@@ -14,9 +14,7 @@ import json
 import os
 import shutil
 import time
-from pathlib import Path
-from datetime import datetime
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))

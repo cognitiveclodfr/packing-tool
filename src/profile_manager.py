@@ -29,17 +29,14 @@ logger = get_logger(__name__)
 
 class ProfileManagerError(Exception):
     """Base exception for ProfileManager errors."""
-    pass
 
 
 class NetworkError(ProfileManagerError):
     """Raised when file server is not accessible."""
-    pass
 
 
 class ValidationError(ProfileManagerError):
     """Raised when validation fails."""
-    pass
 
 
 class ProfileManager:

@@ -2,7 +2,7 @@
 Unit tests for SessionHistoryManager.
 """
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 from datetime import datetime
 from pathlib import Path
 import json

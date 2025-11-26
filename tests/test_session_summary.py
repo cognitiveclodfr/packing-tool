@@ -13,8 +13,7 @@ import json
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock
 import pandas as pd
 
 # Import the modules to test
@@ -23,7 +22,7 @@ tests_dir = Path(__file__).parent
 sys.path.insert(0, str(tests_dir.parent / 'src'))
 sys.path.insert(0, str(tests_dir))
 
-from session_history_manager import SessionHistoryManager, SessionHistoryRecord
+from session_history_manager import SessionHistoryManager
 from conftest import create_v130_session_summary
 
 

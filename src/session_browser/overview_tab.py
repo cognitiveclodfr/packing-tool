@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLabel,
     QGroupBox
 )
-from PySide6.QtCore import Qt
 
 from datetime import datetime
 

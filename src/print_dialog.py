@@ -1,4 +1,3 @@
-import sys
 import os
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -319,7 +318,6 @@ class PrintDialog(QDialog):
 
         # Try to detect if win32print is available
         try:
-            import win32print
             has_win32print = True
             logger.info("win32print available - using silent printing")
         except ImportError:

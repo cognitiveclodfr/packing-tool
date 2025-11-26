@@ -12,15 +12,13 @@ import pytest
 import json
 import os
 import time
-from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from session_lock_manager import SessionLockManager
-from exceptions import SessionLockedError, StaleLockError
 
 
 # ============================================================================

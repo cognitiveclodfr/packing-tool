@@ -200,6 +200,28 @@ All notable changes to Packing Tool will be documented in this file.
   - Never blocks shutdown (always accepts close event)
   - Critical for multi-PC warehouse deployment reliability
 
+**Dead Code Cleanup & Maintainability:**
+- **Removed Unused Methods**: Deleted 160 lines of dead code from main.py
+  - `_process_shopify_packing_data()` (101 lines): Functionality replaced by PackerLogic.load_packing_list_json()
+  - `open_restore_session_dialog()` (59 lines): Functionality replaced by Session Browser Active/Completed tabs
+  - Both methods were well-implemented but never called anywhere in codebase
+  - Verified with comprehensive grep search - zero references found
+- **Removed Unused Imports**: Cleaned up 33 files across src/ and tests/
+  - Used autoflake to automatically detect and remove 44 lines of unused imports
+  - Removed: RestoreSessionDialog, OrderTableModel, CustomFilterProxyModel, ProfileManagerError
+  - Removed unused Qt imports, typing imports, and other orphaned dependencies
+  - All files still compile and function correctly
+- **StatsManager Documentation**: Added comprehensive documentation explaining minimal usage
+  - Decision: KEEP StatsManager (recommended approach)
+  - Called once per session by design - records completion statistics
+  - Critical for integration with Shopify Tool (shared Stats/global_stats.json)
+  - Provides historical analytics, audit trail, and worker performance metrics
+  - Essential for warehouse operations tracking and reporting
+- **Impact**: Improved code maintainability, reduced cognitive load, cleaner codebase
+  - 204 total lines removed (160 dead code + 44 unused imports)
+  - Better documentation prevents future confusion about "unused" components
+  - All functionality preserved - zero breaking changes
+
 ---
 
 ## [1.2.0] - 2025-11-19

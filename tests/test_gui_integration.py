@@ -2,10 +2,7 @@ import pytest
 from unittest.mock import patch, Mock
 import pandas as pd
 import os
-import tempfile
-from pathlib import Path
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog
 
 # Add src to path to be able to import modules from there
 import sys
