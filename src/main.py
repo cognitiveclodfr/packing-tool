@@ -1109,6 +1109,41 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.error(f"Failed to update heartbeat: {e}")
 
+    def _cleanup_failed_session_start(self):
+        """
+        Clean up resources after failed session start.
+        Extracted to avoid code duplication in exception handlers.
+        """
+        # Stop heartbeat timer if running
+        if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer:
+            try:
+                self.heartbeat_timer.stop()
+                logger.debug("Heartbeat timer stopped in cleanup")
+            except Exception as timer_error:
+                logger.warning(f"Failed to stop heartbeat timer: {timer_error}")
+
+        # Release lock if acquired
+        if hasattr(self, 'current_work_dir') and self.current_work_dir:
+            try:
+                self.lock_manager.release_lock(Path(self.current_work_dir))
+                logger.info(f"Lock released during cleanup: {self.current_work_dir}")
+            except Exception as lock_error:
+                logger.warning(f"Failed to release lock: {lock_error}")
+
+        # Clear state
+        if hasattr(self, 'logic') and self.logic:
+            self.logic = None
+
+        # Clear instance variables
+        if hasattr(self, 'current_work_dir'):
+            self.current_work_dir = None
+        if hasattr(self, 'current_session_path'):
+            self.current_session_path = None
+        if hasattr(self, 'current_packing_list'):
+            self.current_packing_list = None
+        if hasattr(self, 'packing_data'):
+            self.packing_data = None
+
     def end_session(self):
         """
         Ends the current session gracefully.
