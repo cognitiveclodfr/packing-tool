@@ -71,7 +71,7 @@ class TestPackingStateStructure(unittest.TestCase):
         packer.current_order_number = 'ORDER-2'
 
         # Save state
-        packer._save_session_state()
+        packer.force_save_state()
 
         # Load and verify structure
         state_file = self.work_dir / STATE_FILE_NAME
@@ -162,7 +162,7 @@ class TestPackingStateStructure(unittest.TestCase):
         packer._initialize_session_metadata(session_id="test", packing_list_name="test")
 
         # Save state
-        packer._save_session_state()
+        packer.force_save_state()
 
         # Verify state is in work_dir root
         state_file = self.work_dir / STATE_FILE_NAME
@@ -194,7 +194,7 @@ class TestPackingStateStructure(unittest.TestCase):
         self.assertLessEqual(started_dt, after_init, "started_at should be before next action")
 
         # Save state and verify last_updated
-        packer._save_session_state()
+        packer.force_save_state()
 
         state_file = self.work_dir / STATE_FILE_NAME
         with open(state_file, 'r', encoding='utf-8') as f:
@@ -447,7 +447,7 @@ class TestNoBackupLogic(unittest.TestCase):
         packer.session_packing_state['completed_orders'] = ['ORDER-1']
 
         # Save state
-        packer._save_session_state()
+        packer.force_save_state()
 
         # Call cleanup (should NOT create .backup files)
         packer.end_session_cleanup()
@@ -484,7 +484,7 @@ class TestNoBackupLogic(unittest.TestCase):
         packer.session_packing_state['completed_orders'] = ['ORDER-1', 'ORDER-2']
 
         # Save state
-        packer._save_session_state()
+        packer.force_save_state()
 
         state_file = self.work_dir / STATE_FILE_NAME
         self.assertTrue(state_file.exists(), "State file should exist before cleanup")
@@ -606,7 +606,7 @@ class TestCrashRecovery(unittest.TestCase):
         # Test status transitions
         # Initial status: in_progress
         packer.session_packing_state['completed_orders'] = []
-        packer._save_session_state()
+        packer.force_save_state()
 
         state_file = self.work_dir / STATE_FILE_NAME
         with open(state_file, 'r', encoding='utf-8') as f:
@@ -622,7 +622,7 @@ class TestCrashRecovery(unittest.TestCase):
 
         # Complete all orders - status should change to completed
         packer.session_packing_state['completed_orders'] = ['ORDER-1']
-        packer._save_session_state()
+        packer.force_save_state()
 
         with open(state_file, 'r', encoding='utf-8') as f:
             state = json.load(f)
@@ -662,7 +662,7 @@ class TestStatePersistenceEdgeCases(unittest.TestCase):
         packer.processed_df = pd.DataFrame()
 
         # Save state
-        packer._save_session_state()
+        packer.force_save_state()
 
         state_file = self.work_dir / STATE_FILE_NAME
         self.assertTrue(state_file.exists())
@@ -691,7 +691,7 @@ class TestStatePersistenceEdgeCases(unittest.TestCase):
         })
 
         # Save state
-        packer._save_session_state()
+        packer.force_save_state()
 
         # Load and verify unicode is preserved
         state_file = self.work_dir / STATE_FILE_NAME
