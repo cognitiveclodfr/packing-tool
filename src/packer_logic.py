@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Qt framework for signals/slots pattern
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QTimer
 
 # Type hints for better code documentation
 from typing import List, Dict, Any, Tuple
@@ -28,6 +28,7 @@ from typing import List, Dict, Any, Tuple
 # Local imports
 from logger import get_logger
 from json_cache import get_cached_json, invalidate_json_cache
+from performance_utils import log_timing
 
 # Initialize module-level logger
 logger = get_logger(__name__)
@@ -156,12 +157,19 @@ class PackerLogic(QObject):
         self.current_order_items_scanned = []  # List of items with scan timestamps
         self.completed_orders_metadata = []  # List of completed orders with timing data
 
+        # Debounced save timer (Performance optimization)
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._do_save_state)
+        self._save_pending = False
+
         logger.info(f"PackerLogic initialized for client {client_id}")
         logger.debug(f"Work directory: {self.work_dir}")
         logger.debug(f"Barcode directory: {self.barcode_dir}")
         logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
         logger.debug("Phase 2b timing variables initialized")
+        logger.debug("Debounced save timer initialized (2s delay)")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
@@ -439,9 +447,54 @@ class PackerLogic(QObject):
             logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
+    def save_state(self):
+        """
+        Request state save (debounced).
+
+        Instead of saving immediately, schedules save for 2 seconds later.
+        If called multiple times within 2 seconds, only saves once.
+
+        This dramatically reduces I/O operations during rapid scanning.
+        """
+        if not self._save_pending:
+            self._save_pending = True
+            self._save_timer.start(2000)  # 2 second delay
+            logger.debug("State save scheduled (will execute in 2s)")
+        else:
+            # Save already pending - just restart timer
+            self._save_timer.start(2000)
+            logger.debug("State save rescheduled (reset 2s timer)")
+
+    def force_save_state(self):
+        """
+        Force immediate state save (bypass debouncing).
+
+        Use this for critical moments like:
+        - End session
+        - Order completion
+        - Application close
+        """
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+
+        self._save_pending = True
+        self._do_save_state()
+
+        logger.debug("State force-saved immediately")
+
     def _save_session_state(self):
         """
-        Save the current session's packing state to JSON file with atomic write.
+        Legacy method name - now calls debounced save.
+
+        Kept for backward compatibility with existing code.
+        """
+        self.save_state()
+
+    def _do_save_state(self):
+        """
+        Actually save state to disk.
+
+        This is called by timer after debounce delay.
 
         New behavior (redesigned state management):
         - Saves complete state with metadata (session_id, timestamps, progress)
@@ -463,6 +516,9 @@ class PackerLogic(QObject):
             "completed": [...]
         }
         """
+        if not self._save_pending:
+            return
+
         state_file = self._get_state_file_path()
 
         # Calculate progress metrics
@@ -549,29 +605,35 @@ class PackerLogic(QObject):
             state_path = Path(state_file)
             state_dir = state_path.parent
 
-            # Atomic write: write to temp file first
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                dir=state_dir,
-                prefix='.tmp_state_',
-                suffix='.json',
-                delete=False,
-                encoding='utf-8'
-            ) as tmp_file:
-                json.dump(state_data, tmp_file, indent=2, ensure_ascii=False)
-                tmp_path = tmp_file.name
+            # Use log_timing to measure save performance
+            with log_timing("Save state to disk", threshold_ms=200):
+                # Atomic write: write to temp file first
+                with tempfile.NamedTemporaryFile(
+                    mode='w',
+                    dir=state_dir,
+                    prefix='.tmp_state_',
+                    suffix='.json',
+                    delete=False,
+                    encoding='utf-8'
+                ) as tmp_file:
+                    json.dump(state_data, tmp_file, indent=2, ensure_ascii=False)
+                    tmp_path = tmp_file.name
 
-            # Atomic replace (works on Windows too)
-            shutil.move(tmp_path, state_file)
+                # Atomic replace (works on Windows too)
+                shutil.move(tmp_path, state_file)
 
             # OPTIMIZED: Invalidate JSON cache after write to ensure fresh data on next read
             # This prevents serving stale cached data after state changes
             invalidate_json_cache(state_file)
 
+            self._save_pending = False
             logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
 
         except Exception as e:
             logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
+            # Retry after 5 seconds on error
+            self._save_timer.start(5000)
+            logger.warning("State save failed, will retry in 5s")
 
     def _build_completed_list(self) -> List[Dict[str, Any]]:
         """
@@ -1320,6 +1382,9 @@ class PackerLogic(QObject):
                 # This check prevents duplicates in case of rare edge cases
                 if self.current_order_number not in self.session_packing_state['completed_orders']:
                     self.session_packing_state['completed_orders'].append(self.current_order_number)
+
+                # Force immediate save for order completion (critical milestone)
+                self.force_save_state()
             else:
                 # Order still in progress
                 status = "SKU_OK"
@@ -1333,12 +1398,9 @@ class PackerLogic(QObject):
                 # This allows the UI to show "5/8 items packed" in real-time
                 self.item_packed.emit(self.current_order_number, total_packed, total_required)
 
-            # === CRITICAL: Save state to disk ===
-            # This is called after EVERY successful scan to ensure:
-            # - No data loss if application crashes
-            # - Session can be restored exactly where we left off
-            # - Multi-PC environments see consistent state
-            self._save_session_state()
+                # Use debounced save for in-progress scanning
+                # This reduces I/O during rapid scanning
+                self.save_state()
 
             # Return success with detailed information
             return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
@@ -1916,6 +1978,9 @@ class PackerLogic(QObject):
         Raises:
             IOError: If summary cannot be written to disk
         """
+        # Force save state before generating summary to ensure all data is persisted
+        self.force_save_state()
+
         # Generate summary with worker info
         summary = self.generate_session_summary(
             worker_id=worker_id,

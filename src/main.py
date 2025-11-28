@@ -1210,8 +1210,9 @@ class MainWindow(QMainWindow):
             # 2. Save current packing state (if session active)
             if hasattr(self, 'logic') and self.logic:
                 try:
-                    self.logic.save_state()
-                    logger.info("Packing state saved")
+                    # Force immediate save on application close (critical)
+                    self.logic.force_save_state()
+                    logger.info("Packing state force-saved on close")
                 except Exception as e:
                     logger.warning(f"Failed to save packing state: {e}")
 
