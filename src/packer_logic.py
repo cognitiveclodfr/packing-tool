@@ -28,6 +28,7 @@ from typing import List, Dict, Any, Tuple
 # Local imports
 from logger import get_logger
 from json_cache import get_cached_json, invalidate_json_cache
+from performance_profiler import profile_function, log_timing
 
 # Initialize module-level logger
 logger = get_logger(__name__)
@@ -439,6 +440,7 @@ class PackerLogic(QObject):
             logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
+    @profile_function
     def _save_session_state(self):
         """
         Save the current session's packing state to JSON file with atomic write.
@@ -1170,6 +1172,7 @@ class PackerLogic(QObject):
 
         return items, "ORDER_LOADED"
 
+    @profile_function
     def process_sku_scan(self, sku: str) -> Tuple[Dict | None, str]:
         """
         Processes a scanned SKU for the currently active order.

@@ -36,8 +36,12 @@ from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
+from performance_profiler import profile_function, log_timing, PerformanceMonitor
 
 logger = get_logger(__name__)
+
+# Global performance monitor for tracking metrics
+perf_monitor = PerformanceMonitor()
 
 def find_latest_session_dir(base_dir: str = ".") -> str | None:
     """
@@ -475,8 +479,14 @@ class MainWindow(QMainWindow):
             }
         """)
 
+    @profile_function
     def _populate_order_tree(self):
         """Populate tree with orders and items."""
+        with perf_monitor.measure("populate_order_tree"):
+            self._do_populate_order_tree()
+
+    def _do_populate_order_tree(self):
+        """Internal method to populate tree (for profiling separation)."""
         self.order_tree.clear()
 
         if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
@@ -708,6 +718,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
 
+    @profile_function
     def _update_statistics(self):
         """Refresh statistics tab with current data."""
         if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
@@ -1133,11 +1144,13 @@ class MainWindow(QMainWindow):
         self.heartbeat_timer.start(60000)  # 60 seconds
         logger.debug("Heartbeat timer started")
 
+    @profile_function
     def _update_session_heartbeat(self):
         """Update heartbeat for active session lock."""
         if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                self.lock_manager.update_heartbeat(Path(self.current_work_dir))
+                with log_timing("Update heartbeat lock file", threshold_ms=100):
+                    self.lock_manager.update_heartbeat(Path(self.current_work_dir))
                 logger.debug("Lock heartbeat updated")
             except Exception as e:
                 logger.error(f"Failed to update heartbeat: {e}")
