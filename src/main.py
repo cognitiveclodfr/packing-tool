@@ -36,6 +36,7 @@ from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
+from performance_profiler import profile_function, log_timing, global_monitor
 
 logger = get_logger(__name__)
 
@@ -475,6 +476,7 @@ class MainWindow(QMainWindow):
             }
         """)
 
+    @profile_function
     def _populate_order_tree(self):
         """Populate tree with orders and items."""
         self.order_tree.clear()
@@ -708,6 +710,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
 
+    @profile_function
     def _update_statistics(self):
         """Refresh statistics tab with current data."""
         if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
@@ -1133,6 +1136,7 @@ class MainWindow(QMainWindow):
         self.heartbeat_timer.start(60000)  # 60 seconds
         logger.debug("Heartbeat timer started")
 
+    @profile_function
     def _update_session_heartbeat(self):
         """Update heartbeat for active session lock."""
         if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
@@ -1197,6 +1201,10 @@ class MainWindow(QMainWindow):
             event: Qt close event
         """
         logger.info("Application closing, performing cleanup...")
+
+        # Log performance report before closing
+        logger.info("Generating performance report...")
+        global_monitor.log_report()
 
         try:
             # 1. Stop heartbeat timer (prevents lock updates during cleanup)
@@ -1911,6 +1919,7 @@ class MainWindow(QMainWindow):
     # This method was never called. Functionality replaced by PackerLogic.load_packing_list_json()
     # which is used in start_shopify_packing_session()
 
+    @profile_function
     def _on_item_packed(self, order_number: str, packed_count: int, required_count: int):
         """
         Slot to handle real-time progress updates from the logic layer.
@@ -1923,10 +1932,11 @@ class MainWindow(QMainWindow):
             packed_count (int): The new total of items packed for the order.
             required_count (int): The total items required for the order.
         """
-        # Refresh tree and statistics to show updated progress
-        self._populate_order_tree()
-        self._update_statistics()
-        logger.debug(f"Order {order_number} progress: {packed_count}/{required_count}")
+        with global_monitor.measure("on_item_packed_total"):
+            # Refresh tree and statistics to show updated progress
+            self._populate_order_tree()
+            self._update_statistics()
+            logger.debug(f"Order {order_number} progress: {packed_count}/{required_count}")
 
     def update_order_status(self, order_number: str, status: str):
         """
