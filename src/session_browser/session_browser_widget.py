@@ -13,6 +13,7 @@ from PySide6.QtCore import Signal, QTimer
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
 from .available_sessions_tab import AvailableSessionsTab
+from performance_profiler import profile_function, log_timing, global_monitor
 
 
 class SessionBrowserWidget(QWidget):
@@ -134,11 +135,14 @@ class SessionBrowserWidget(QWidget):
         # Emit signal to main.py
         self.start_packing_requested.emit(packing_info)
 
+    @profile_function
     def refresh_all(self):
         """Refresh all tabs."""
-        self.active_tab.refresh()
-        self.completed_tab.refresh()
-        self.available_tab.refresh()
+        with global_monitor.measure("session_browser_refresh"):
+            with log_timing("Session Browser full refresh", threshold_ms=500):
+                self.active_tab.refresh()
+                self.completed_tab.refresh()
+                self.available_tab.refresh()
 
     def set_current_tab(self, tab_name: str):
         """

@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from logger import get_logger
+from performance_profiler import profile_function, log_timing, global_monitor
 
 logger = get_logger(__name__)
 
@@ -140,6 +141,7 @@ class CompletedSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
+    @profile_function
     def refresh(self):
         """Load and display sessions."""
         self.sessions = []

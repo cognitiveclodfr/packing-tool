@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import json
 
 from logger import get_logger
+from performance_profiler import profile_function, log_timing, global_monitor
 
 logger = get_logger(__name__)
 
@@ -93,6 +94,7 @@ class ActiveSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
+    @profile_function
     def refresh(self):
         """Scan for active sessions and populate table."""
         self.sessions = []
