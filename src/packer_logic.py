@@ -466,6 +466,7 @@ class PackerLogic(QObject):
         """Force immediate state save (for critical moments like end session)."""
         if self._save_timer.isActive():
             self._save_timer.stop()
+        self._pending_save = True  # Set flag so _do_save_state() doesn't early return
         self._do_save_state()
         logger.debug("State saved immediately (forced)")
 

@@ -142,7 +142,7 @@ class TestPackingStateStructure(unittest.TestCase):
         }
 
         # Save state
-        packer1._save_session_state()
+        packer1.force_save_state()
 
         # Create second PackerLogic instance to load the state
         packer2 = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
@@ -548,7 +548,7 @@ class TestCrashRecovery(unittest.TestCase):
         }
 
         # Save state (simulate crash after this)
-        packer1._save_session_state()
+        packer1.force_save_state()
 
         # Simulate crash - create new instance to restore
         packer2 = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
