@@ -605,6 +605,9 @@ class PackerLogic(QObject):
             state_path = Path(state_file)
             state_dir = state_path.parent
 
+            # Ensure directory exists before creating temp file
+            state_dir.mkdir(parents=True, exist_ok=True)
+
             # Use log_timing to measure save performance
             with log_timing("Save state to disk", threshold_ms=200):
                 # Atomic write: write to temp file first
