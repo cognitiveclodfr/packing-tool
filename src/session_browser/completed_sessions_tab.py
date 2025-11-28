@@ -141,7 +141,12 @@ class CompletedSessionsTab(QWidget):
         layout.addLayout(btn_layout)
 
     def refresh(self):
-        """Load and display sessions."""
+        """
+        Load and display sessions.
+
+        Note: This is the synchronous version, kept for manual refresh.
+        Background scanning uses update_from_scan_results() instead.
+        """
         self.sessions = []
         self.table.setRowCount(0)
 
@@ -213,6 +218,80 @@ class CompletedSessionsTab(QWidget):
 
         # Populate table
         self._populate_table()
+
+    def update_from_scan_results(self, sessions: list):
+        """
+        Update table with pre-scanned completed session data.
+
+        This is called from main thread with results from background scan.
+
+        Args:
+            sessions: List of SessionHistoryRecord objects from background scan
+        """
+        try:
+            # Apply filters
+            filtered_sessions = self._apply_filters(sessions)
+
+            # Update internal sessions list
+            self.sessions = filtered_sessions
+
+            # Populate table (fast - just UI updates)
+            self._populate_table()
+
+            logger.debug(f"Updated completed sessions table with {len(filtered_sessions)} sessions")
+
+        except Exception as e:
+            logger.error(f"Error updating completed sessions from scan results: {e}", exc_info=True)
+
+    def _apply_filters(self, sessions: list) -> list:
+        """Apply date range, client, and search filters to sessions."""
+        filtered = sessions
+
+        # Client filter
+        selected_client = self.client_combo.currentData()
+        if selected_client:
+            filtered = [s for s in filtered if s.client_id == selected_client]
+
+        # Date range filter
+        qdate_from = self.date_from.date()
+        qdate_to = self.date_to.date()
+        date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
+        date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
+
+        filtered = [
+            s for s in filtered
+            if s.start_time and date_from <= s.start_time <= date_to
+        ]
+
+        # Search filter
+        search_term = self.search_input.text().strip()
+        if search_term:
+            search_field_map = {
+                "Session ID": ["session_id"],
+                "Client ID": ["client_id"],
+                "Worker": ["pc_name"],
+                "Packing List": ["packing_list_path"]
+            }
+
+            field_name = self.search_field.currentText()
+
+            if field_name == "All Fields":
+                search_fields = ["session_id", "client_id", "pc_name", "packing_list_path"]
+            else:
+                search_fields = search_field_map.get(field_name, [])
+
+            # Filter sessions manually
+            search_filtered = []
+            for s in filtered:
+                for field in search_fields:
+                    value = getattr(s, field, None)
+                    if value and search_term.lower() in str(value).lower():
+                        search_filtered.append(s)
+                        break
+
+            filtered = search_filtered
+
+        return filtered
 
     def _populate_table(self):
         """Fill table with session data."""

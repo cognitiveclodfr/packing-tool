@@ -94,7 +94,12 @@ class ActiveSessionsTab(QWidget):
         layout.addLayout(btn_layout)
 
     def refresh(self):
-        """Scan for active sessions and populate table."""
+        """
+        Scan for active sessions and populate table.
+
+        Note: This is the synchronous version, kept for manual refresh.
+        Background scanning uses update_from_scan_results() instead.
+        """
         self.sessions = []
         self.table.setRowCount(0)
 
@@ -206,6 +211,33 @@ class ActiveSessionsTab(QWidget):
 
         # Populate table
         self._populate_table()
+
+    def update_from_scan_results(self, sessions: list):
+        """
+        Update table with pre-scanned session data.
+
+        This is called from main thread with results from background scan.
+        Much faster than scanning because data is already loaded.
+
+        Args:
+            sessions: List of session dicts from background scan
+        """
+        try:
+            # Filter sessions if needed
+            selected_client = self.client_combo.currentData()
+            if selected_client:
+                sessions = [s for s in sessions if s['client_id'] == selected_client]
+
+            # Update internal sessions list
+            self.sessions = sessions
+
+            # Populate table (fast - just UI updates)
+            self._populate_table()
+
+            logger.debug(f"Updated active sessions table with {len(sessions)} sessions")
+
+        except Exception as e:
+            logger.error(f"Error updating active sessions from scan results: {e}", exc_info=True)
 
     def _classify_lock_status(self, lock_info: dict) -> str:
         """Classify lock as Active or Stale based on heartbeat."""
