@@ -13,6 +13,7 @@ from PySide6.QtCore import Signal, QTimer
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
 from .available_sessions_tab import AvailableSessionsTab
+from performance_profiler import profile_function, log_timing
 
 
 class SessionBrowserWidget(QWidget):
@@ -61,12 +62,13 @@ class SessionBrowserWidget(QWidget):
         self._connect_signals()
 
         # ✅ ADD: Auto-refresh timer (30 seconds)
+        # Performance optimization: Only refresh when widget is visible
         self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self.refresh_all)
-        self.refresh_timer.start(30000)  # 30 seconds
+        self.refresh_timer.timeout.connect(self._on_auto_refresh)
+        # Timer will be started/stopped in showEvent/hideEvent
         from logger import get_logger
-        logger = get_logger(__name__)
-        logger.debug("Auto-refresh enabled (30s interval)")
+        self.logger = get_logger(__name__)
+        self.logger.debug("Auto-refresh timer initialized (30s interval, starts when visible)")
 
     def _init_ui(self):
         """Initialize UI components."""
@@ -134,6 +136,12 @@ class SessionBrowserWidget(QWidget):
         # Emit signal to main.py
         self.start_packing_requested.emit(packing_info)
 
+    def _on_auto_refresh(self):
+        """Auto-refresh handler called by timer."""
+        self.logger.debug("Auto-refresh triggered")
+        self.refresh_all()
+
+    @profile_function
     def refresh_all(self):
         """Refresh all tabs."""
         self.active_tab.refresh()
@@ -156,8 +164,25 @@ class SessionBrowserWidget(QWidget):
         if tab_name in tab_map:
             self.tab_widget.setCurrentIndex(tab_map[tab_name])
 
+    def showEvent(self, event):
+        """Start auto-refresh when widget becomes visible."""
+        super().showEvent(event)
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.start(30000)  # 30 seconds
+            self.logger.debug("Auto-refresh started (widget visible)")
+            # Do immediate refresh when shown
+            self.refresh_all()
+
+    def hideEvent(self, event):
+        """Stop auto-refresh when widget is hidden."""
+        super().hideEvent(event)
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+            self.logger.debug("Auto-refresh stopped (widget hidden)")
+
     def closeEvent(self, event):
         """Stop refresh timer on close."""
         if hasattr(self, 'refresh_timer'):
             self.refresh_timer.stop()
+            self.logger.debug("Auto-refresh stopped (widget closed)")
         event.accept()

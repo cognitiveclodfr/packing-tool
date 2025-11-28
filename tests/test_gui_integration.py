@@ -321,6 +321,9 @@ def test_start_session_and_load_data(app_basic):
     # Simulate clicking the "Start Session" button
     qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
 
+    # Wait for debounced tree update to complete (100ms debounce + buffer)
+    qtbot.wait(200)
+
     # Assertions after starting the session
     assert not window.start_session_button.isEnabled()
     assert window.end_session_button.isEnabled()
@@ -397,6 +400,10 @@ def test_search_filter(app_basic):
 
     # --- Setup: Start a session first ---
     qtbot.mouseClick(window.start_session_button, Qt.LeftButton)
+
+    # Wait for debounced tree update to complete
+    qtbot.wait(200)
+
     order_tree = window.order_tree
 
     # Helper function to count visible items

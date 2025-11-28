@@ -36,8 +36,12 @@ from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
+from performance_profiler import profile_function, log_timing, PerformanceMonitor
 
 logger = get_logger(__name__)
+
+# Global performance monitor for tracking metrics
+perf_monitor = PerformanceMonitor()
 
 def find_latest_session_dir(base_dir: str = ".") -> str | None:
     """
@@ -154,6 +158,16 @@ class MainWindow(QMainWindow):
         self.current_packing_list = None  # Name of selected packing list
         self.current_work_dir = None      # Work directory for packing results
         self.packing_data = None          # Loaded packing list data
+
+        # Debounced UI update timers (Performance optimization)
+        # These timers prevent expensive UI updates from running too frequently
+        self._tree_update_timer = QTimer()
+        self._tree_update_timer.setSingleShot(True)
+        self._tree_update_timer.timeout.connect(self._do_populate_order_tree)
+
+        self._stats_update_timer = QTimer()
+        self._stats_update_timer.setSingleShot(True)
+        self._stats_update_timer.timeout.connect(self._update_statistics)
 
         # Phase 1.4: Unified StatsManager for integration with Shopify Tool statistics
         # Records packing statistics to shared Stats/global_stats.json on file server
@@ -476,7 +490,19 @@ class MainWindow(QMainWindow):
         """)
 
     def _populate_order_tree(self):
-        """Populate tree with orders and items."""
+        """Schedule order tree update (debounced)."""
+        # Don't rebuild tree immediately - schedule for 100ms later
+        # If called again within 100ms, timer resets
+        self._tree_update_timer.start(100)
+
+    @profile_function
+    def _do_populate_order_tree(self):
+        """Actually populate tree (internal method called by timer)."""
+        with perf_monitor.measure("populate_order_tree"):
+            self._internal_populate_order_tree()
+
+    def _internal_populate_order_tree(self):
+        """Internal method to populate tree (for profiling separation)."""
         self.order_tree.clear()
 
         if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
@@ -708,6 +734,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
 
+    @profile_function
     def _update_statistics(self):
         """Refresh statistics tab with current data."""
         if not self.logic or not hasattr(self.logic, 'processed_df') or self.logic.processed_df is None:
@@ -976,7 +1003,16 @@ class MainWindow(QMainWindow):
             duration_ms (int): The duration of the flash in milliseconds.
         """
         self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
-        QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table_frame.setStyleSheet(""))
+
+        # Use try-except to safely clear style even if widget is deleted
+        def safe_clear_style():
+            try:
+                self.packer_mode_widget.table_frame.setStyleSheet("")
+            except (RuntimeError, AttributeError):
+                # Widget was deleted or doesn't exist - expected during cleanup
+                pass
+
+        QTimer.singleShot(duration_ms, safe_clear_style)
 
 
     def start_session(self, file_path: str = None, restore_dir: str = None):
@@ -1133,11 +1169,13 @@ class MainWindow(QMainWindow):
         self.heartbeat_timer.start(60000)  # 60 seconds
         logger.debug("Heartbeat timer started")
 
+    @profile_function
     def _update_session_heartbeat(self):
         """Update heartbeat for active session lock."""
         if self.logic and hasattr(self, 'current_work_dir') and self.current_work_dir:
             try:
-                self.lock_manager.update_heartbeat(Path(self.current_work_dir))
+                with log_timing("Update heartbeat lock file", threshold_ms=100):
+                    self.lock_manager.update_heartbeat(Path(self.current_work_dir))
                 logger.debug("Lock heartbeat updated")
             except Exception as e:
                 logger.error(f"Failed to update heartbeat: {e}")
@@ -1210,7 +1248,7 @@ class MainWindow(QMainWindow):
             # 2. Save current packing state (if session active)
             if hasattr(self, 'logic') and self.logic:
                 try:
-                    self.logic.save_state()
+                    self.logic.force_save_state()  # Force immediate save (critical moment)
                     logger.info("Packing state saved")
                 except Exception as e:
                     logger.warning(f"Failed to save packing state: {e}")
@@ -1923,10 +1961,16 @@ class MainWindow(QMainWindow):
             packed_count (int): The new total of items packed for the order.
             required_count (int): The total items required for the order.
         """
-        # Refresh tree and statistics to show updated progress
-        self._populate_order_tree()
-        self._update_statistics()
+        # Schedule tree and statistics updates (debounced)
+        # This prevents multiple rapid scans from triggering expensive rebuilds
+        self._populate_order_tree()  # Debounced (100ms)
+        self._schedule_stats_update()  # Debounced (500ms)
         logger.debug(f"Order {order_number} progress: {packed_count}/{required_count}")
+
+    def _schedule_stats_update(self):
+        """Schedule statistics update (debounced)."""
+        # Don't update stats immediately - schedule for 500ms later
+        self._stats_update_timer.start(500)
 
     def update_order_status(self, order_number: str, status: str):
         """
