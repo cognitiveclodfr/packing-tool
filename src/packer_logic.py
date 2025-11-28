@@ -28,6 +28,7 @@ from typing import List, Dict, Any, Tuple
 # Local imports
 from logger import get_logger
 from json_cache import get_cached_json, invalidate_json_cache
+from performance_profiler import profile_function, log_timing, global_monitor
 
 # Initialize module-level logger
 logger = get_logger(__name__)
@@ -258,6 +259,7 @@ class PackerLogic(QObject):
             # Unified workflow: summary in work_dir root
             return str(self.work_dir / SUMMARY_FILE_NAME)
 
+    @profile_function
     def _load_session_state(self):
         """
         Load the packing state for the session from JSON file with caching.
@@ -269,14 +271,15 @@ class PackerLogic(QObject):
         Note: Uses JSON cache with short TTL (30s) for state files since they change frequently.
         Cache is invalidated after every write to ensure consistency.
         """
-        state_file = self._get_state_file_path()
+        with global_monitor.measure("load_state_total"):
+            state_file = self._get_state_file_path()
 
-        if not os.path.exists(state_file):
-            logger.debug("No existing session state found, starting fresh")
-            self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
-            return
+            if not os.path.exists(state_file):
+                logger.debug("No existing session state found, starting fresh")
+                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+                return
 
-        try:
+            try:
             # OPTIMIZED: Use JSON cache for faster repeated reads
             # This helps when multiple workers/processes access the same state file
             # Note: Cache is invalidated after writes in _save_session_state()
@@ -439,6 +442,7 @@ class PackerLogic(QObject):
             logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
+    @profile_function
     def _save_session_state(self):
         """
         Save the current session's packing state to JSON file with atomic write.
@@ -463,115 +467,116 @@ class PackerLogic(QObject):
             "completed": [...]
         }
         """
-        state_file = self._get_state_file_path()
+        with global_monitor.measure("save_state_total"):
+            state_file = self._get_state_file_path()
 
-        # Calculate progress metrics
-        total_orders = len(self.orders_data) if self.orders_data else 0
-        completed_orders_count = len(self.session_packing_state.get('completed_orders', []))
-        in_progress_count = len(self.session_packing_state.get('in_progress', {}))
+            # Calculate progress metrics
+            total_orders = len(self.orders_data) if self.orders_data else 0
+            completed_orders_count = len(self.session_packing_state.get('completed_orders', []))
+            in_progress_count = len(self.session_packing_state.get('in_progress', {}))
 
-        # Calculate total and packed items
-        total_items = 0
-        packed_items = 0
+            # Calculate total and packed items
+            total_items = 0
+            packed_items = 0
 
-        # Count items from processed_df if available
-        if self.processed_df is not None:
+            # Count items from processed_df if available
+            if self.processed_df is not None:
+                try:
+                    import pandas as pd
+                    total_items = int(pd.to_numeric(self.processed_df['Quantity'], errors='coerce').sum())
+                except Exception as e:
+                    logger.warning(f"Could not calculate total_items: {e}")
+
+            # Count packed items from completed orders
+            if self.processed_df is not None and self.session_packing_state.get('completed_orders'):
+                try:
+                    import pandas as pd
+                    completed_items = pd.to_numeric(
+                        self.processed_df[
+                            self.processed_df['Order_Number'].isin(self.session_packing_state['completed_orders'])
+                        ]['Quantity'],
+                        errors='coerce'
+                    ).sum()
+                    packed_items += int(completed_items)
+                except Exception as e:
+                    logger.warning(f"Could not calculate packed items from completed orders: {e}")
+
+            # Count packed items from in-progress orders
+            for order_state in self.session_packing_state.get('in_progress', {}).values():
+                if isinstance(order_state, list):
+                    # New format: list of item states
+                    for item in order_state:
+                        if isinstance(item, dict):
+                            packed_items += item.get('packed', 0)
+
+            # Build complete state structure with metadata
+            from shared.metadata_utils import get_current_timestamp
+
+            state_data = {
+                # Version
+                "version": "1.3.0",
+
+                # Metadata
+                "session_id": self.session_id,
+                "client_id": self.client_id,
+                "packing_list_name": self.packing_list_name,
+                "started_at": self.started_at,
+                "last_updated": get_current_timestamp(),
+                "status": "completed" if completed_orders_count == total_orders and total_orders > 0 else "in_progress",
+                "pc_name": self.worker_pc,
+
+                # Progress summary
+                "progress": {
+                    "total_orders": total_orders,
+                    "completed_orders": completed_orders_count,
+                    "in_progress_order": self.current_order_number,
+                    "total_items": total_items,
+                    "packed_items": packed_items
+                },
+
+                # Detailed packing state
+                # Phase 2b: Add timing metadata for in-progress order
+                "in_progress": {
+                    **self.session_packing_state.get('in_progress', {}),
+                    # Add timing data if there's a current order with timing info
+                    **({
+                        "_timing": {
+                            "current_order_start_time": self.current_order_start_time,
+                            "items_scanned": self.current_order_items_scanned
+                        }
+                    } if self.current_order_number and self.current_order_start_time else {})
+                },
+                # Phase 2b: Use completed_orders_metadata if available
+                "completed": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata else self._build_completed_list()
+            }
+
             try:
-                import pandas as pd
-                total_items = int(pd.to_numeric(self.processed_df['Quantity'], errors='coerce').sum())
+                state_path = Path(state_file)
+                state_dir = state_path.parent
+
+                # Atomic write: write to temp file first
+                with tempfile.NamedTemporaryFile(
+                    mode='w',
+                    dir=state_dir,
+                    prefix='.tmp_state_',
+                    suffix='.json',
+                    delete=False,
+                    encoding='utf-8'
+                ) as tmp_file:
+                    json.dump(state_data, tmp_file, indent=2, ensure_ascii=False)
+                    tmp_path = tmp_file.name
+
+                # Atomic replace (works on Windows too)
+                shutil.move(tmp_path, state_file)
+
+                # OPTIMIZED: Invalidate JSON cache after write to ensure fresh data on next read
+                # This prevents serving stale cached data after state changes
+                invalidate_json_cache(state_file)
+
+                logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
+
             except Exception as e:
-                logger.warning(f"Could not calculate total_items: {e}")
-
-        # Count packed items from completed orders
-        if self.processed_df is not None and self.session_packing_state.get('completed_orders'):
-            try:
-                import pandas as pd
-                completed_items = pd.to_numeric(
-                    self.processed_df[
-                        self.processed_df['Order_Number'].isin(self.session_packing_state['completed_orders'])
-                    ]['Quantity'],
-                    errors='coerce'
-                ).sum()
-                packed_items += int(completed_items)
-            except Exception as e:
-                logger.warning(f"Could not calculate packed items from completed orders: {e}")
-
-        # Count packed items from in-progress orders
-        for order_state in self.session_packing_state.get('in_progress', {}).values():
-            if isinstance(order_state, list):
-                # New format: list of item states
-                for item in order_state:
-                    if isinstance(item, dict):
-                        packed_items += item.get('packed', 0)
-
-        # Build complete state structure with metadata
-        from shared.metadata_utils import get_current_timestamp
-
-        state_data = {
-            # Version
-            "version": "1.3.0",
-
-            # Metadata
-            "session_id": self.session_id,
-            "client_id": self.client_id,
-            "packing_list_name": self.packing_list_name,
-            "started_at": self.started_at,
-            "last_updated": get_current_timestamp(),
-            "status": "completed" if completed_orders_count == total_orders and total_orders > 0 else "in_progress",
-            "pc_name": self.worker_pc,
-
-            # Progress summary
-            "progress": {
-                "total_orders": total_orders,
-                "completed_orders": completed_orders_count,
-                "in_progress_order": self.current_order_number,
-                "total_items": total_items,
-                "packed_items": packed_items
-            },
-
-            # Detailed packing state
-            # Phase 2b: Add timing metadata for in-progress order
-            "in_progress": {
-                **self.session_packing_state.get('in_progress', {}),
-                # Add timing data if there's a current order with timing info
-                **({
-                    "_timing": {
-                        "current_order_start_time": self.current_order_start_time,
-                        "items_scanned": self.current_order_items_scanned
-                    }
-                } if self.current_order_number and self.current_order_start_time else {})
-            },
-            # Phase 2b: Use completed_orders_metadata if available
-            "completed": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata else self._build_completed_list()
-        }
-
-        try:
-            state_path = Path(state_file)
-            state_dir = state_path.parent
-
-            # Atomic write: write to temp file first
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                dir=state_dir,
-                prefix='.tmp_state_',
-                suffix='.json',
-                delete=False,
-                encoding='utf-8'
-            ) as tmp_file:
-                json.dump(state_data, tmp_file, indent=2, ensure_ascii=False)
-                tmp_path = tmp_file.name
-
-            # Atomic replace (works on Windows too)
-            shutil.move(tmp_path, state_file)
-
-            # OPTIMIZED: Invalidate JSON cache after write to ensure fresh data on next read
-            # This prevents serving stale cached data after state changes
-            invalidate_json_cache(state_file)
-
-            logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
-
-        except Exception as e:
-            logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
+                logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
 
     def _build_completed_list(self) -> List[Dict[str, Any]]:
         """
@@ -747,6 +752,7 @@ class PackerLogic(QObject):
         logger.info(f"Packing list loaded successfully: {len(df)} rows")
         return self.packing_list_df
 
+    @profile_function
     def process_data_and_generate_barcodes(self, column_mapping: Dict[str, str] = None) -> int:
         """
         Process the loaded DataFrame and generate barcodes for each order.
@@ -1170,6 +1176,7 @@ class PackerLogic(QObject):
 
         return items, "ORDER_LOADED"
 
+    @profile_function
     def process_sku_scan(self, sku: str) -> Tuple[Dict | None, str]:
         """
         Processes a scanned SKU for the currently active order.
