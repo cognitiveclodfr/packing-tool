@@ -157,12 +157,21 @@ class PackerLogic(QObject):
         self.current_order_items_scanned = []  # List of items with scan timestamps
         self.completed_orders_metadata = []  # List of completed orders with timing data
 
+        # Debounced save timer (Performance optimization)
+        # Instead of saving immediately on every scan, we debounce saves to reduce file I/O
+        from PySide6.QtCore import QTimer
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._do_save_state)
+        self._pending_save = False
+
         logger.info(f"PackerLogic initialized for client {client_id}")
         logger.debug(f"Work directory: {self.work_dir}")
         logger.debug(f"Barcode directory: {self.barcode_dir}")
         logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
         logger.debug("Phase 2b timing variables initialized")
+        logger.debug("Debounced save timer initialized (2s delay)")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
@@ -440,10 +449,30 @@ class PackerLogic(QObject):
             logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
-    @profile_function
-    def _save_session_state(self):
+    def save_state(self):
         """
-        Save the current session's packing state to JSON file with atomic write.
+        Request state save (debounced).
+
+        Instead of saving immediately, schedules save for 2 seconds later.
+        If called multiple times, only saves once.
+        This dramatically reduces file I/O during rapid scanning.
+        """
+        if not self._pending_save:
+            self._pending_save = True
+            self._save_timer.start(2000)  # 2 second delay
+            logger.debug("State save scheduled (2s debounce)")
+
+    def force_save_state(self):
+        """Force immediate state save (for critical moments like end session)."""
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+        self._do_save_state()
+        logger.debug("State saved immediately (forced)")
+
+    @profile_function
+    def _do_save_state(self):
+        """
+        Actually save state to disk (internal method called by timer).
 
         New behavior (redesigned state management):
         - Saves complete state with metadata (session_id, timestamps, progress)
@@ -465,6 +494,9 @@ class PackerLogic(QObject):
             "completed": [...]
         }
         """
+        if not self._pending_save:
+            return
+
         state_file = self._get_state_file_path()
 
         # Calculate progress metrics
@@ -572,8 +604,13 @@ class PackerLogic(QObject):
 
             logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
 
+            # Reset pending save flag on success
+            self._pending_save = False
+
         except Exception as e:
             logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
+            # Retry after 5 seconds on failure
+            self._save_timer.start(5000)
 
     def _build_completed_list(self) -> List[Dict[str, Any]]:
         """
@@ -1161,7 +1198,7 @@ class PackerLogic(QObject):
                     'row': i
                 })
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
-            self._save_session_state()
+            self.save_state()  # Debounced save
 
         # Phase 2b: Record order start time
         from shared.metadata_utils import get_current_timestamp
@@ -1341,7 +1378,7 @@ class PackerLogic(QObject):
             # - No data loss if application crashes
             # - Session can be restored exactly where we left off
             # - Multi-PC environments see consistent state
-            self._save_session_state()
+            self.save_state()  # Debounced save (performance optimization)
 
             # Return success with detailed information
             return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
