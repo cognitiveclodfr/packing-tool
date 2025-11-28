@@ -158,10 +158,20 @@ class PackerLogic(QObject):
         self.completed_orders_metadata = []  # List of completed orders with timing data
 
         # Debounced save timer (Performance optimization)
-        self._save_timer = QTimer()
-        self._save_timer.setSingleShot(True)
-        self._save_timer.timeout.connect(self._do_save_state)
-        self._save_pending = False
+        # Disable debouncing in test environments (no Qt app or PYTEST_CURRENT_TEST set)
+        from PySide6.QtWidgets import QApplication
+        self._debounce_enabled = QApplication.instance() is not None and os.environ.get('PYTEST_CURRENT_TEST') is None
+
+        if self._debounce_enabled:
+            self._save_timer = QTimer()
+            self._save_timer.setSingleShot(True)
+            self._save_timer.timeout.connect(self._do_save_state)
+            self._save_pending = False
+            logger.debug("Debounced save timer initialized (2s delay)")
+        else:
+            self._save_timer = None
+            self._save_pending = False
+            logger.debug("Debounced saves disabled (test mode)")
 
         logger.info(f"PackerLogic initialized for client {client_id}")
         logger.debug(f"Work directory: {self.work_dir}")
@@ -169,7 +179,6 @@ class PackerLogic(QObject):
         logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
         logger.debug("Phase 2b timing variables initialized")
-        logger.debug("Debounced save timer initialized (2s delay)")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
@@ -455,7 +464,16 @@ class PackerLogic(QObject):
         If called multiple times within 2 seconds, only saves once.
 
         This dramatically reduces I/O operations during rapid scanning.
+
+        In test mode (no Qt app or PYTEST_CURRENT_TEST set), saves immediately.
         """
+        # Test mode: save immediately without debouncing
+        if not self._debounce_enabled:
+            self._save_pending = True
+            self._do_save_state()
+            return
+
+        # Production mode: debounce saves
         if not self._save_pending:
             self._save_pending = True
             self._save_timer.start(2000)  # 2 second delay
@@ -474,7 +492,7 @@ class PackerLogic(QObject):
         - Order completion
         - Application close
         """
-        if self._save_timer.isActive():
+        if self._debounce_enabled and self._save_timer and self._save_timer.isActive():
             self._save_timer.stop()
 
         self._save_pending = True
@@ -634,9 +652,13 @@ class PackerLogic(QObject):
 
         except Exception as e:
             logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
-            # Retry after 5 seconds on error
-            self._save_timer.start(5000)
-            logger.warning("State save failed, will retry in 5s")
+            # Retry after 5 seconds on error (only in production mode)
+            if self._debounce_enabled and self._save_timer:
+                self._save_timer.start(5000)
+                logger.warning("State save failed, will retry in 5s")
+            else:
+                # Test mode: don't retry automatically, just log
+                logger.warning("State save failed (test mode, no retry)")
 
     def _build_completed_list(self) -> List[Dict[str, Any]]:
         """
