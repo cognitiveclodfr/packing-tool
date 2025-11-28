@@ -280,167 +280,167 @@ class PackerLogic(QObject):
                 return
 
             try:
-            # OPTIMIZED: Use JSON cache for faster repeated reads
-            # This helps when multiple workers/processes access the same state file
-            # Note: Cache is invalidated after writes in _save_session_state()
-            data = get_cached_json(state_file, default=None)
+                # OPTIMIZED: Use JSON cache for faster repeated reads
+                # This helps when multiple workers/processes access the same state file
+                # Note: Cache is invalidated after writes in _save_session_state()
+                data = get_cached_json(state_file, default=None)
 
-            if data is None:
-                # File exists but couldn't be read (invalid JSON, etc.)
-                logger.error("Could not load session state, starting fresh")
-                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
-                return
+                if data is None:
+                    # File exists but couldn't be read (invalid JSON, etc.)
+                    logger.error("Could not load session state, starting fresh")
+                    self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+                    return
 
-            # Handle both old and new format (with version)
-            if isinstance(data, dict) and 'data' in data:
-                # Legacy format with version wrapper
-                state_data = data['data']
-            else:
-                # Could be new format (with metadata) or old direct format
-                state_data = data
+                # Handle both old and new format (with version)
+                if isinstance(data, dict) and 'data' in data:
+                    # Legacy format with version wrapper
+                    state_data = data['data']
+                else:
+                    # Could be new format (with metadata) or old direct format
+                    state_data = data
 
-            # Load core packing state with validation
-            # CRITICAL FIX: Validate in_progress structure to prevent AttributeError on resume
-            raw_in_progress = state_data.get('in_progress', {})
-            validated_in_progress = {}
+                # Load core packing state with validation
+                # CRITICAL FIX: Validate in_progress structure to prevent AttributeError on resume
+                raw_in_progress = state_data.get('in_progress', {})
+                validated_in_progress = {}
 
-            if isinstance(raw_in_progress, dict):
-                for order_num, order_state in raw_in_progress.items():
-                    # Skip internal metadata keys (like _timing)
-                    if order_num.startswith('_'):
-                        continue
+                if isinstance(raw_in_progress, dict):
+                    for order_num, order_state in raw_in_progress.items():
+                        # Skip internal metadata keys (like _timing)
+                        if order_num.startswith('_'):
+                            continue
 
-                    # Validate that order_state is a list
-                    if not isinstance(order_state, list):
-                        logger.error(
-                            f"CRITICAL: Invalid order state for {order_num}: expected list, got {type(order_state).__name__}. "
-                            f"Skipping this order to prevent crash."
-                        )
-                        continue
-
-                    # Validate that each item in the list is a dict
-                    validated_items = []
-                    for idx, item_state in enumerate(order_state):
-                        if not isinstance(item_state, dict):
+                        # Validate that order_state is a list
+                        if not isinstance(order_state, list):
                             logger.error(
-                                f"CRITICAL: Invalid item state in order {order_num} at index {idx}: "
-                                f"expected dict, got {type(item_state).__name__}. Skipping this item."
+                                f"CRITICAL: Invalid order state for {order_num}: expected list, got {type(order_state).__name__}. "
+                                f"Skipping this order to prevent crash."
                             )
                             continue
 
-                        # Ensure critical keys exist (be lenient for backward compatibility)
-                        # Support multiple legacy formats for SKU identification:
-                        # - New format: 'original_sku' and/or 'normalized_sku'
-                        # - Legacy format: 'sku' (used by old tests and early versions)
+                        # Validate that each item in the list is a dict
+                        validated_items = []
+                        for idx, item_state in enumerate(order_state):
+                            if not isinstance(item_state, dict):
+                                logger.error(
+                                    f"CRITICAL: Invalid item state in order {order_num} at index {idx}: "
+                                    f"expected dict, got {type(item_state).__name__}. Skipping this item."
+                                )
+                                continue
 
-                        # Check if item has any form of SKU identifier
-                        has_sku = 'original_sku' in item_state or 'normalized_sku' in item_state or 'sku' in item_state
+                            # Ensure critical keys exist (be lenient for backward compatibility)
+                            # Support multiple legacy formats for SKU identification:
+                            # - New format: 'original_sku' and/or 'normalized_sku'
+                            # - Legacy format: 'sku' (used by old tests and early versions)
 
-                        if has_sku:
-                            # Migrate legacy 'sku' field to new format if needed
-                            if 'sku' in item_state and 'original_sku' not in item_state:
-                                item_state['original_sku'] = item_state['sku']
-                                logger.debug(f"Migrated legacy 'sku' field to 'original_sku' in {order_num}")
+                            # Check if item has any form of SKU identifier
+                            has_sku = 'original_sku' in item_state or 'normalized_sku' in item_state or 'sku' in item_state
 
-                            if 'original_sku' in item_state and 'normalized_sku' not in item_state:
-                                # Generate normalized_sku from original_sku if missing
-                                item_state['normalized_sku'] = self._normalize_sku(item_state['original_sku'])
-                                logger.debug(f"Generated normalized_sku from original_sku in {order_num}")
-                            elif 'normalized_sku' in item_state and 'original_sku' not in item_state:
-                                # Use normalized_sku as original_sku if original is missing
-                                item_state['original_sku'] = item_state['normalized_sku']
-                                logger.debug(f"Used normalized_sku as original_sku in {order_num}")
+                            if has_sku:
+                                # Migrate legacy 'sku' field to new format if needed
+                                if 'sku' in item_state and 'original_sku' not in item_state:
+                                    item_state['original_sku'] = item_state['sku']
+                                    logger.debug(f"Migrated legacy 'sku' field to 'original_sku' in {order_num}")
 
-                            # Fill in missing optional fields with defaults
-                            if 'packed' not in item_state:
-                                item_state['packed'] = 0
-                                logger.debug(f"Added default packed=0 for item in {order_num}")
-                            if 'required' not in item_state:
-                                item_state['required'] = 0
-                                logger.debug(f"Added default required=0 for item in {order_num}")
-                            if 'row' not in item_state:
-                                item_state['row'] = idx
-                                logger.debug(f"Added default row={idx} for item in {order_num}")
+                                if 'original_sku' in item_state and 'normalized_sku' not in item_state:
+                                    # Generate normalized_sku from original_sku if missing
+                                    item_state['normalized_sku'] = self._normalize_sku(item_state['original_sku'])
+                                    logger.debug(f"Generated normalized_sku from original_sku in {order_num}")
+                                elif 'normalized_sku' in item_state and 'original_sku' not in item_state:
+                                    # Use normalized_sku as original_sku if original is missing
+                                    item_state['original_sku'] = item_state['normalized_sku']
+                                    logger.debug(f"Used normalized_sku as original_sku in {order_num}")
 
-                            validated_items.append(item_state)
+                                # Fill in missing optional fields with defaults
+                                if 'packed' not in item_state:
+                                    item_state['packed'] = 0
+                                    logger.debug(f"Added default packed=0 for item in {order_num}")
+                                if 'required' not in item_state:
+                                    item_state['required'] = 0
+                                    logger.debug(f"Added default required=0 for item in {order_num}")
+                                if 'row' not in item_state:
+                                    item_state['row'] = idx
+                                    logger.debug(f"Added default row={idx} for item in {order_num}")
+
+                                validated_items.append(item_state)
+                            else:
+                                logger.error(
+                                    f"CRITICAL: Item state in order {order_num} at index {idx} has no SKU identifier "
+                                    f"(missing 'original_sku', 'normalized_sku', and 'sku'). Skipping item."
+                                )
+
+                        # Only include orders with valid items
+                        if validated_items:
+                            validated_in_progress[order_num] = validated_items
                         else:
-                            logger.error(
-                                f"CRITICAL: Item state in order {order_num} at index {idx} has no SKU identifier "
-                                f"(missing 'original_sku', 'normalized_sku', and 'sku'). Skipping item."
-                            )
-
-                    # Only include orders with valid items
-                    if validated_items:
-                        validated_in_progress[order_num] = validated_items
-                    else:
-                        logger.warning(f"Order {order_num} has no valid items after validation, skipping")
-            else:
-                logger.error(f"in_progress is not a dict: {type(raw_in_progress).__name__}, using empty state")
-
-            self.session_packing_state['in_progress'] = validated_in_progress
-            logger.debug(f"Loaded and validated {len(validated_in_progress)} in-progress orders")
-
-            # Handle both new format (completed: list of dicts) and old format (completed_orders: list of strings)
-            if 'completed' in state_data:
-                # New format: list of dicts with metadata
-                completed_list = state_data.get('completed', [])
-                if completed_list and isinstance(completed_list[0], dict):
-                    # Extract order numbers from metadata dicts
-                    self.session_packing_state['completed_orders'] = [
-                        item['order_number'] for item in completed_list if 'order_number' in item
-                    ]
-
-                    # ✅ CRITICAL: Restore timing metadata for Phase 2b
-                    self.completed_orders_metadata = []
-                    for item in completed_list:
-                        metadata = {
-                            'order_number': item['order_number'],
-                            'started_at': item.get('started_at'),
-                            'completed_at': item.get('completed_at'),
-                            'duration_seconds': item.get('duration_seconds', 0),
-                            'items_count': item.get('items_count', 0),
-                            'items': item.get('items', [])
-                        }
-                        self.completed_orders_metadata.append(metadata)
-
-                    logger.info(f"Restored {len(self.completed_orders_metadata)} orders with timing metadata")
+                            logger.warning(f"Order {order_num} has no valid items after validation, skipping")
                 else:
-                    # Fallback if completed is just a list of strings
-                    self.session_packing_state['completed_orders'] = completed_list
+                    logger.error(f"in_progress is not a dict: {type(raw_in_progress).__name__}, using empty state")
+
+                self.session_packing_state['in_progress'] = validated_in_progress
+                logger.debug(f"Loaded and validated {len(validated_in_progress)} in-progress orders")
+
+                # Handle both new format (completed: list of dicts) and old format (completed_orders: list of strings)
+                if 'completed' in state_data:
+                    # New format: list of dicts with metadata
+                    completed_list = state_data.get('completed', [])
+                    if completed_list and isinstance(completed_list[0], dict):
+                        # Extract order numbers from metadata dicts
+                        self.session_packing_state['completed_orders'] = [
+                            item['order_number'] for item in completed_list if 'order_number' in item
+                        ]
+
+                        # ✅ CRITICAL: Restore timing metadata for Phase 2b
+                        self.completed_orders_metadata = []
+                        for item in completed_list:
+                            metadata = {
+                                'order_number': item['order_number'],
+                                'started_at': item.get('started_at'),
+                                'completed_at': item.get('completed_at'),
+                                'duration_seconds': item.get('duration_seconds', 0),
+                                'items_count': item.get('items_count', 0),
+                                'items': item.get('items', [])
+                            }
+                            self.completed_orders_metadata.append(metadata)
+
+                        logger.info(f"Restored {len(self.completed_orders_metadata)} orders with timing metadata")
+                    else:
+                        # Fallback if completed is just a list of strings
+                        self.session_packing_state['completed_orders'] = completed_list
+                        self.completed_orders_metadata = []
+                        logger.debug("Loaded old format state (no timing metadata)")
+                else:
+                    # Old format: simple list of order numbers
+                    self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
                     self.completed_orders_metadata = []
-                    logger.debug("Loaded old format state (no timing metadata)")
-            else:
-                # Old format: simple list of order numbers
-                self.session_packing_state['completed_orders'] = state_data.get('completed_orders', [])
-                self.completed_orders_metadata = []
-                logger.debug("Old format: no timing metadata available")
+                    logger.debug("Old format: no timing metadata available")
 
-            # Load metadata if present (new format)
-            if 'session_id' in state_data:
-                self.session_id = state_data.get('session_id')
-                self.packing_list_name = state_data.get('packing_list_name')
-                self.started_at = state_data.get('started_at')
-                # worker_pc is set from environment in __init__, but can be overridden from state
-                logger.debug(f"Loaded session metadata: {self.session_id}")
+                # Load metadata if present (new format)
+                if 'session_id' in state_data:
+                    self.session_id = state_data.get('session_id')
+                    self.packing_list_name = state_data.get('packing_list_name')
+                    self.started_at = state_data.get('started_at')
+                    # worker_pc is set from environment in __init__, but can be overridden from state
+                    logger.debug(f"Loaded session metadata: {self.session_id}")
 
-            # Phase 2b: Restore in-progress timing if present
-            if 'in_progress' in state_data and '_timing' in state_data['in_progress']:
-                timing_data = state_data['in_progress']['_timing']
-                self.current_order_start_time = timing_data.get('current_order_start_time')
-                self.current_order_items_scanned = timing_data.get('items_scanned', [])
-                logger.debug(f"Restored in-progress timing: started_at={self.current_order_start_time}")
-            else:
-                self.current_order_start_time = None
-                self.current_order_items_scanned = []
+                # Phase 2b: Restore in-progress timing if present
+                if 'in_progress' in state_data and '_timing' in state_data['in_progress']:
+                    timing_data = state_data['in_progress']['_timing']
+                    self.current_order_start_time = timing_data.get('current_order_start_time')
+                    self.current_order_items_scanned = timing_data.get('items_scanned', [])
+                    logger.debug(f"Restored in-progress timing: started_at={self.current_order_start_time}")
+                else:
+                    self.current_order_start_time = None
+                    self.current_order_items_scanned = []
 
-            in_progress_count = len(self.session_packing_state['in_progress'])
-            completed_count = len(self.session_packing_state['completed_orders'])
+                in_progress_count = len(self.session_packing_state['in_progress'])
+                completed_count = len(self.session_packing_state['completed_orders'])
 
-            logger.info(f"Session state loaded: {in_progress_count} in progress, {completed_count} completed")
+                logger.info(f"Session state loaded: {in_progress_count} in progress, {completed_count} completed")
 
-        except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Error loading session state: {e}, starting fresh")
-            self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"Error loading session state: {e}, starting fresh")
+                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
     @profile_function
     def _save_session_state(self):
