@@ -1003,7 +1003,12 @@ class MainWindow(QMainWindow):
             duration_ms (int): The duration of the flash in milliseconds.
         """
         self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
-        QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table_frame.setStyleSheet(""))
+        # Use a safe lambda that checks if widget still exists before clearing style
+        QTimer.singleShot(duration_ms, lambda: (
+            self.packer_mode_widget.table_frame.setStyleSheet("")
+            if hasattr(self, 'packer_mode_widget') and self.packer_mode_widget and hasattr(self.packer_mode_widget, 'table_frame')
+            else None
+        ))
 
 
     def start_session(self, file_path: str = None, restore_dir: str = None):
