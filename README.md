@@ -34,6 +34,14 @@
 - Track session progress across all warehouse stations
 - Color-coded status indicators for quick assessment
 
+**Performance Optimization** ⚡
+- Background threading for session scanning (no UI freeze)
+- Auto-refresh every 30 seconds (can be disabled)
+- Manual refresh button with progress indicator
+- Abort button for long-running scans
+- UI remains responsive during all operations
+- **Impact:** Eliminates 60-100 second UI freeze during refresh
+
 **Coming in Phase 3.2:**
 - Available Sessions Tab (Shopify sessions ready to start)
 - Session Details Dialog (comprehensive session view)

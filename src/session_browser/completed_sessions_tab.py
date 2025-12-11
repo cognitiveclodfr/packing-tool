@@ -140,15 +140,23 @@ class CompletedSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Load and display sessions."""
-        self.sessions = []
-        self.table.setRowCount(0)
+    def _scan_sessions(self) -> list:
+        """
+        Scan completed sessions and return data WITHOUT updating UI.
 
-        # Get filters
+        This method is called in a background thread and must NOT touch UI.
+
+        Returns:
+            list: List of SessionHistoryRecord objects ready for display
+        """
+        logger.debug("Scanning completed sessions (background thread)")
+
+        sessions = []
+
+        # Get filters (safe to read in background thread as these are immutable during scan)
         selected_client = self.client_combo.currentData()
 
-        # Convert QDate to datetime (same as session_history_widget.py)
+        # Convert QDate to datetime
         qdate_from = self.date_from.date()
         qdate_to = self.date_to.date()
         date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
@@ -204,15 +212,42 @@ class CompletedSessionsTab(QWidget):
 
                 sessions = filtered_sessions
 
-            self.sessions = sessions
-
         except Exception as e:
             logger.error(f"Failed to load sessions: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load sessions:\n{str(e)}")
-            return
+            return []
 
-        # Populate table
+        logger.debug(f"Found {len(sessions)} completed sessions")
+        return sessions
+
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of SessionHistoryRecord objects from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} sessions")
+
+        # Update internal state
+        self.sessions = session_data
+
+        # Clear and populate table
+        self.table.setRowCount(0)
         self._populate_table()
+
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
 
     def _populate_table(self):
         """Fill table with session data."""

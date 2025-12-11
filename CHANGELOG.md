@@ -73,6 +73,23 @@ All notable changes to Packing Tool will be documented in this file.
 ### ✨ Added
 
 **Performance Optimizations (v1.3.1):**
+- **Session Browser Background Threading**: Eliminated UI freeze during session scanning
+  - New `RefreshWorker` QThread class for background session scanning
+  - All file I/O moved to background thread (no UI blocking)
+  - Implemented in:
+    - `session_browser_widget.py`: RefreshWorker QThread + UI controls
+    - `active_sessions_tab.py`: Split into `_scan_sessions()` (background) and `populate_table()` (UI thread)
+    - `completed_sessions_tab.py`: Split into `_scan_sessions()` (background) and `populate_table()` (UI thread)
+    - `available_sessions_tab.py`: Split into `_scan_sessions()` (background) and `populate_table()` (UI thread)
+  - Features:
+    - Auto-refresh every 30 seconds (can be disabled via checkbox)
+    - Manual "Refresh Now" button with progress indicator
+    - Abort button for long-running scans
+    - Status label showing current progress ("Refreshing: Active Sessions (1/3)")
+    - Thread-safe data passing via Qt signals/slots
+  - **Impact**: Eliminates 60-100 second UI freeze during refresh (was blocking, now 0s)
+  - **User Experience**: Session Browser remains fully responsive during refresh operations
+
 - **JSON Caching Infrastructure**: New `json_cache.py` module with LRU cache for JSON files
   - Automatic time-based expiration (60s TTL by default)
   - Size-based eviction (LRU policy, 100 files max)

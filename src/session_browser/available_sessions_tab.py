@@ -93,18 +93,17 @@ class AvailableSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Scan and populate table."""
-        self.available_lists = self._scan_available_sessions()
-        self._populate_table()
-
-    def _scan_available_sessions(self) -> list:
+    def _scan_sessions(self) -> list:
         """
         Scan for Shopify sessions with unstarted packing lists.
+
+        This method is called in a background thread and must NOT touch UI.
 
         Returns:
             List of dicts with available packing list info
         """
+        logger.debug("Scanning available sessions (background thread)")
+
         available_lists = []
         selected_client = self.client_combo.currentData()
 
@@ -182,7 +181,38 @@ class AvailableSessionsTab(QWidget):
         # Sort by session_id (newest first)
         available_lists.sort(key=lambda x: x['session_id'], reverse=True)
 
+        logger.debug(f"Found {len(available_lists)} available sessions")
         return available_lists
+
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of available session dicts from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} sessions")
+
+        # Update internal state
+        self.available_lists = session_data
+
+        # Clear and populate table
+        self.table.setRowCount(0)
+        self._populate_table()
+
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
 
     def _populate_table(self):
         """Fill table with available lists."""
