@@ -42,7 +42,7 @@ class AvailableSessionsTab(QWidget):
         self.available_lists = []
 
         self._init_ui()
-        self.refresh()
+        # Don't refresh here - parent widget will trigger background refresh
 
     def _init_ui(self):
         """Initialize UI."""

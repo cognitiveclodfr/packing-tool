@@ -175,6 +175,9 @@ class SessionBrowserWidget(QWidget):
         self.refresh_timer.start(30000)  # 30 seconds
         logger.info("SessionBrowserWidget initialized with background refresh")
 
+        # Trigger initial background refresh after widget is shown
+        QTimer.singleShot(0, self.refresh_all)
+
     def _init_ui(self):
         """Initialize UI components."""
         layout = QVBoxLayout(self)

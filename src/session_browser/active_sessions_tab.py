@@ -33,7 +33,7 @@ class ActiveSessionsTab(QWidget):
         self.sessions = []  # List of session dicts
 
         self._init_ui()
-        self.refresh()
+        # Don't refresh here - parent widget will trigger background refresh
 
     def _init_ui(self):
         """Initialize UI."""
