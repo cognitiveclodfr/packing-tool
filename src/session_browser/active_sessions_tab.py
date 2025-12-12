@@ -93,11 +93,18 @@ class ActiveSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Scan for active sessions and populate table."""
-        self.sessions = []
-        self.table.setRowCount(0)
+    def _scan_sessions(self) -> list:
+        """
+        Scan active sessions and return data WITHOUT updating UI.
 
+        This method is called in a background thread and must NOT touch UI.
+
+        Returns:
+            list: List of session records ready for display
+        """
+        logger.debug("Scanning active sessions (background thread)")
+
+        sessions = []
         selected_client = self.client_combo.currentData()
 
         # Get Sessions base path
@@ -105,11 +112,11 @@ class ActiveSessionsTab(QWidget):
             sessions_base = self.profile_manager.get_sessions_root()
         except Exception as e:
             logger.error(f"Failed to get sessions root: {e}")
-            return
+            return []
 
         if not sessions_base.exists():
             logger.warning(f"Sessions directory does not exist: {sessions_base}")
-            return
+            return []
 
         # Scan each client folder
         for client_dir in sessions_base.iterdir():
@@ -202,10 +209,36 @@ class ActiveSessionsTab(QWidget):
                         progress = self._get_progress(work_dir)
                         session_data['progress'] = progress
 
-                        self.sessions.append(session_data)
+                        sessions.append(session_data)
 
-        # Populate table
+        logger.debug(f"Found {len(sessions)} active sessions")
+        return sessions
+
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of session records from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} sessions")
+
+        self.sessions = session_data
         self._populate_table()
+
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
 
     def _classify_lock_status(self, lock_info: dict) -> str:
         """Classify lock as Active or Stale based on heartbeat."""
