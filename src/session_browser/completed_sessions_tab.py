@@ -283,7 +283,13 @@ class CompletedSessionsTab(QWidget):
         self.table.setSortingEnabled(False)  # Disable while populating
         self.table.setRowCount(len(self.sessions))
 
-        for row, session in enumerate(self.sessions):
+        for row, session_item in enumerate(self.sessions):
+            # Convert dict to SessionHistoryRecord if needed
+            if isinstance(session_item, dict):
+                session = SessionHistoryRecord(**session_item)
+            else:
+                session = session_item
+
             # Session ID
             self.table.setItem(row, 0, QTableWidgetItem(session.session_id))
 
@@ -389,7 +395,13 @@ class CompletedSessionsTab(QWidget):
             QMessageBox.warning(self, "No Selection", "Please select a session.")
             return
 
-        session = self.sessions[selected]
+        session_item = self.sessions[selected]
+
+        # Convert dict to SessionHistoryRecord if needed (Qt signals can serialize to dict)
+        if isinstance(session_item, dict):
+            session = SessionHistoryRecord(**session_item)
+        else:
+            session = session_item
 
         # Import dialog
         from .session_details_dialog import SessionDetailsDialog
