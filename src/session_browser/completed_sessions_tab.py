@@ -31,7 +31,8 @@ class CompletedSessionsTab(QWidget):
         self.sessions = []  # SessionHistoryRecord objects
 
         self._init_ui()
-        self.refresh()
+        # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
+        # after setting up the background worker and cache system
 
     def _init_ui(self):
         """Initialize UI."""

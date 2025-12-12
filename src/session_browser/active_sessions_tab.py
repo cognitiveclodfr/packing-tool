@@ -33,7 +33,8 @@ class ActiveSessionsTab(QWidget):
         self.sessions = []  # List of session dicts
 
         self._init_ui()
-        self.refresh()
+        # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
+        # after setting up the background worker and cache system
 
     def _init_ui(self):
         """Initialize UI."""
@@ -305,7 +306,11 @@ class ActiveSessionsTab(QWidget):
 
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
+                content = f.read().strip()
+                if not content:
+                    logger.warning(f"Empty packing_state.json: {state_file}")
+                    return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
+                state = json.loads(content)
 
             # Try new format first (v1.3.0+)
             if 'progress' in state:
@@ -389,8 +394,11 @@ class ActiveSessionsTab(QWidget):
                     'progress_pct': progress_pct
                 }
 
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in {state_file}: {e}")
+            return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
         except Exception as e:
-            logger.error(f"Failed to get progress from {state_file}: {e}", exc_info=True)
+            logger.warning(f"Failed to get progress from {state_file}: {e}")
             return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
 
     def _populate_table(self):
