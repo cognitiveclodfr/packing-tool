@@ -208,11 +208,16 @@ class SessionBrowserWidget(QWidget):
         # Background worker state
         self.refresh_worker = None
 
-        # Load auto-refresh preference from settings (default: enabled)
+        # Load auto-refresh preference and last refresh time from settings
         from PySide6.QtCore import QSettings
-        settings = QSettings("PackingTool", "SessionBrowser")
-        self._auto_refresh_enabled = settings.value("auto_refresh_enabled", True, type=bool)
+        self.settings = QSettings("PackingTool", "SessionBrowser")
+
+        # Load auto-refresh enabled state (default: True on first run)
+        self._auto_refresh_enabled = self.settings.value("auto_refresh_enabled", True, type=bool)
+        logger.info(f"Loaded auto-refresh preference: {self._auto_refresh_enabled} (type: {type(self._auto_refresh_enabled)})")
+
         self._initial_load_complete = False
+        self._auto_refresh_interval_ms = 600000  # 10 minutes
 
         self._init_ui()
         self._connect_signals()
@@ -223,8 +228,9 @@ class SessionBrowserWidget(QWidget):
         # Setup auto-refresh timer (10 minutes)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._on_auto_refresh_triggered)
-        if self._auto_refresh_enabled:
-            self.refresh_timer.start(600000)  # 10 minutes = 600000ms
+
+        # Start timer based on saved preference and calculate time until next refresh
+        self._setup_auto_refresh_timer()
 
         logger.info(f"SessionBrowserWidget initialized with cache support (auto-refresh: {self._auto_refresh_enabled})")
 
@@ -379,20 +385,60 @@ class SessionBrowserWidget(QWidget):
 
         self._initial_load_complete = True
 
+    def _setup_auto_refresh_timer(self):
+        """
+        Setup auto-refresh timer based on saved preference and last refresh time.
+
+        This makes the timer "persistent" across Session Browser open/close cycles.
+        If enough time has passed since last refresh, triggers immediate refresh.
+        Otherwise, schedules next refresh for remaining time.
+        """
+        if not self._auto_refresh_enabled:
+            logger.info("Auto-refresh is disabled, not starting timer")
+            return
+
+        # Get last refresh timestamp (Unix timestamp in seconds)
+        last_refresh = self.settings.value("last_refresh_time", 0, type=float)
+        current_time = time.time()
+
+        if last_refresh == 0:
+            # First time - start timer normally
+            logger.info(f"First Session Browser open, starting auto-refresh timer ({self._auto_refresh_interval_ms}ms)")
+            self.refresh_timer.start(self._auto_refresh_interval_ms)
+        else:
+            # Calculate time since last refresh
+            time_since_refresh_ms = (current_time - last_refresh) * 1000
+            time_until_next_refresh_ms = self._auto_refresh_interval_ms - time_since_refresh_ms
+
+            if time_until_next_refresh_ms <= 0:
+                # Overdue - refresh immediately (but not on initial load, cache will trigger it)
+                logger.info(f"Auto-refresh is overdue ({time_since_refresh_ms:.0f}ms since last), will refresh with cache load")
+                # Start timer for next cycle
+                self.refresh_timer.start(self._auto_refresh_interval_ms)
+            else:
+                # Schedule next refresh for remaining time
+                logger.info(
+                    f"Auto-refresh timer: {time_until_next_refresh_ms:.0f}ms until next refresh "
+                    f"({time_since_refresh_ms:.0f}ms since last)"
+                )
+                self.refresh_timer.start(int(time_until_next_refresh_ms))
+
     # Note: Loading overlay methods removed - using status label only for better UX
 
     def _on_auto_refresh_toggled(self, state):
         """Handle auto-refresh checkbox toggle."""
+        was_enabled = self._auto_refresh_enabled
         self._auto_refresh_enabled = (state == Qt.Checked)
 
+        logger.info(f"Auto-refresh toggled: {was_enabled} -> {self._auto_refresh_enabled}")
+
         # Save preference to settings
-        from PySide6.QtCore import QSettings
-        settings = QSettings("PackingTool", "SessionBrowser")
-        settings.setValue("auto_refresh_enabled", self._auto_refresh_enabled)
+        self.settings.setValue("auto_refresh_enabled", self._auto_refresh_enabled)
 
         if self._auto_refresh_enabled:
             logger.info("Auto-refresh enabled (10 minutes)")
-            self.refresh_timer.start(600000)  # 10 minutes
+            # Setup timer with persistent state
+            self._setup_auto_refresh_timer()
             self.status_label.setText("Auto-refresh: ON (10min)")
             # Clear status after 2 seconds
             QTimer.singleShot(2000, lambda: self.status_label.setText(""))
@@ -406,6 +452,7 @@ class SessionBrowserWidget(QWidget):
         if self._auto_refresh_enabled:
             logger.debug("Auto-refresh triggered")
             self.refresh_all()
+            # Timer will be restarted with full interval after refresh completes
         else:
             logger.debug("Auto-refresh triggered but disabled, skipping")
 
@@ -487,6 +534,17 @@ class SessionBrowserWidget(QWidget):
             self._initial_load_complete = True
             self.status_label.setText("✅ Refresh complete")
             logger.info("UI updated successfully")
+
+            # Save last refresh timestamp (for persistent timer)
+            current_time = time.time()
+            self.settings.setValue("last_refresh_time", current_time)
+            logger.debug(f"Saved last refresh time: {current_time}")
+
+            # Restart auto-refresh timer with full interval if enabled
+            if self._auto_refresh_enabled:
+                self.refresh_timer.stop()
+                self.refresh_timer.start(self._auto_refresh_interval_ms)
+                logger.debug(f"Auto-refresh timer restarted for next cycle ({self._auto_refresh_interval_ms}ms)")
 
             # Clear status after 3 seconds
             QTimer.singleShot(3000, lambda: self.status_label.setText(""))

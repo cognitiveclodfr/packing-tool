@@ -423,35 +423,61 @@ class CompletedSessionsTab(QWidget):
         # Import dialog
         from .session_details_dialog import SessionDetailsDialog
 
+        # Helper to get value from dict or object
+        def get_val(record, key, default=None):
+            if isinstance(record, dict):
+                return record.get(key, default)
+            else:
+                return getattr(record, key, default)
+
         # Create dialog
         try:
-            # Standardize structure (session is a SessionHistoryRecord)
+            # Standardize structure (handles both dict and SessionHistoryRecord)
+            packing_list_path = get_val(session, 'packing_list_path')
             packing_list_name = 'Unknown'
-            if session.packing_list_path:
-                packing_list_name = Path(session.packing_list_path).stem
+            if packing_list_path:
+                packing_list_name = Path(packing_list_path).stem
 
             # Construct work_dir for completed sessions (Phase 1 structure)
+            session_path = get_val(session, 'session_path')
             work_dir = None
-            if session.session_path and session.packing_list_path:
+            if session_path and packing_list_path:
                 # Try to find the work directory
-                potential_work_dir = Path(session.session_path) / "packing" / session.packing_list_path
+                potential_work_dir = Path(session_path) / "packing" / packing_list_path
                 if potential_work_dir.exists():
                     work_dir = str(potential_work_dir)
 
+            # Get start_time and end_time (handle both datetime objects and ISO strings)
+            start_time = get_val(session, 'start_time')
+            if start_time and isinstance(start_time, str):
+                start_time_iso = start_time
+            elif start_time:
+                start_time_iso = start_time.isoformat()
+            else:
+                start_time_iso = None
+
+            end_time = get_val(session, 'end_time')
+            if end_time and isinstance(end_time, str):
+                end_time_iso = end_time
+            elif end_time:
+                end_time_iso = end_time.isoformat()
+            else:
+                end_time_iso = None
+
             session_data = {
-                'session_id': session.session_id,
-                'client_id': session.client_id,
+                'session_id': get_val(session, 'session_id'),
+                'client_id': get_val(session, 'client_id'),
                 'packing_list_name': packing_list_name,
                 'worker_id': None,  # Not stored in v1.3.0 summary
                 'worker_name': None,  # Not stored in v1.3.0 summary
-                'pc_name': session.pc_name,
-                'started_at': session.start_time.isoformat() if session.start_time else None,
-                'ended_at': session.end_time.isoformat() if session.end_time else None,
-                'duration_seconds': session.duration_seconds,
-                'orders_completed': session.completed_orders,
-                'orders_total': session.total_orders,
-                'items_packed': session.total_items_packed,
-                'session_path': session.session_path,
+                'pc_name': get_val(session, 'pc_name'),
+                'started_at': start_time_iso,
+                'ended_at': end_time_iso,
+                'duration_seconds': get_val(session, 'duration_seconds'),
+                'orders_completed': get_val(session, 'completed_orders'),
+                'orders_total': get_val(session, 'total_orders'),
+                'items_packed': get_val(session, 'total_items_packed'),
+                'session_path': session_path,
                 'status': 'Completed',
                 'work_dir': work_dir,  # Found work directory for loading session files
             }
