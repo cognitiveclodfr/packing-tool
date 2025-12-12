@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QMessageBox, QLabel
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer
 from PySide6.QtGui import QColor
 
 from pathlib import Path
@@ -22,6 +22,7 @@ class ActiveSessionsTab(QWidget):
 
     # Signals
     resume_requested = Signal(dict)  # {session_path, client_id, packing_list_name, lock_info}
+    refresh_requested = Signal()  # Request parent to trigger background refresh
 
     def __init__(self, profile_manager, session_lock_manager, worker_manager, parent=None):
         super().__init__(parent)
@@ -32,8 +33,12 @@ class ActiveSessionsTab(QWidget):
 
         self.sessions = []  # List of session dicts
 
+        # Filter state (thread-safe - no UI access needed in background)
+        self._filter_client_id = None  # Will be updated when combo box changes
+
         self._init_ui()
-        self.refresh()
+        # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
+        # after setting up the background worker and cache system
 
     def _init_ui(self):
         """Initialize UI."""
@@ -51,13 +56,13 @@ class ActiveSessionsTab(QWidget):
                 self.client_combo.addItem(f"CLIENT_{client_id}", client_id)
         except Exception as e:
             logger.warning(f"Failed to load clients: {e}")
-        self.client_combo.currentIndexChanged.connect(self.refresh)
+        self.client_combo.currentIndexChanged.connect(self._on_filter_changed)
         top_bar.addWidget(self.client_combo)
 
         top_bar.addStretch()
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        refresh_btn.clicked.connect(self.refresh_requested.emit)
         top_bar.addWidget(refresh_btn)
 
         layout.addLayout(top_bar)
@@ -93,23 +98,36 @@ class ActiveSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Scan for active sessions and populate table."""
-        self.sessions = []
-        self.table.setRowCount(0)
+    def _on_filter_changed(self):
+        """Handle filter change - update instance var and request background refresh."""
+        self._filter_client_id = self.client_combo.currentData()
+        # Request background refresh from parent (non-blocking)
+        self.refresh_requested.emit()
 
-        selected_client = self.client_combo.currentData()
+    def _scan_sessions(self) -> list:
+        """
+        Scan active sessions and return data WITHOUT updating UI.
+
+        This method is called in a background thread and must NOT touch UI.
+
+        Returns:
+            list: List of session records ready for display
+        """
+        logger.debug("Scanning active sessions (background thread)")
+
+        sessions = []
+        selected_client = self._filter_client_id  # Thread-safe: read instance var, not UI widget
 
         # Get Sessions base path
         try:
             sessions_base = self.profile_manager.get_sessions_root()
         except Exception as e:
             logger.error(f"Failed to get sessions root: {e}")
-            return
+            return []
 
         if not sessions_base.exists():
             logger.warning(f"Sessions directory does not exist: {sessions_base}")
-            return
+            return []
 
         # Scan each client folder
         for client_dir in sessions_base.iterdir():
@@ -202,10 +220,36 @@ class ActiveSessionsTab(QWidget):
                         progress = self._get_progress(work_dir)
                         session_data['progress'] = progress
 
-                        self.sessions.append(session_data)
+                        sessions.append(session_data)
 
-        # Populate table
+        logger.debug(f"Found {len(sessions)} active sessions")
+        return sessions
+
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of session records from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} sessions")
+
+        self.sessions = session_data
         self._populate_table()
+
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
 
     def _classify_lock_status(self, lock_info: dict) -> str:
         """Classify lock as Active or Stale based on heartbeat."""
@@ -272,7 +316,11 @@ class ActiveSessionsTab(QWidget):
 
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
+                content = f.read().strip()
+                if not content:
+                    logger.warning(f"Empty packing_state.json: {state_file}")
+                    return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
+                state = json.loads(content)
 
             # Try new format first (v1.3.0+)
             if 'progress' in state:
@@ -356,8 +404,11 @@ class ActiveSessionsTab(QWidget):
                     'progress_pct': progress_pct
                 }
 
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in {state_file}: {e}")
+            return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
         except Exception as e:
-            logger.error(f"Failed to get progress from {state_file}: {e}", exc_info=True)
+            logger.warning(f"Failed to get progress from {state_file}: {e}")
             return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
 
     def _populate_table(self):
