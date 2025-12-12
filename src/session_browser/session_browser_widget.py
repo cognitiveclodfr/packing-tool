@@ -199,9 +199,11 @@ class SessionBrowserWidget(QWidget):
         self.session_history_manager = session_history_manager
         self.worker_manager = worker_manager
 
-        # Initialize cache manager
-        sessions_root = profile_manager.get_sessions_root()
-        self.cache_manager = SessionCacheManager(sessions_root)
+        # Initialize cache manager (use app cache dir, not Sessions dir)
+        import os
+        cache_dir = Path(os.path.expanduser("~")) / ".packers_assistant" / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_manager = SessionCacheManager(cache_dir)
 
         # Background worker state
         self.refresh_worker = None
@@ -285,41 +287,8 @@ class SessionBrowserWidget(QWidget):
 
         layout.addWidget(self.tab_widget)
 
-        # === LOADING OVERLAY ===
-        self.loading_overlay = QFrame(self)
-        self.loading_overlay.setStyleSheet("""
-            QFrame {
-                background-color: rgba(0, 0, 0, 0.7);
-                border-radius: 8px;
-            }
-            QLabel {
-                color: white;
-                font-size: 16px;
-                font-weight: bold;
-            }
-        """)
-        self.loading_overlay.setFrameShape(QFrame.StyledPanel)
-
-        overlay_layout = QVBoxLayout(self.loading_overlay)
-        overlay_layout.setAlignment(Qt.AlignCenter)
-
-        self.loading_label = QLabel("Loading sessions...")
-        self.loading_label.setAlignment(Qt.AlignCenter)
-        overlay_layout.addWidget(self.loading_label)
-
-        self.loading_progress = QLabel("")
-        self.loading_progress.setAlignment(Qt.AlignCenter)
-        self.loading_progress.setStyleSheet("color: #ccc; font-size: 12px;")
-        overlay_layout.addWidget(self.loading_progress)
-
-        # Hide overlay by default
-        self.loading_overlay.hide()
-
-    def resizeEvent(self, event):
-        """Resize loading overlay to cover entire widget."""
-        super().resizeEvent(event)
-        if self.loading_overlay:
-            self.loading_overlay.setGeometry(self.rect())
+        # Note: Loading overlay removed - status label provides sufficient feedback
+        # without blocking user interaction
 
     def _connect_signals(self):
         """Connect internal signals."""
@@ -370,24 +339,24 @@ class SessionBrowserWidget(QWidget):
             # Cache HIT - Fresh data available
             logger.info("Fresh cache found, loading immediately")
             self._populate_from_cache(cached)
-            self.status_label.setText("✅ Loaded from cache")
+            self.status_label.setText("✅ Loaded from cache (fresh)")
 
             # Schedule background refresh for later
-            QTimer.singleShot(1000, self.refresh_all)  # Refresh after 1 second
+            QTimer.singleShot(5000, self.refresh_all)  # Refresh after 5 seconds
 
         elif cached and cached['is_stale']:
             # Cache HIT but STALE - Show stale data + refresh now
             logger.info("Stale cache found, showing stale data and refreshing")
             self._populate_from_cache(cached)
-            self.status_label.setText("⚠️ Showing stale data, refreshing...")
+            self.status_label.setText("⚠️ Loading from stale cache, refreshing in background...")
 
             # Start background refresh immediately
             QTimer.singleShot(100, self.refresh_all)
 
         else:
-            # Cache MISS - Show loading overlay + scan
-            logger.info("No cache found, showing loading overlay")
-            self._show_loading_overlay()
+            # Cache MISS - Show empty tables + scan in background
+            logger.info("No cache found, starting background scan")
+            self.status_label.setText("⏳ Loading sessions in background...")
 
             # Start background refresh immediately
             QTimer.singleShot(100, self.refresh_all)
@@ -402,18 +371,7 @@ class SessionBrowserWidget(QWidget):
 
         self._initial_load_complete = True
 
-    def _show_loading_overlay(self):
-        """Show loading overlay to indicate first-time scan in progress."""
-        self.loading_overlay.show()
-        self.loading_overlay.raise_()
-        self.loading_label.setText("Loading sessions...")
-        self.loading_progress.setText("Please wait...")
-        logger.debug("Loading overlay shown")
-
-    def _hide_loading_overlay(self):
-        """Hide loading overlay after first scan completes."""
-        self.loading_overlay.hide()
-        logger.debug("Loading overlay hidden")
+    # Note: Loading overlay methods removed - using status label only for better UX
 
     def _on_auto_refresh_toggled(self, state):
         """Handle auto-refresh checkbox toggle."""
@@ -456,12 +414,10 @@ class SessionBrowserWidget(QWidget):
 
         # Disable refresh button during scan
         self.refresh_button.setEnabled(False)
-        self.status_label.setText("Refreshing...")
+        self.status_label.setText("🔄 Refreshing in background...")
         self.abort_button.setVisible(True)
 
-        # Show loading overlay if this is initial load
-        if not self._initial_load_complete:
-            self._show_loading_overlay()
+        # Note: No loading overlay - users can browse existing data while refresh happens
 
         # Create and start background worker
         self.refresh_worker = RefreshWorker(
@@ -494,12 +450,8 @@ class SessionBrowserWidget(QWidget):
 
     def _on_refresh_progress(self, tab_name: str, current: int, total: int):
         """Update progress indicator."""
-        progress_text = f"Refreshing: {tab_name} ({current}/{total})"
+        progress_text = f"🔄 Refreshing: {tab_name} ({current}/{total})"
         self.status_label.setText(progress_text)
-
-        # Update loading overlay if visible
-        if self.loading_overlay.isVisible():
-            self.loading_progress.setText(progress_text)
 
         logger.debug(f"Refresh progress: {tab_name} ({current}/{total})")
 
@@ -519,12 +471,8 @@ class SessionBrowserWidget(QWidget):
             self.completed_tab.populate_table(completed_data)
             self.available_tab.populate_table(available_data)
 
-            # Hide loading overlay if visible
-            if self.loading_overlay.isVisible():
-                self._hide_loading_overlay()
-
             self._initial_load_complete = True
-            self.status_label.setText("✅ Refreshed")
+            self.status_label.setText("✅ Refresh complete")
             logger.info("UI updated successfully")
 
             # Clear status after 3 seconds
@@ -537,10 +485,6 @@ class SessionBrowserWidget(QWidget):
     def _on_refresh_failed(self, error_message: str):
         """Handle refresh failure."""
         logger.error(f"Refresh failed: {error_message}")
-
-        # Hide loading overlay if visible
-        if self.loading_overlay.isVisible():
-            self._hide_loading_overlay()
 
         self.status_label.setText(f"❌ Refresh failed: {error_message}")
 

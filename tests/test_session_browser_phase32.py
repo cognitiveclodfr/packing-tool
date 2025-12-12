@@ -103,7 +103,7 @@ class TestAvailableSessionsTab(unittest.TestCase):
             session_manager=self.mock_session_manager
         )
 
-        available = tab._scan_available_sessions()
+        available = tab._scan_sessions()
 
         self.assertEqual(len(available), 1)
         self.assertEqual(available[0]['list_name'], 'DHL_Orders')
@@ -124,7 +124,7 @@ class TestAvailableSessionsTab(unittest.TestCase):
             session_manager=self.mock_session_manager
         )
 
-        available = tab._scan_available_sessions()
+        available = tab._scan_sessions()
 
         self.assertEqual(len(available), 0)  # Should be hidden
 
@@ -139,7 +139,7 @@ class TestAvailableSessionsTab(unittest.TestCase):
             session_manager=self.mock_session_manager
         )
 
-        available = tab._scan_available_sessions()
+        available = tab._scan_sessions()
 
         self.assertEqual(len(available), 2)
         client_ids = {item['client_id'] for item in available}

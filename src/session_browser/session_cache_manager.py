@@ -184,13 +184,41 @@ class SessionCacheManager:
 
             current_time = time.time()
 
+            # Helper to extract client_id from record (dict or object)
+            def get_client_id(record):
+                if isinstance(record, dict):
+                    return record.get('client_id', 'UNKNOWN')
+                else:
+                    # SessionHistoryRecord object
+                    return getattr(record, 'client_id', 'UNKNOWN')
+
+            # Helper to convert record to dict if needed
+            def to_dict(record):
+                if isinstance(record, dict):
+                    return record
+                else:
+                    # SessionHistoryRecord object - convert to dict
+                    return {
+                        'session_id': getattr(record, 'session_id', ''),
+                        'client_id': getattr(record, 'client_id', ''),
+                        'packing_list_path': getattr(record, 'packing_list_path', ''),
+                        'pc_name': getattr(record, 'pc_name', ''),
+                        'start_time': getattr(record, 'start_time', None).isoformat() if hasattr(record, 'start_time') and record.start_time else None,
+                        'end_time': getattr(record, 'end_time', None).isoformat() if hasattr(record, 'end_time') and record.end_time else None,
+                        'duration_seconds': getattr(record, 'duration_seconds', 0),
+                        'total_orders': getattr(record, 'total_orders', 0),
+                        'completed_orders': getattr(record, 'completed_orders', 0),
+                        'total_items_packed': getattr(record, 'total_items_packed', 0),
+                        'session_path': getattr(record, 'session_path', ''),
+                    }
+
             # Update cache
             if client_id:
                 # Update specific client
                 cache['clients'][client_id] = {
-                    'active': active_data,
-                    'completed': completed_data,
-                    'available': available_data,
+                    'active': [to_dict(r) for r in active_data],
+                    'completed': [to_dict(r) for r in completed_data],
+                    'available': [to_dict(r) for r in available_data],
                     'timestamp': current_time
                 }
             else:
@@ -198,22 +226,22 @@ class SessionCacheManager:
                 clients_data: Dict[str, Dict[str, List]] = {}
 
                 for record in active_data:
-                    cid = record.get('client_id', 'UNKNOWN')
+                    cid = get_client_id(record)
                     if cid not in clients_data:
                         clients_data[cid] = {'active': [], 'completed': [], 'available': []}
-                    clients_data[cid]['active'].append(record)
+                    clients_data[cid]['active'].append(to_dict(record))
 
                 for record in completed_data:
-                    cid = record.get('client_id', 'UNKNOWN')
+                    cid = get_client_id(record)
                     if cid not in clients_data:
                         clients_data[cid] = {'active': [], 'completed': [], 'available': []}
-                    clients_data[cid]['completed'].append(record)
+                    clients_data[cid]['completed'].append(to_dict(record))
 
                 for record in available_data:
-                    cid = record.get('client_id', 'UNKNOWN')
+                    cid = get_client_id(record)
                     if cid not in clients_data:
                         clients_data[cid] = {'active': [], 'completed': [], 'available': []}
-                    clients_data[cid]['available'].append(record)
+                    clients_data[cid]['available'].append(to_dict(record))
 
                 # Update all clients
                 for cid, data in clients_data.items():
