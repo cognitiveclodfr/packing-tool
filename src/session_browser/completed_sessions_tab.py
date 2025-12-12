@@ -274,27 +274,41 @@ class CompletedSessionsTab(QWidget):
         self.populate_table(data)
 
     def _populate_table(self):
-        """Fill table with session data."""
+        """
+        Fill table with session data.
+
+        Handles both dict (from cache) and SessionHistoryRecord objects (from fresh scan).
+        """
         self.table.setSortingEnabled(False)  # Disable while populating
         self.table.setRowCount(len(self.sessions))
 
+        # Helper to get value from dict or object
+        def get_val(record, key, default=None):
+            if isinstance(record, dict):
+                return record.get(key, default)
+            else:
+                return getattr(record, key, default)
+
         for row, session in enumerate(self.sessions):
             # Session ID
-            self.table.setItem(row, 0, QTableWidgetItem(session.session_id))
+            session_id = get_val(session, 'session_id', '')
+            self.table.setItem(row, 0, QTableWidgetItem(session_id))
 
             # Client
-            self.table.setItem(row, 1, QTableWidgetItem(f"CLIENT_{session.client_id}"))
+            client_id = get_val(session, 'client_id', '')
+            self.table.setItem(row, 1, QTableWidgetItem(f"CLIENT_{client_id}"))
 
             # Packing List (extract filename)
-            if session.packing_list_path:
-                list_name = Path(session.packing_list_path).stem
+            packing_list_path = get_val(session, 'packing_list_path')
+            if packing_list_path:
+                list_name = Path(packing_list_path).stem
             else:
                 list_name = "Unknown"
             self.table.setItem(row, 2, QTableWidgetItem(list_name))
 
             # Worker (enhanced to show worker_id and worker_name if available)
-            worker_id = getattr(session, 'worker_id', None)
-            worker_name = getattr(session, 'worker_name', None)
+            worker_id = get_val(session, 'worker_id')
+            worker_name = get_val(session, 'worker_name')
 
             if worker_id and worker_name:
                 worker_display = f"{worker_id} ({worker_name})"
@@ -304,32 +318,50 @@ class CompletedSessionsTab(QWidget):
                 worker_display = worker_name
             else:
                 # Fallback to PC name for old sessions without worker info
-                worker_display = session.pc_name if session.pc_name else "Unknown"
+                pc_name = get_val(session, 'pc_name')
+                worker_display = pc_name if pc_name else "Unknown"
 
             self.table.setItem(row, 3, QTableWidgetItem(worker_display))
 
             # Start Time
-            start_time_str = session.start_time.strftime("%Y-%m-%d %H:%M") if session.start_time else "N/A"
+            start_time = get_val(session, 'start_time')
+            if start_time:
+                # Handle both datetime object and ISO string
+                if isinstance(start_time, str):
+                    try:
+                        from dateutil import parser
+                        start_time = parser.isoparse(start_time)
+                        start_time_str = start_time.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        start_time_str = start_time[:16]  # Take first 16 chars
+                else:
+                    start_time_str = start_time.strftime("%Y-%m-%d %H:%M")
+            else:
+                start_time_str = "N/A"
             self.table.setItem(row, 4, QTableWidgetItem(start_time_str))
 
             # Duration
-            if session.duration_seconds:
-                hours = int(session.duration_seconds // 3600)
-                minutes = int((session.duration_seconds % 3600) // 60)
+            duration_seconds = get_val(session, 'duration_seconds', 0)
+            if duration_seconds:
+                hours = int(duration_seconds // 3600)
+                minutes = int((duration_seconds % 3600) // 60)
                 duration_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
             else:
                 duration_str = "N/A"
             self.table.setItem(row, 5, QTableWidgetItem(duration_str))
 
             # Orders
-            orders_str = f"{session.completed_orders}/{session.total_orders}"
+            completed_orders = get_val(session, 'completed_orders', 0)
+            total_orders = get_val(session, 'total_orders', 0)
+            orders_str = f"{completed_orders}/{total_orders}"
             self.table.setItem(row, 6, QTableWidgetItem(orders_str))
 
             # Items
-            self.table.setItem(row, 7, QTableWidgetItem(str(session.total_items_packed)))
+            total_items_packed = get_val(session, 'total_items_packed', 0)
+            self.table.setItem(row, 7, QTableWidgetItem(str(total_items_packed)))
 
             # Status
-            if session.completed_orders == session.total_orders and session.total_orders > 0:
+            if completed_orders == total_orders and total_orders > 0:
                 status = "✅ Complete"
             else:
                 status = "⚠️ Incomplete"
