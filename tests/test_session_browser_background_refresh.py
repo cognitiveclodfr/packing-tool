@@ -46,25 +46,36 @@ class TestRefreshWorker(unittest.TestCase):
         # Create worker
         worker = RefreshWorker(active_tab, completed_tab, available_tab)
 
-        # Connect signal spy
-        started_spy = Mock()
-        complete_spy = Mock()
-        worker.refresh_started.connect(started_spy)
-        worker.refresh_complete.connect(complete_spy)
+        # Track signal calls
+        signals_received = {'started': False, 'completed': False, 'results': None}
+
+        def on_started():
+            signals_received['started'] = True
+
+        def on_complete(active, completed, available):
+            signals_received['completed'] = True
+            signals_received['results'] = (active, completed, available)
+
+        worker.refresh_started.connect(on_started)
+        worker.refresh_complete.connect(on_complete)
 
         # Run worker
         worker.start()
         worker.wait(5000)  # Wait up to 5 seconds
 
+        # Process Qt events to ensure signals are delivered
+        QTest.qWait(100)
+
         # Verify signals
-        started_spy.assert_called_once()
-        complete_spy.assert_called_once()
+        self.assertTrue(signals_received['started'], "refresh_started signal not received")
+        self.assertTrue(signals_received['completed'], "refresh_complete signal not received")
 
         # Verify results
-        args = complete_spy.call_args[0]
-        self.assertEqual(args[0], [{"id": "active1"}])
-        self.assertEqual(args[1], [{"id": "completed1"}])
-        self.assertEqual(args[2], [{"id": "available1"}])
+        self.assertIsNotNone(signals_received['results'])
+        active, completed, available = signals_received['results']
+        self.assertEqual(active, [{"id": "active1"}])
+        self.assertEqual(completed, [{"id": "completed1"}])
+        self.assertEqual(available, [{"id": "available1"}])
 
     def test_worker_abort(self):
         """Test that worker can be aborted."""
@@ -107,18 +118,25 @@ class TestRefreshWorker(unittest.TestCase):
         # Create worker
         worker = RefreshWorker(active_tab, completed_tab, available_tab)
 
-        # Connect signal spy
-        failed_spy = Mock()
-        worker.refresh_failed.connect(failed_spy)
+        # Track signal calls
+        error_received = {'failed': False, 'message': None}
+
+        def on_failed(msg):
+            error_received['failed'] = True
+            error_received['message'] = msg
+
+        worker.refresh_failed.connect(on_failed)
 
         # Run worker
         worker.start()
         worker.wait(5000)
 
+        # Process Qt events to ensure signals are delivered
+        QTest.qWait(100)
+
         # Verify error signal
-        failed_spy.assert_called_once()
-        error_msg = failed_spy.call_args[0][0]
-        self.assertIn("Test error", error_msg)
+        self.assertTrue(error_received['failed'], "refresh_failed signal not received")
+        self.assertIn("Test error", error_received['message'])
 
     def test_worker_progress_updates(self):
         """Test that worker emits progress updates for each tab."""
@@ -134,22 +152,28 @@ class TestRefreshWorker(unittest.TestCase):
         # Create worker
         worker = RefreshWorker(active_tab, completed_tab, available_tab)
 
-        # Connect signal spy
-        progress_spy = Mock()
-        worker.refresh_progress.connect(progress_spy)
+        # Track progress signals
+        progress_calls = []
+
+        def on_progress(tab_name, current, total):
+            progress_calls.append((tab_name, current, total))
+
+        worker.refresh_progress.connect(on_progress)
 
         # Run worker
         worker.start()
         worker.wait(5000)
 
+        # Process Qt events to ensure signals are delivered
+        QTest.qWait(100)
+
         # Verify progress was called 3 times (one for each tab)
-        self.assertEqual(progress_spy.call_count, 3)
+        self.assertEqual(len(progress_calls), 3, f"Expected 3 progress updates, got {len(progress_calls)}")
 
         # Verify progress messages
-        calls = progress_spy.call_args_list
-        self.assertEqual(calls[0][0], ("Active Sessions", 1, 3))
-        self.assertEqual(calls[1][0], ("Completed Sessions", 2, 3))
-        self.assertEqual(calls[2][0], ("Available Sessions", 3, 3))
+        self.assertEqual(progress_calls[0], ("Active Sessions", 1, 3))
+        self.assertEqual(progress_calls[1], ("Completed Sessions", 2, 3))
+        self.assertEqual(progress_calls[2], ("Available Sessions", 3, 3))
 
 
 class TestSessionBrowserWidget(unittest.TestCase):
@@ -164,6 +188,8 @@ class TestSessionBrowserWidget(unittest.TestCase):
 
     def _create_widget(self):
         """Helper to create widget with mocked managers."""
+        import tempfile
+
         profile_manager = Mock()
         session_manager = Mock()
         session_lock_manager = Mock()
@@ -171,6 +197,8 @@ class TestSessionBrowserWidget(unittest.TestCase):
         worker_manager = Mock()
 
         profile_manager.list_clients.return_value = []
+        # Mock cache_dir attribute (not method!)
+        profile_manager.cache_dir = Path(tempfile.mkdtemp())
 
         widget = SessionBrowserWidget(
             profile_manager,

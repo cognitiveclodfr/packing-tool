@@ -309,7 +309,11 @@ class ActiveSessionsTab(QWidget):
 
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
+                content = f.read().strip()
+                if not content:
+                    logger.warning(f"Empty packing_state.json: {state_file}")
+                    return {'completed': 0, 'total': 0, 'progress_pct': 0.0}
+                state = json.loads(content)
 
             # Try new format first (v1.3.0+)
             if 'progress' in state:

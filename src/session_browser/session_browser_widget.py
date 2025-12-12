@@ -224,7 +224,7 @@ class SessionBrowserWidget(QWidget):
         )
 
         # Get cache directory from profile manager
-        cache_dir = self.profile_manager.get_cache_dir()
+        cache_dir = self.profile_manager.cache_dir
 
         self.completed_tab = CompletedSessionsTab(
             profile_manager=self.profile_manager,
