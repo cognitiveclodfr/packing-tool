@@ -171,6 +171,10 @@ class MainWindow(QMainWindow):
         # Settings for remembering last client
         self.settings = QSettings("PackingTool", "ClientSelection")
 
+        # Session Browser dialog (persistent, keep alive for auto-refresh)
+        self.session_browser_dialog = None
+        self.session_browser_widget = None
+
         # Show worker selection BEFORE main window initialization (skip in test mode)
         if not self._is_test_mode:
             if not self._select_worker():
@@ -2239,39 +2243,54 @@ class MainWindow(QMainWindow):
         logger.info("Packing mode UI enabled successfully")
 
     def open_session_browser(self):
-        """Open Session Browser dialog."""
+        """
+        Open Session Browser dialog.
+
+        The dialog is persistent - created once and reused on subsequent opens.
+        This allows auto-refresh timer to keep running even when dialog is closed.
+        """
         logger.info("Opening Session Browser")
 
-        # Create dialog
-        browser_dialog = QDialog(self)
-        browser_dialog.setWindowTitle("Session Browser")
-        browser_dialog.setMinimumSize(1000, 700)
-        browser_dialog.setModal(False)  # Non-modal - can keep open while working
+        # Create dialog and widget on first open
+        if self.session_browser_dialog is None:
+            logger.info("Creating new Session Browser dialog (persistent)")
 
-        layout = QVBoxLayout(browser_dialog)
+            self.session_browser_dialog = QDialog(self)
+            self.session_browser_dialog.setWindowTitle("Session Browser")
+            self.session_browser_dialog.setMinimumSize(1000, 700)
+            self.session_browser_dialog.setModal(False)  # Non-modal - can keep open while working
 
-        # Create Session Browser widget
-        browser = SessionBrowserWidget(
-            profile_manager=self.profile_manager,
-            session_manager=self.session_manager,
-            session_lock_manager=self.lock_manager,
-            session_history_manager=self.session_history_manager,
-            worker_manager=self.worker_manager,
-            parent=browser_dialog
-        )
+            layout = QVBoxLayout(self.session_browser_dialog)
 
-        # Connect signals
-        browser.resume_session_requested.connect(
-            lambda info: self._handle_resume_session_from_browser(browser_dialog, info)
-        )
-        browser.start_packing_requested.connect(
-            lambda info: self._handle_start_packing_from_browser(browser_dialog, info)
-        )
+            # Create Session Browser widget
+            self.session_browser_widget = SessionBrowserWidget(
+                profile_manager=self.profile_manager,
+                session_manager=self.session_manager,
+                session_lock_manager=self.lock_manager,
+                session_history_manager=self.session_history_manager,
+                worker_manager=self.worker_manager,
+                parent=self.session_browser_dialog
+            )
 
-        layout.addWidget(browser)
+            # Connect signals (use persistent dialog reference)
+            self.session_browser_widget.resume_session_requested.connect(
+                lambda info: self._handle_resume_session_from_browser(self.session_browser_dialog, info)
+            )
+            self.session_browser_widget.start_packing_requested.connect(
+                lambda info: self._handle_start_packing_from_browser(self.session_browser_dialog, info)
+            )
 
-        # Show dialog
-        browser_dialog.exec()
+            layout.addWidget(self.session_browser_widget)
+
+            logger.info("Session Browser widget initialized with persistent auto-refresh")
+
+        else:
+            logger.info("Reusing existing Session Browser dialog (auto-refresh continues)")
+
+        # Show dialog (non-blocking)
+        self.session_browser_dialog.show()
+        self.session_browser_dialog.raise_()
+        self.session_browser_dialog.activateWindow()
 
     def _handle_resume_session_from_browser(self, dialog, session_info: dict):
         """

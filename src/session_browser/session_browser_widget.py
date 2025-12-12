@@ -15,6 +15,7 @@ from logger import get_logger
 from .active_sessions_tab import ActiveSessionsTab
 from .completed_sessions_tab import CompletedSessionsTab
 from .available_sessions_tab import AvailableSessionsTab
+from .session_browser_settings import SessionBrowserSettings
 
 logger = get_logger(__name__)
 
@@ -162,17 +163,27 @@ class SessionBrowserWidget(QWidget):
         self.session_history_manager = session_history_manager
         self.worker_manager = worker_manager
 
+        # Load persistent settings
+        self.settings = SessionBrowserSettings(profile_manager.cache_dir)
+
         # Background worker state
         self.refresh_worker = None
-        self._auto_refresh_enabled = True  # Default: enabled
 
         self._init_ui()
         self._connect_signals()
 
-        # Setup auto-refresh timer (30 seconds)
+        # Setup auto-refresh timer (uses saved interval)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._on_auto_refresh_triggered)
-        self.refresh_timer.start(30000)  # 30 seconds
+
+        # Start timer if auto-refresh was enabled in previous session
+        if self.settings.auto_refresh_enabled:
+            interval_ms = self.settings.auto_refresh_interval_seconds * 1000
+            self.refresh_timer.start(interval_ms)
+            logger.info(f"Auto-refresh enabled ({self.settings.auto_refresh_interval_seconds}s)")
+        else:
+            logger.info("Auto-refresh disabled (from saved settings)")
+
         logger.info("SessionBrowserWidget initialized with background refresh")
 
         # Trigger initial background refresh after widget is shown
@@ -191,9 +202,10 @@ class SessionBrowserWidget(QWidget):
         self.refresh_button.clicked.connect(self.refresh_all)
         controls_layout.addWidget(self.refresh_button)
 
-        # Auto-refresh checkbox
-        self.auto_refresh_checkbox = QCheckBox("Auto-refresh (30s)")
-        self.auto_refresh_checkbox.setChecked(True)
+        # Auto-refresh checkbox (restore saved state)
+        interval = self.settings.auto_refresh_interval_seconds
+        self.auto_refresh_checkbox = QCheckBox(f"Auto-refresh ({interval}s)")
+        self.auto_refresh_checkbox.setChecked(self.settings.auto_refresh_enabled)
         self.auto_refresh_checkbox.stateChanged.connect(self._on_auto_refresh_toggled)
         controls_layout.addWidget(self.auto_refresh_checkbox)
 
@@ -278,21 +290,23 @@ class SessionBrowserWidget(QWidget):
         self.start_packing_requested.emit(packing_info)
 
     def _on_auto_refresh_toggled(self, state):
-        """Handle auto-refresh checkbox toggle."""
-        self._auto_refresh_enabled = (state == Qt.CheckState.Checked)
+        """Handle auto-refresh checkbox toggle and save state."""
+        enabled = (state == Qt.CheckState.Checked)
 
-        if self._auto_refresh_enabled:
-            logger.info("Auto-refresh enabled")
-            self.refresh_timer.start(30000)
+        # Save to persistent settings
+        self.settings.auto_refresh_enabled = enabled
+
+        if enabled:
+            interval_ms = self.settings.auto_refresh_interval_seconds * 1000
+            self.refresh_timer.start(interval_ms)
             self.status_label.setText("Auto-refresh: ON")
         else:
-            logger.info("Auto-refresh disabled")
             self.refresh_timer.stop()
             self.status_label.setText("Auto-refresh: OFF")
 
     def _on_auto_refresh_triggered(self):
         """Called by timer - only refresh if enabled."""
-        if self._auto_refresh_enabled:
+        if self.settings.auto_refresh_enabled:
             logger.debug("Auto-refresh triggered")
             self.refresh_all()
         else:

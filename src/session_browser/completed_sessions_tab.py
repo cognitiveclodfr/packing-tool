@@ -13,6 +13,7 @@ import pandas as pd
 
 from logger import get_logger
 from session_history_cache_wrapper import SessionHistoryCacheWrapper
+from session_history_manager import SessionHistoryRecord
 
 logger = get_logger(__name__)
 
@@ -234,12 +235,21 @@ class CompletedSessionsTab(QWidget):
         This method updates the UI and must be called on the main thread.
 
         Args:
-            session_data: List of SessionHistoryRecord objects from _scan_sessions()
+            session_data: List of SessionHistoryRecord objects (or dicts) from _scan_sessions()
         """
         logger.debug(f"Populating table with {len(session_data)} sessions")
 
+        # Convert dicts to SessionHistoryRecord if needed (Qt signals can serialize objects to dicts)
+        sessions = []
+        for item in session_data:
+            if isinstance(item, dict):
+                # Convert dict back to SessionHistoryRecord
+                sessions.append(SessionHistoryRecord(**item))
+            else:
+                sessions.append(item)
+
         # Update internal state
-        self.sessions = session_data
+        self.sessions = sessions
 
         # Clear and populate table
         self.table.setRowCount(0)
