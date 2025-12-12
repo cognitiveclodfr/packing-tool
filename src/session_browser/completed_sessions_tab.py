@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QLineEdit, QLabel, QDateEdit, QMessageBox, QFileDialog
 )
-from PySide6.QtCore import Signal, QDate
+from PySide6.QtCore import Signal, QDate, QTimer
 
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +21,7 @@ class CompletedSessionsTab(QWidget):
 
     # Signals
     session_selected = Signal(dict)  # {session data}
+    refresh_requested = Signal()  # Request parent to trigger background refresh
 
     def __init__(self, profile_manager, session_history_manager, parent=None):
         super().__init__(parent)
@@ -115,7 +116,7 @@ class CompletedSessionsTab(QWidget):
         row3.addWidget(export_pdf_btn)
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        refresh_btn.clicked.connect(lambda: (self._update_filter_state(), self.refresh_requested.emit()))
         row3.addWidget(refresh_btn)
 
         row3.addStretch()
@@ -149,9 +150,10 @@ class CompletedSessionsTab(QWidget):
         layout.addLayout(btn_layout)
 
     def _on_search_clicked(self):
-        """Handle search button click - update filter state and refresh."""
+        """Handle search button click - update filter state and request background refresh."""
         self._update_filter_state()
-        self.refresh()
+        # Request background refresh from parent (non-blocking)
+        self.refresh_requested.emit()
 
     def _update_filter_state(self):
         """Update filter instance variables from UI widgets (thread-safe snapshot)."""

@@ -207,7 +207,11 @@ class SessionBrowserWidget(QWidget):
 
         # Background worker state
         self.refresh_worker = None
-        self._auto_refresh_enabled = True  # Default: enabled
+
+        # Load auto-refresh preference from settings (default: enabled)
+        from PySide6.QtCore import QSettings
+        settings = QSettings("PackingTool", "SessionBrowser")
+        self._auto_refresh_enabled = settings.value("auto_refresh_enabled", True, type=bool)
         self._initial_load_complete = False
 
         self._init_ui()
@@ -216,12 +220,13 @@ class SessionBrowserWidget(QWidget):
         # Load cached data immediately (if available)
         self._load_cached_data_on_init()
 
-        # Setup auto-refresh timer
+        # Setup auto-refresh timer (10 minutes)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._on_auto_refresh_triggered)
-        self.refresh_timer.start(30000)  # 30 seconds
+        if self._auto_refresh_enabled:
+            self.refresh_timer.start(600000)  # 10 minutes = 600000ms
 
-        logger.info("SessionBrowserWidget initialized with cache support")
+        logger.info(f"SessionBrowserWidget initialized with cache support (auto-refresh: {self._auto_refresh_enabled})")
 
     def _init_ui(self):
         """Initialize UI components."""
@@ -237,8 +242,8 @@ class SessionBrowserWidget(QWidget):
         controls_layout.addWidget(self.refresh_button)
 
         # Auto-refresh checkbox
-        self.auto_refresh_checkbox = QCheckBox("Auto-refresh (30s)")
-        self.auto_refresh_checkbox.setChecked(True)
+        self.auto_refresh_checkbox = QCheckBox("Auto-refresh (10min)")
+        self.auto_refresh_checkbox.setChecked(self._auto_refresh_enabled)  # Restore saved state
         self.auto_refresh_checkbox.stateChanged.connect(self._on_auto_refresh_toggled)
         controls_layout.addWidget(self.auto_refresh_checkbox)
 
@@ -294,12 +299,15 @@ class SessionBrowserWidget(QWidget):
         """Connect internal signals."""
         # Active tab signals
         self.active_tab.resume_requested.connect(self._handle_resume_request)
+        self.active_tab.refresh_requested.connect(self.refresh_all)
 
         # Completed tab signals
         self.completed_tab.session_selected.connect(self.session_selected.emit)
+        self.completed_tab.refresh_requested.connect(self.refresh_all)
 
         # Available tab signals
         self.available_tab.start_packing_requested.connect(self._handle_start_packing_request)
+        self.available_tab.refresh_requested.connect(self.refresh_all)
 
     def _handle_resume_request(self, session_info: dict):
         """
@@ -377,10 +385,15 @@ class SessionBrowserWidget(QWidget):
         """Handle auto-refresh checkbox toggle."""
         self._auto_refresh_enabled = (state == Qt.Checked)
 
+        # Save preference to settings
+        from PySide6.QtCore import QSettings
+        settings = QSettings("PackingTool", "SessionBrowser")
+        settings.setValue("auto_refresh_enabled", self._auto_refresh_enabled)
+
         if self._auto_refresh_enabled:
-            logger.info("Auto-refresh enabled")
-            self.refresh_timer.start(30000)
-            self.status_label.setText("Auto-refresh: ON")
+            logger.info("Auto-refresh enabled (10 minutes)")
+            self.refresh_timer.start(600000)  # 10 minutes
+            self.status_label.setText("Auto-refresh: ON (10min)")
             # Clear status after 2 seconds
             QTimer.singleShot(2000, lambda: self.status_label.setText(""))
         else:
@@ -525,10 +538,15 @@ class SessionBrowserWidget(QWidget):
         if hasattr(self, 'refresh_timer'):
             self.refresh_timer.stop()
 
-        # Abort any running refresh
+        # Abort any running refresh and wait for it to finish
         if self.refresh_worker and self.refresh_worker.isRunning():
             logger.info("Aborting refresh before close")
             self.refresh_worker.abort()
-            self.refresh_worker.wait(5000)  # Wait up to 5 seconds
+
+            # Wait up to 15 seconds for network scans to abort
+            if not self.refresh_worker.wait(15000):
+                logger.warning("Refresh worker did not finish in time, forcing termination")
+                self.refresh_worker.terminate()
+                self.refresh_worker.wait(2000)  # Wait for termination
 
         event.accept()

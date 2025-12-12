@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QMessageBox, QLabel
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer
 
 from datetime import datetime
 import json
@@ -23,8 +23,9 @@ logger = get_logger(__name__)
 class AvailableSessionsTab(QWidget):
     """Tab showing available packing lists that haven't been started"""
 
-    # Signal
+    # Signals
     start_packing_requested = Signal(dict)  # {session_path, client_id, packing_list_name, list_file}
+    refresh_requested = Signal()  # Request parent to trigger background refresh
 
     def __init__(self, profile_manager, session_manager, parent=None):
         """
@@ -69,7 +70,7 @@ class AvailableSessionsTab(QWidget):
         top_bar.addStretch()
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        refresh_btn.clicked.connect(self.refresh_requested.emit)
         top_bar.addWidget(refresh_btn)
 
         layout.addLayout(top_bar)
@@ -98,9 +99,10 @@ class AvailableSessionsTab(QWidget):
         layout.addLayout(btn_layout)
 
     def _on_filter_changed(self):
-        """Handle filter change - update instance var and refresh."""
+        """Handle filter change - update instance var and request background refresh."""
         self._filter_client_id = self.client_combo.currentData()
-        self.refresh()
+        # Request background refresh from parent (non-blocking)
+        self.refresh_requested.emit()
 
     def _scan_sessions(self) -> list:
         """

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QMessageBox, QLabel
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer
 from PySide6.QtGui import QColor
 
 from pathlib import Path
@@ -22,6 +22,7 @@ class ActiveSessionsTab(QWidget):
 
     # Signals
     resume_requested = Signal(dict)  # {session_path, client_id, packing_list_name, lock_info}
+    refresh_requested = Signal()  # Request parent to trigger background refresh
 
     def __init__(self, profile_manager, session_lock_manager, worker_manager, parent=None):
         super().__init__(parent)
@@ -61,7 +62,7 @@ class ActiveSessionsTab(QWidget):
         top_bar.addStretch()
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        refresh_btn.clicked.connect(self.refresh_requested.emit)
         top_bar.addWidget(refresh_btn)
 
         layout.addLayout(top_bar)
@@ -98,9 +99,10 @@ class ActiveSessionsTab(QWidget):
         layout.addLayout(btn_layout)
 
     def _on_filter_changed(self):
-        """Handle filter change - update instance var and refresh."""
+        """Handle filter change - update instance var and request background refresh."""
         self._filter_client_id = self.client_combo.currentData()
-        self.refresh()
+        # Request background refresh from parent (non-blocking)
+        self.refresh_requested.emit()
 
     def _scan_sessions(self) -> list:
         """
