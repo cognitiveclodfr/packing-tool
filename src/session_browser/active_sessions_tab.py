@@ -32,6 +32,9 @@ class ActiveSessionsTab(QWidget):
 
         self.sessions = []  # List of session dicts
 
+        # Filter state (thread-safe - no UI access needed in background)
+        self._filter_client_id = None  # Will be updated when combo box changes
+
         self._init_ui()
         # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
         # after setting up the background worker and cache system
@@ -52,7 +55,7 @@ class ActiveSessionsTab(QWidget):
                 self.client_combo.addItem(f"CLIENT_{client_id}", client_id)
         except Exception as e:
             logger.warning(f"Failed to load clients: {e}")
-        self.client_combo.currentIndexChanged.connect(self.refresh)
+        self.client_combo.currentIndexChanged.connect(self._on_filter_changed)
         top_bar.addWidget(self.client_combo)
 
         top_bar.addStretch()
@@ -94,6 +97,11 @@ class ActiveSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
+    def _on_filter_changed(self):
+        """Handle filter change - update instance var and refresh."""
+        self._filter_client_id = self.client_combo.currentData()
+        self.refresh()
+
     def _scan_sessions(self) -> list:
         """
         Scan active sessions and return data WITHOUT updating UI.
@@ -106,7 +114,7 @@ class ActiveSessionsTab(QWidget):
         logger.debug("Scanning active sessions (background thread)")
 
         sessions = []
-        selected_client = self.client_combo.currentData()
+        selected_client = self._filter_client_id  # Thread-safe: read instance var, not UI widget
 
         # Get Sessions base path
         try:

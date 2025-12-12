@@ -30,6 +30,13 @@ class CompletedSessionsTab(QWidget):
 
         self.sessions = []  # SessionHistoryRecord objects
 
+        # Filter state (thread-safe - no UI access needed in background)
+        self._filter_client_id = None
+        self._filter_date_from = None
+        self._filter_date_to = None
+        self._filter_search_term = ""
+        self._filter_search_field = "All Fields"
+
         self._init_ui()
         # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
         # after setting up the background worker and cache system
@@ -91,7 +98,7 @@ class CompletedSessionsTab(QWidget):
         row2.addWidget(self.search_field)
 
         search_btn = QPushButton("Search")
-        search_btn.clicked.connect(self.refresh)
+        search_btn.clicked.connect(self._on_search_clicked)
         row2.addWidget(search_btn)
 
         filters.addLayout(row2)
@@ -141,6 +148,24 @@ class CompletedSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
+    def _on_search_clicked(self):
+        """Handle search button click - update filter state and refresh."""
+        self._update_filter_state()
+        self.refresh()
+
+    def _update_filter_state(self):
+        """Update filter instance variables from UI widgets (thread-safe snapshot)."""
+        self._filter_client_id = self.client_combo.currentData()
+
+        # Convert QDate to datetime
+        qdate_from = self.date_from.date()
+        qdate_to = self.date_to.date()
+        self._filter_date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
+        self._filter_date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
+
+        self._filter_search_term = self.search_input.text().strip()
+        self._filter_search_field = self.search_field.currentText()
+
     def _scan_sessions(self) -> list:
         """
         Scan completed sessions and return data WITHOUT updating UI.
@@ -152,16 +177,20 @@ class CompletedSessionsTab(QWidget):
         """
         logger.debug("Scanning completed sessions (background thread)")
 
-        # Get filters
-        selected_client = self.client_combo.currentData()
+        # Update filter state before scanning (in case this is called from background worker first time)
+        if self._filter_date_from is None:
+            # First time - use default date range (last month)
+            from PySide6.QtCore import QDate
+            qdate_from = QDate.currentDate().addMonths(-1)
+            qdate_to = QDate.currentDate()
+            self._filter_date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
+            self._filter_date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
 
-        # Convert QDate to datetime (same as session_history_widget.py)
-        qdate_from = self.date_from.date()
-        qdate_to = self.date_to.date()
-        date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
-        date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
-
-        search_term = self.search_input.text().strip()
+        # Get filters from instance variables (thread-safe)
+        selected_client = self._filter_client_id
+        date_from = self._filter_date_from
+        date_to = self._filter_date_to
+        search_term = self._filter_search_term
 
         # Get sessions from SessionHistoryManager
         try:
@@ -193,7 +222,7 @@ class CompletedSessionsTab(QWidget):
                     "Packing List": ["packing_list_path"]
                 }
 
-                field_name = self.search_field.currentText()
+                field_name = self._filter_search_field  # Thread-safe: read instance var
 
                 if field_name == "All Fields":
                     search_fields = ["session_id", "client_id", "pc_name", "packing_list_path"]
