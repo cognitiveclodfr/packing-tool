@@ -128,8 +128,21 @@ class WorkerSelectionDialog(QDialog):
         self.setModal(True)
         self.setMinimumSize(500, 400)
 
+        # Ensure dialog appears on top and gets focus
+        self.setWindowFlags(
+            self.windowFlags() |
+            Qt.WindowStaysOnTopHint
+        )
+
         self._init_ui()
         self._load_workers()
+
+    def showEvent(self, event):
+        """Override showEvent to ensure dialog is visible on top."""
+        super().showEvent(event)
+        # Activate and raise the window to ensure it's on top
+        self.activateWindow()
+        self.raise_()
 
     def _init_ui(self):
         """Initialize UI"""

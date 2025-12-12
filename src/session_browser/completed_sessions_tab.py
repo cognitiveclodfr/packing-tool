@@ -12,6 +12,8 @@ from pathlib import Path
 import pandas as pd
 
 from logger import get_logger
+from session_history_cache_wrapper import SessionHistoryCacheWrapper
+from session_history_manager import SessionHistoryRecord
 
 logger = get_logger(__name__)
 
@@ -22,16 +24,23 @@ class CompletedSessionsTab(QWidget):
     # Signals
     session_selected = Signal(dict)  # {session data}
 
-    def __init__(self, profile_manager, session_history_manager, parent=None):
+    def __init__(self, profile_manager, session_history_manager, cache_dir: Path, parent=None):
         super().__init__(parent)
 
         self.profile_manager = profile_manager
         self.session_history_manager = session_history_manager
 
+        # Initialize cache wrapper (5 minute TTL)
+        self.cache_wrapper = SessionHistoryCacheWrapper(
+            session_history_manager,
+            cache_dir,
+            ttl_seconds=300  # 5 minutes
+        )
+
         self.sessions = []  # SessionHistoryRecord objects
 
         self._init_ui()
-        self.refresh()
+        # Don't refresh here - parent widget will trigger background refresh
 
     def _init_ui(self):
         """Initialize UI."""
@@ -140,15 +149,23 @@ class CompletedSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Load and display sessions."""
-        self.sessions = []
-        self.table.setRowCount(0)
+    def _scan_sessions(self) -> list:
+        """
+        Scan completed sessions and return data WITHOUT updating UI.
 
-        # Get filters
+        This method is called in a background thread and must NOT touch UI.
+
+        Returns:
+            list: List of SessionHistoryRecord objects ready for display
+        """
+        logger.debug("Scanning completed sessions (background thread)")
+
+        sessions = []
+
+        # Get filters (safe to read in background thread as these are immutable during scan)
         selected_client = self.client_combo.currentData()
 
-        # Convert QDate to datetime (same as session_history_widget.py)
+        # Convert QDate to datetime
         qdate_from = self.date_from.date()
         qdate_to = self.date_to.date()
         date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
@@ -156,10 +173,10 @@ class CompletedSessionsTab(QWidget):
 
         search_term = self.search_input.text().strip()
 
-        # Get sessions from SessionHistoryManager
+        # Get sessions from cache wrapper (much faster than direct scan)
         try:
             if selected_client:
-                sessions = self.session_history_manager.get_client_sessions(
+                sessions = self.cache_wrapper.get_client_sessions(
                     client_id=selected_client,
                     start_date=date_from,
                     end_date=date_to,
@@ -169,7 +186,7 @@ class CompletedSessionsTab(QWidget):
                 # Get for all clients
                 sessions = []
                 for client_id in self.profile_manager.list_clients():
-                    client_sessions = self.session_history_manager.get_client_sessions(
+                    client_sessions = self.cache_wrapper.get_client_sessions(
                         client_id=client_id,
                         start_date=date_from,
                         end_date=date_to,
@@ -204,22 +221,75 @@ class CompletedSessionsTab(QWidget):
 
                 sessions = filtered_sessions
 
-            self.sessions = sessions
-
         except Exception as e:
             logger.error(f"Failed to load sessions: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load sessions:\n{str(e)}")
-            return
+            return []
 
-        # Populate table
+        logger.debug(f"Found {len(sessions)} completed sessions")
+        return sessions
+
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of SessionHistoryRecord objects (or dicts) from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} sessions")
+
+        # Convert dicts to SessionHistoryRecord if needed (Qt signals can serialize objects to dicts)
+        sessions = []
+        for item in session_data:
+            if isinstance(item, dict):
+                # Convert dict back to SessionHistoryRecord
+                sessions.append(SessionHistoryRecord(**item))
+            else:
+                sessions.append(item)
+
+        # Update internal state
+        self.sessions = sessions
+
+        # Clear and populate table
+        self.table.setRowCount(0)
         self._populate_table()
+
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
+
+    def force_refresh(self):
+        """
+        Force refresh by bypassing cache.
+
+        Useful when user manually clicks Refresh button to get latest data.
+        """
+        # Invalidate cache before scan
+        logger.info("Force refresh requested - invalidating cache")
+        self.cache_wrapper.invalidate_all()
+        self.refresh()
 
     def _populate_table(self):
         """Fill table with session data."""
         self.table.setSortingEnabled(False)  # Disable while populating
         self.table.setRowCount(len(self.sessions))
 
-        for row, session in enumerate(self.sessions):
+        for row, session_item in enumerate(self.sessions):
+            # Convert dict to SessionHistoryRecord if needed
+            if isinstance(session_item, dict):
+                session = SessionHistoryRecord(**session_item)
+            else:
+                session = session_item
+
             # Session ID
             self.table.setItem(row, 0, QTableWidgetItem(session.session_id))
 
@@ -325,7 +395,13 @@ class CompletedSessionsTab(QWidget):
             QMessageBox.warning(self, "No Selection", "Please select a session.")
             return
 
-        session = self.sessions[selected]
+        session_item = self.sessions[selected]
+
+        # Convert dict to SessionHistoryRecord if needed (Qt signals can serialize to dict)
+        if isinstance(session_item, dict):
+            session = SessionHistoryRecord(**session_item)
+        else:
+            session = session_item
 
         # Import dialog
         from .session_details_dialog import SessionDetailsDialog
