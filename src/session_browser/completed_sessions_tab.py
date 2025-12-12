@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from logger import get_logger
+from session_history_cache_wrapper import SessionHistoryCacheWrapper
 
 logger = get_logger(__name__)
 
@@ -22,11 +23,18 @@ class CompletedSessionsTab(QWidget):
     # Signals
     session_selected = Signal(dict)  # {session data}
 
-    def __init__(self, profile_manager, session_history_manager, parent=None):
+    def __init__(self, profile_manager, session_history_manager, cache_dir: Path, parent=None):
         super().__init__(parent)
 
         self.profile_manager = profile_manager
         self.session_history_manager = session_history_manager
+
+        # Initialize cache wrapper (5 minute TTL)
+        self.cache_wrapper = SessionHistoryCacheWrapper(
+            session_history_manager,
+            cache_dir,
+            ttl_seconds=300  # 5 minutes
+        )
 
         self.sessions = []  # SessionHistoryRecord objects
 
@@ -164,10 +172,10 @@ class CompletedSessionsTab(QWidget):
 
         search_term = self.search_input.text().strip()
 
-        # Get sessions from SessionHistoryManager
+        # Get sessions from cache wrapper (much faster than direct scan)
         try:
             if selected_client:
-                sessions = self.session_history_manager.get_client_sessions(
+                sessions = self.cache_wrapper.get_client_sessions(
                     client_id=selected_client,
                     start_date=date_from,
                     end_date=date_to,
@@ -177,7 +185,7 @@ class CompletedSessionsTab(QWidget):
                 # Get for all clients
                 sessions = []
                 for client_id in self.profile_manager.list_clients():
-                    client_sessions = self.session_history_manager.get_client_sessions(
+                    client_sessions = self.cache_wrapper.get_client_sessions(
                         client_id=client_id,
                         start_date=date_from,
                         end_date=date_to,
@@ -248,6 +256,17 @@ class CompletedSessionsTab(QWidget):
         """
         data = self._scan_sessions()
         self.populate_table(data)
+
+    def force_refresh(self):
+        """
+        Force refresh by bypassing cache.
+
+        Useful when user manually clicks Refresh button to get latest data.
+        """
+        # Invalidate cache before scan
+        logger.info("Force refresh requested - invalidating cache")
+        self.cache_wrapper.invalidate_all()
+        self.refresh()
 
     def _populate_table(self):
         """Fill table with session data."""
