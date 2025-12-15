@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QMessageBox, QLabel
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer
 
 from datetime import datetime
 import json
@@ -23,8 +23,9 @@ logger = get_logger(__name__)
 class AvailableSessionsTab(QWidget):
     """Tab showing available packing lists that haven't been started"""
 
-    # Signal
+    # Signals
     start_packing_requested = Signal(dict)  # {session_path, client_id, packing_list_name, list_file}
+    refresh_requested = Signal()  # Request parent to trigger background refresh
 
     def __init__(self, profile_manager, session_manager, parent=None):
         """
@@ -41,8 +42,12 @@ class AvailableSessionsTab(QWidget):
         self.session_manager = session_manager
         self.available_lists = []
 
+        # Filter state (thread-safe - no UI access needed in background)
+        self._filter_client_id = None  # Will be updated when combo box changes
+
         self._init_ui()
-        self.refresh()
+        # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
+        # after setting up the background worker and cache system
 
     def _init_ui(self):
         """Initialize UI."""
@@ -59,13 +64,13 @@ class AvailableSessionsTab(QWidget):
                 self.client_combo.addItem(f"CLIENT_{client_id}", client_id)
         except Exception as e:
             logger.warning(f"Failed to load clients: {e}")
-        self.client_combo.currentIndexChanged.connect(self.refresh)
+        self.client_combo.currentIndexChanged.connect(self._on_filter_changed)
         top_bar.addWidget(self.client_combo)
 
         top_bar.addStretch()
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        refresh_btn.clicked.connect(self.refresh_requested.emit)
         top_bar.addWidget(refresh_btn)
 
         layout.addLayout(top_bar)
@@ -93,20 +98,25 @@ class AvailableSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Scan and populate table."""
-        self.available_lists = self._scan_available_sessions()
-        self._populate_table()
+    def _on_filter_changed(self):
+        """Handle filter change - update instance var and request background refresh."""
+        self._filter_client_id = self.client_combo.currentData()
+        # Request background refresh from parent (non-blocking)
+        self.refresh_requested.emit()
 
-    def _scan_available_sessions(self) -> list:
+    def _scan_sessions(self) -> list:
         """
         Scan for Shopify sessions with unstarted packing lists.
+
+        This method is called in a background thread and must NOT touch UI.
 
         Returns:
             List of dicts with available packing list info
         """
+        logger.debug("Scanning available sessions (background thread)")
+
         available_lists = []
-        selected_client = self.client_combo.currentData()
+        selected_client = self._filter_client_id  # Thread-safe: read instance var, not UI widget
 
         # Get Sessions base path
         try:
@@ -182,7 +192,34 @@ class AvailableSessionsTab(QWidget):
         # Sort by session_id (newest first)
         available_lists.sort(key=lambda x: x['session_id'], reverse=True)
 
+        logger.debug(f"Found {len(available_lists)} available sessions")
         return available_lists
+
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of available session records from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} available sessions")
+
+        self.available_lists = session_data
+        self._populate_table()
+
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
 
     def _populate_table(self):
         """Fill table with available lists."""

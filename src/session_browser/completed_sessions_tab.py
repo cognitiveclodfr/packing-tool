@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QLineEdit, QLabel, QDateEdit, QMessageBox, QFileDialog
 )
-from PySide6.QtCore import Signal, QDate
+from PySide6.QtCore import Signal, QDate, QTimer
 
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +21,7 @@ class CompletedSessionsTab(QWidget):
 
     # Signals
     session_selected = Signal(dict)  # {session data}
+    refresh_requested = Signal()  # Request parent to trigger background refresh
 
     def __init__(self, profile_manager, session_history_manager, parent=None):
         super().__init__(parent)
@@ -30,8 +31,16 @@ class CompletedSessionsTab(QWidget):
 
         self.sessions = []  # SessionHistoryRecord objects
 
+        # Filter state (thread-safe - no UI access needed in background)
+        self._filter_client_id = None
+        self._filter_date_from = None
+        self._filter_date_to = None
+        self._filter_search_term = ""
+        self._filter_search_field = "All Fields"
+
         self._init_ui()
-        self.refresh()
+        # NOTE: Do NOT call refresh() here - it will be called by SessionBrowserWidget
+        # after setting up the background worker and cache system
 
     def _init_ui(self):
         """Initialize UI."""
@@ -90,7 +99,7 @@ class CompletedSessionsTab(QWidget):
         row2.addWidget(self.search_field)
 
         search_btn = QPushButton("Search")
-        search_btn.clicked.connect(self.refresh)
+        search_btn.clicked.connect(self._on_search_clicked)
         row2.addWidget(search_btn)
 
         filters.addLayout(row2)
@@ -107,7 +116,7 @@ class CompletedSessionsTab(QWidget):
         row3.addWidget(export_pdf_btn)
 
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        refresh_btn.clicked.connect(lambda: (self._update_filter_state(), self.refresh_requested.emit()))
         row3.addWidget(refresh_btn)
 
         row3.addStretch()
@@ -140,21 +149,50 @@ class CompletedSessionsTab(QWidget):
 
         layout.addLayout(btn_layout)
 
-    def refresh(self):
-        """Load and display sessions."""
-        self.sessions = []
-        self.table.setRowCount(0)
+    def _on_search_clicked(self):
+        """Handle search button click - update filter state and request background refresh."""
+        self._update_filter_state()
+        # Request background refresh from parent (non-blocking)
+        self.refresh_requested.emit()
 
-        # Get filters
-        selected_client = self.client_combo.currentData()
+    def _update_filter_state(self):
+        """Update filter instance variables from UI widgets (thread-safe snapshot)."""
+        self._filter_client_id = self.client_combo.currentData()
 
-        # Convert QDate to datetime (same as session_history_widget.py)
+        # Convert QDate to datetime
         qdate_from = self.date_from.date()
         qdate_to = self.date_to.date()
-        date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
-        date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
+        self._filter_date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
+        self._filter_date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
 
-        search_term = self.search_input.text().strip()
+        self._filter_search_term = self.search_input.text().strip()
+        self._filter_search_field = self.search_field.currentText()
+
+    def _scan_sessions(self) -> list:
+        """
+        Scan completed sessions and return data WITHOUT updating UI.
+
+        This method is called in a background thread and must NOT touch UI.
+
+        Returns:
+            list: List of SessionHistoryRecord objects
+        """
+        logger.debug("Scanning completed sessions (background thread)")
+
+        # Update filter state before scanning (in case this is called from background worker first time)
+        if self._filter_date_from is None:
+            # First time - use default date range (last month)
+            from PySide6.QtCore import QDate
+            qdate_from = QDate.currentDate().addMonths(-1)
+            qdate_to = QDate.currentDate()
+            self._filter_date_from = datetime(qdate_from.year(), qdate_from.month(), qdate_from.day())
+            self._filter_date_to = datetime(qdate_to.year(), qdate_to.month(), qdate_to.day(), 23, 59, 59)
+
+        # Get filters from instance variables (thread-safe)
+        selected_client = self._filter_client_id
+        date_from = self._filter_date_from
+        date_to = self._filter_date_to
+        search_term = self._filter_search_term
 
         # Get sessions from SessionHistoryManager
         try:
@@ -186,7 +224,7 @@ class CompletedSessionsTab(QWidget):
                     "Packing List": ["packing_list_path"]
                 }
 
-                field_name = self.search_field.currentText()
+                field_name = self._filter_search_field  # Thread-safe: read instance var
 
                 if field_name == "All Fields":
                     search_fields = ["session_id", "client_id", "pc_name", "packing_list_path"]
@@ -204,38 +242,75 @@ class CompletedSessionsTab(QWidget):
 
                 sessions = filtered_sessions
 
-            self.sessions = sessions
+            logger.debug(f"Found {len(sessions)} completed sessions")
+            return sessions
 
         except Exception as e:
             logger.error(f"Failed to load sessions: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load sessions:\n{str(e)}")
-            return
+            return []
 
-        # Populate table
+    def populate_table(self, session_data: list):
+        """
+        Populate table with session data on main UI thread.
+
+        This method updates the UI and must be called on the main thread.
+
+        Args:
+            session_data: List of SessionHistoryRecord objects from _scan_sessions()
+        """
+        logger.debug(f"Populating table with {len(session_data)} sessions")
+
+        self.sessions = session_data
         self._populate_table()
 
+        logger.debug("Table populated successfully")
+
+    def refresh(self):
+        """
+        Legacy synchronous refresh (for backward compatibility).
+
+        This method is still used when refresh is called directly,
+        but background worker now calls _scan_sessions() + populate_table().
+        """
+        data = self._scan_sessions()
+        self.populate_table(data)
+
     def _populate_table(self):
-        """Fill table with session data."""
+        """
+        Fill table with session data.
+
+        Handles both dict (from cache) and SessionHistoryRecord objects (from fresh scan).
+        """
         self.table.setSortingEnabled(False)  # Disable while populating
         self.table.setRowCount(len(self.sessions))
 
+        # Helper to get value from dict or object
+        def get_val(record, key, default=None):
+            if isinstance(record, dict):
+                return record.get(key, default)
+            else:
+                return getattr(record, key, default)
+
         for row, session in enumerate(self.sessions):
             # Session ID
-            self.table.setItem(row, 0, QTableWidgetItem(session.session_id))
+            session_id = get_val(session, 'session_id', '')
+            self.table.setItem(row, 0, QTableWidgetItem(session_id))
 
             # Client
-            self.table.setItem(row, 1, QTableWidgetItem(f"CLIENT_{session.client_id}"))
+            client_id = get_val(session, 'client_id', '')
+            self.table.setItem(row, 1, QTableWidgetItem(f"CLIENT_{client_id}"))
 
             # Packing List (extract filename)
-            if session.packing_list_path:
-                list_name = Path(session.packing_list_path).stem
+            packing_list_path = get_val(session, 'packing_list_path')
+            if packing_list_path:
+                list_name = Path(packing_list_path).stem
             else:
                 list_name = "Unknown"
             self.table.setItem(row, 2, QTableWidgetItem(list_name))
 
             # Worker (enhanced to show worker_id and worker_name if available)
-            worker_id = getattr(session, 'worker_id', None)
-            worker_name = getattr(session, 'worker_name', None)
+            worker_id = get_val(session, 'worker_id')
+            worker_name = get_val(session, 'worker_name')
 
             if worker_id and worker_name:
                 worker_display = f"{worker_id} ({worker_name})"
@@ -245,32 +320,50 @@ class CompletedSessionsTab(QWidget):
                 worker_display = worker_name
             else:
                 # Fallback to PC name for old sessions without worker info
-                worker_display = session.pc_name if session.pc_name else "Unknown"
+                pc_name = get_val(session, 'pc_name')
+                worker_display = pc_name if pc_name else "Unknown"
 
             self.table.setItem(row, 3, QTableWidgetItem(worker_display))
 
             # Start Time
-            start_time_str = session.start_time.strftime("%Y-%m-%d %H:%M") if session.start_time else "N/A"
+            start_time = get_val(session, 'start_time')
+            if start_time:
+                # Handle both datetime object and ISO string
+                if isinstance(start_time, str):
+                    try:
+                        from dateutil import parser
+                        start_time = parser.isoparse(start_time)
+                        start_time_str = start_time.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        start_time_str = start_time[:16]  # Take first 16 chars
+                else:
+                    start_time_str = start_time.strftime("%Y-%m-%d %H:%M")
+            else:
+                start_time_str = "N/A"
             self.table.setItem(row, 4, QTableWidgetItem(start_time_str))
 
             # Duration
-            if session.duration_seconds:
-                hours = int(session.duration_seconds // 3600)
-                minutes = int((session.duration_seconds % 3600) // 60)
+            duration_seconds = get_val(session, 'duration_seconds', 0)
+            if duration_seconds:
+                hours = int(duration_seconds // 3600)
+                minutes = int((duration_seconds % 3600) // 60)
                 duration_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
             else:
                 duration_str = "N/A"
             self.table.setItem(row, 5, QTableWidgetItem(duration_str))
 
             # Orders
-            orders_str = f"{session.completed_orders}/{session.total_orders}"
+            completed_orders = get_val(session, 'completed_orders', 0)
+            total_orders = get_val(session, 'total_orders', 0)
+            orders_str = f"{completed_orders}/{total_orders}"
             self.table.setItem(row, 6, QTableWidgetItem(orders_str))
 
             # Items
-            self.table.setItem(row, 7, QTableWidgetItem(str(session.total_items_packed)))
+            total_items_packed = get_val(session, 'total_items_packed', 0)
+            self.table.setItem(row, 7, QTableWidgetItem(str(total_items_packed)))
 
             # Status
-            if session.completed_orders == session.total_orders and session.total_orders > 0:
+            if completed_orders == total_orders and total_orders > 0:
                 status = "✅ Complete"
             else:
                 status = "⚠️ Incomplete"
@@ -330,35 +423,61 @@ class CompletedSessionsTab(QWidget):
         # Import dialog
         from .session_details_dialog import SessionDetailsDialog
 
+        # Helper to get value from dict or object
+        def get_val(record, key, default=None):
+            if isinstance(record, dict):
+                return record.get(key, default)
+            else:
+                return getattr(record, key, default)
+
         # Create dialog
         try:
-            # Standardize structure (session is a SessionHistoryRecord)
+            # Standardize structure (handles both dict and SessionHistoryRecord)
+            packing_list_path = get_val(session, 'packing_list_path')
             packing_list_name = 'Unknown'
-            if session.packing_list_path:
-                packing_list_name = Path(session.packing_list_path).stem
+            if packing_list_path:
+                packing_list_name = Path(packing_list_path).stem
 
             # Construct work_dir for completed sessions (Phase 1 structure)
+            session_path = get_val(session, 'session_path')
             work_dir = None
-            if session.session_path and session.packing_list_path:
+            if session_path and packing_list_path:
                 # Try to find the work directory
-                potential_work_dir = Path(session.session_path) / "packing" / session.packing_list_path
+                potential_work_dir = Path(session_path) / "packing" / packing_list_path
                 if potential_work_dir.exists():
                     work_dir = str(potential_work_dir)
 
+            # Get start_time and end_time (handle both datetime objects and ISO strings)
+            start_time = get_val(session, 'start_time')
+            if start_time and isinstance(start_time, str):
+                start_time_iso = start_time
+            elif start_time:
+                start_time_iso = start_time.isoformat()
+            else:
+                start_time_iso = None
+
+            end_time = get_val(session, 'end_time')
+            if end_time and isinstance(end_time, str):
+                end_time_iso = end_time
+            elif end_time:
+                end_time_iso = end_time.isoformat()
+            else:
+                end_time_iso = None
+
             session_data = {
-                'session_id': session.session_id,
-                'client_id': session.client_id,
+                'session_id': get_val(session, 'session_id'),
+                'client_id': get_val(session, 'client_id'),
                 'packing_list_name': packing_list_name,
                 'worker_id': None,  # Not stored in v1.3.0 summary
                 'worker_name': None,  # Not stored in v1.3.0 summary
-                'pc_name': session.pc_name,
-                'started_at': session.start_time.isoformat() if session.start_time else None,
-                'ended_at': session.end_time.isoformat() if session.end_time else None,
-                'duration_seconds': session.duration_seconds,
-                'orders_completed': session.completed_orders,
-                'orders_total': session.total_orders,
-                'items_packed': session.total_items_packed,
-                'session_path': session.session_path,
+                'pc_name': get_val(session, 'pc_name'),
+                'started_at': start_time_iso,
+                'ended_at': end_time_iso,
+                'duration_seconds': get_val(session, 'duration_seconds'),
+                'orders_completed': get_val(session, 'completed_orders'),
+                'orders_total': get_val(session, 'total_orders'),
+                'items_packed': get_val(session, 'total_items_packed'),
+                'session_path': session_path,
                 'status': 'Completed',
                 'work_dir': work_dir,  # Found work directory for loading session files
             }
