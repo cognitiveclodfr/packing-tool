@@ -1595,10 +1595,12 @@ class MainWindow(QMainWindow):
 
                     # Items from in-progress orders (partial packing)
                     in_progress_items = 0
-                    for order_data in in_progress_orders_dict.values():
-                        for sku_data in order_data.values():
-                            if isinstance(sku_data, dict):
-                                in_progress_items += sku_data.get('packed', 0)
+                    for order_state_list in in_progress_orders_dict.values():
+                        # order_state_list is a list of SKU state objects
+                        if isinstance(order_state_list, list):
+                            for sku_data in order_state_list:
+                                if isinstance(sku_data, dict):
+                                    in_progress_items += sku_data.get('packed', 0)
 
                     items_packed += in_progress_items
                     logger.debug(f"In-progress items: {in_progress_items}")
