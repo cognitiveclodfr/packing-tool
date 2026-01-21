@@ -24,7 +24,6 @@ from profile_manager import ProfileManager, NetworkError, ValidationError
 from session_lock_manager import SessionLockManager
 from exceptions import SessionLockedError, StaleLockError
 from session_selector import SessionSelectorDialog
-from mapping_dialog import ColumnMappingDialog
 from print_dialog import PrintDialog
 from packer_mode_widget import PackerModeWidget
 from packer_logic import PackerLogic, REQUIRED_COLUMNS
@@ -265,10 +264,6 @@ class MainWindow(QMainWindow):
         control_layout = QHBoxLayout(control_panel)
         main_layout.addWidget(control_panel)
 
-        self.start_session_button = QPushButton("Start Session")
-        self.start_session_button.clicked.connect(self.start_session)
-        control_layout.addWidget(self.start_session_button)
-
         self.load_shopify_button = QPushButton("Open Shopify Session")
         self.load_shopify_button.clicked.connect(self.open_shopify_session)
         self.load_shopify_button.setStyleSheet("background-color: #4CAF50; color: white;")
@@ -287,11 +282,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.end_session_button)
 
         control_layout.addStretch()
-
-        self.print_button = QPushButton("Print Barcodes")
-        self.print_button.setEnabled(False)
-        self.print_button.clicked.connect(self.open_print_dialog)
-        control_layout.addWidget(self.print_button)
 
         self.packer_mode_button = QPushButton("Switch to Packer Mode")
         self.packer_mode_button.setEnabled(False)
@@ -983,12 +973,14 @@ class MainWindow(QMainWindow):
         """
         Start a new packing session for the currently selected client.
 
-        This can be triggered by the user selecting a file or by the application
-        restoring a previous, incomplete session.
+        This method is used to start or restore Shopify Tool sessions. All sessions
+        must be created through Shopify Tool - direct Excel file loading is no longer supported.
 
         Args:
-            file_path: Optional path to the packing list Excel file. If None, a file dialog is shown
-            restore_dir: Optional directory of the session to restore
+            file_path: Path to the Shopify session directory (contains analysis_data.json).
+                      Must be provided - no file dialog shown. Use SessionSelectorDialog
+                      to let users choose a session.
+            restore_dir: Optional directory of the session to restore (for crash recovery)
         """
         logger.info("Starting new session")
 
@@ -1010,24 +1002,22 @@ class MainWindow(QMainWindow):
             self.status_label.setText("A session is already active. Please end it first.")
             return
 
+        # Require file_path for Shopify sessions
+        if not file_path and not restore_dir:
+            logger.error("start_session() called without file_path or restore_dir")
+            QMessageBox.warning(
+                self,
+                "No Session Selected",
+                "Please use 'Load Shopify Session' to select a session.\n\n"
+                "All sessions must be created through Shopify Tool."
+            )
+            return
+
         # Clear existing tree
         if hasattr(self, 'order_tree'):
             self.order_tree.clear()
 
-        # File selection dialog if no path provided
-        if not file_path:
-            file_path, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select Packing List",
-                "",
-                "Excel Files (*.xlsx)"
-            )
-            if not file_path:
-                logger.info("Session start cancelled by user")
-                self.status_label.setText("Session start cancelled.")
-                return
-
-        logger.info(f"Starting session for client {self.current_client_id} with file: {file_path}")
+        logger.info(f"Starting session for client {self.current_client_id} with path: {file_path}")
 
         try:
             # Create SessionManager for this client
@@ -1057,8 +1047,19 @@ class MainWindow(QMainWindow):
             # Connect signals
             self.logic.item_packed.connect(self._on_item_packed)
 
-            # Load and process file
-            self.load_and_process_file(file_path)
+            # Load Shopify session data
+            session_path = self.session_manager.output_dir
+            order_count, analysis_timestamp = self.logic.load_from_shopify_analysis(session_path)
+
+            logger.info(f"Loaded {order_count} orders from Shopify analysis (analyzed at: {analysis_timestamp})")
+
+            # Setup order table
+            self.setup_order_table()
+
+            # Update UI
+            self.status_label.setText(f"Successfully loaded {order_count} orders for session '{session_id}'.")
+            self.end_session_button.setEnabled(True)
+            self.packer_mode_button.setEnabled(True)
 
         except StaleLockError as e:
             # Session has a stale lock - offer to force-release it
@@ -1594,10 +1595,12 @@ class MainWindow(QMainWindow):
 
                     # Items from in-progress orders (partial packing)
                     in_progress_items = 0
-                    for order_data in in_progress_orders_dict.values():
-                        for sku_data in order_data.values():
-                            if isinstance(sku_data, dict):
-                                in_progress_items += sku_data.get('packed', 0)
+                    for order_state_list in in_progress_orders_dict.values():
+                        # order_state_list is a list of SKU state objects
+                        if isinstance(order_state_list, list):
+                            for sku_data in order_state_list:
+                                if isinstance(sku_data, dict):
+                                    in_progress_items += sku_data.get('packed', 0)
 
                     items_packed += in_progress_items
                     logger.debug(f"In-progress items: {in_progress_items}")
@@ -1723,11 +1726,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'packing_data'):
             self.packing_data = None
 
-        self.start_session_button.setEnabled(True)
         self.load_shopify_button.setEnabled(True)
         self.session_browser_button.setEnabled(True)
         self.end_session_button.setEnabled(False)
-        self.print_button.setEnabled(False)
         self.packer_mode_button.setEnabled(False)
 
         # Disable toolbar end button and reset session info
@@ -1778,44 +1779,6 @@ class MainWindow(QMainWindow):
             "Stay tuned!"
         )
 
-    def load_and_process_file(self, file_path: str):
-        """
-        Loads, processes, and displays the data from a packing list file.
-
-        This method coordinates the PackerLogic to parse the file, handle column
-        mapping if necessary, generate barcodes, and then sets up the main
-        orders table.
-
-        Args:
-            file_path (str): The path to the Excel file to load.
-        """
-        try:
-            df = self.logic.load_packing_list_from_file(file_path)
-
-            file_columns = list(df.columns)
-            mapping = None
-            if not all(col in file_columns for col in REQUIRED_COLUMNS):
-                dialog = ColumnMappingDialog(REQUIRED_COLUMNS, file_columns, self)
-                if not dialog.exec():
-                    self.status_label.setText("File loading cancelled.")
-                    self.end_session()
-                    return
-                mapping = dialog.get_mapping()
-
-            session_id = self.session_manager.session_id
-            self.status_label.setText(f"Session '{session_id}' started. Processing file...")
-            order_count = self.logic.process_data_and_generate_barcodes(mapping)
-
-            self.setup_order_table()
-
-            self.status_label.setText(f"Successfully processed {order_count} orders for session '{session_id}'.")
-            self.start_session_button.setEnabled(False)
-            self.end_session_button.setEnabled(True)
-            self.print_button.setEnabled(True)
-            self.packer_mode_button.setEnabled(True)
-        except Exception as e:
-            self.status_label.setText(f"An unexpected error occurred: {e}")
-            self.end_session()
 
     def setup_order_table(self):
         """
@@ -1868,7 +1831,14 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.show_notification("", "black")
 
         if self.logic.current_order_number is None:
-            order_number_from_scan = self.logic.barcode_to_order_number.get(text)
+            # Find order by normalized comparison
+            order_number_from_scan = None
+            scanned_normalized = self.logic._normalize_order_number(text)
+            for order_num in self.logic.orders_data.keys():
+                if self.logic._normalize_order_number(order_num) == scanned_normalized:
+                    order_number_from_scan = order_num
+                    break
+
             if not order_number_from_scan:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
                 self.flash_border("red")
@@ -2156,7 +2126,7 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(
                     f"Loaded: {session_path.name} / {selected_name}\n"
                     f"Orders: {order_count}\n"
-                    f"Barcodes generated successfully"
+                    f"Ready to start packing"
                 )
 
                 # Enable packing UI
@@ -2209,13 +2179,11 @@ class MainWindow(QMainWindow):
         logger.info("Enabling packing mode UI")
 
         # Disable session start buttons
-        self.start_session_button.setEnabled(False)
         self.load_shopify_button.setEnabled(False)
         self.session_browser_button.setEnabled(False)
 
         # Enable packing operation buttons
         self.end_session_button.setEnabled(True)
-        self.print_button.setEnabled(True)
         self.packer_mode_button.setEnabled(True)
 
         # Enable toolbar end button
@@ -2420,7 +2388,7 @@ class MainWindow(QMainWindow):
                 "Session Loaded",
                 f"Loaded packing list: {list_name}\n"
                 f"Orders: {order_count}\n\n"
-                f"Barcodes have been generated and are ready to print."
+                f"Ready to start packing."
             )
             logger.info("Packing session started successfully from Session Browser")
 

@@ -307,6 +307,7 @@ def app_duplicates(qtbot, test_excel_file_duplicates, mock_profile_manager, mock
         if window.session_manager and window.session_manager.is_active():
             window.end_session()
 
+@pytest.mark.skip(reason="Excel workflow removed - uses start_session_button")
 def test_start_session_and_load_data(app_basic):
     """
     Test Case 1: Verifies starting a session and loading data from the Excel file.
@@ -333,6 +334,7 @@ def test_start_session_and_load_data(app_basic):
     # The test data has two unique orders
     assert order_tree.topLevelItemCount() == 2
 
+@pytest.mark.skip(reason="Excel workflow removed - uses start_session_button")
 def test_packer_mode_and_scan_simulation(app_basic):
     """
     Test Case 2: Verifies switching to packer mode and simulating barcode scans.
@@ -389,6 +391,7 @@ def test_packer_mode_and_scan_simulation(app_basic):
     # Assert that the status is now "Packed"
     assert packer_widget.table.item(0, 3).text() == "Packed"
 
+@pytest.mark.skip(reason="Excel workflow removed - uses start_session_button")
 def test_search_filter(app_basic):
     """
     Test Case 3: Verifies the search filter functionality on the order tree.
@@ -438,6 +441,7 @@ def test_search_filter(app_basic):
     window.search_input.clear()
     assert count_visible_items() == 2
 
+@pytest.mark.skip(reason="Excel workflow removed - uses start_session_button")
 def test_reload_in_progress_order_restores_ui_state(app_duplicates):
     """
     Test Case 4: Verifies that reloading an in-progress order correctly

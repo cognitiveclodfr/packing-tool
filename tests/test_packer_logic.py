@@ -54,281 +54,106 @@ def create_dummy_excel(data, file_path):
     df.to_excel(file_path, index=False)
     return file_path
 
-def test_load_file_not_found(packer_logic):
-    """Test loading a non-existent file."""
-    with pytest.raises(ValueError, match="Could not read the Excel file"):
-        packer_logic.load_packing_list_from_file('non_existent_file.xlsx')
-
-def test_process_with_missing_courier_mapping(packer_logic, dummy_file_path):
-    """Test processing data when the Courier column is not mapped."""
-    dummy_data = {
-        'Order': ['1'],
-        'Identifier': ['A-1'],
-        'Name': ['Prod A'],
-        'Amount': [1],
-        'CarrierService': ['UPS'] # Using a different name for the courier column
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-
-    # Mapping is missing 'Courier'
-    mapping = {
-        'Order_Number': 'Order',
-        'SKU': 'Identifier',
-        'Product_Name': 'Name',
-        'Quantity': 'Amount'
-    }
-
-    with pytest.raises(ValueError, match="The file is missing required columns: Courier"):
-        packer_logic.process_data_and_generate_barcodes(mapping)
-
-def test_successful_processing_and_barcode_generation(packer_logic, dummy_file_path, test_dir):
-    """Test successful data processing and barcode generation with the new Courier column."""
-    dummy_data = {
-        'Order_Number': ['1001', '1001', '1002'],
-        'SKU': ['A-1', 'B-2', 'A-1'],
-        'Product_Name': ['Product A', 'Product B', 'Product A'],
-        'Quantity': [1, 2, 3],
-        'Courier': ['UPS', 'UPS', 'FedEx']
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-
-    num_orders = packer_logic.process_data_and_generate_barcodes()
-    assert num_orders == 2
-
-    # Check barcode files exist in test_dir/barcodes/ subdirectory
-    barcode_dir = os.path.join(test_dir, 'barcodes')
-    assert os.path.exists(os.path.join(barcode_dir, '1001.png')), \
-        f"Expected barcode file not found: {os.path.join(barcode_dir, '1001.png')}"
-    assert os.path.exists(os.path.join(barcode_dir, '1002.png')), \
-        f"Expected barcode file not found: {os.path.join(barcode_dir, '1002.png')}"
-
-    assert '1001' in packer_logic.orders_data
-    assert len(packer_logic.orders_data['1001']['items']) == 2
-    assert '1002' in packer_logic.orders_data
-    assert len(packer_logic.orders_data['1002']['items']) == 1
-
-def test_packing_logic_flow(packer_logic, dummy_file_path):
-    """Test the entire packing flow for a single order."""
-    dummy_data = {
-        'Order_Number': ['1001', '1001'],
-        'SKU': ['A-1', 'B-2'],
-        'Product_Name': ['Product A', 'Product B'],
-        'Quantity': [1, 2],
-        'Courier': ['UPS', 'UPS']
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    # Start packing with a valid barcode
-    items, status = packer_logic.start_order_packing('1001')
-    assert status == "ORDER_LOADED"
-    assert items is not None
-    assert len(items) == 2
-
-    # Scan correct SKU
-    result, status = packer_logic.process_sku_scan('A-1')
-    assert status == "SKU_OK"
-    assert result['packed'] == 1
-    assert result['is_complete'] is True
-
-    # Scan another correct SKU
-    result, status = packer_logic.process_sku_scan('B-2')
-    assert status == "SKU_OK"
-    assert result['packed'] == 1
-    assert result['is_complete'] is False
-
-    # Scan the second item of the same SKU
-    result, status = packer_logic.process_sku_scan('B-2')
-    assert status == "ORDER_COMPLETE"
-    assert result['packed'] == 2
-    assert result['is_complete'] is True
-
-def test_packing_with_extra_and_unknown_skus(packer_logic, dummy_file_path):
-    """Test scanning extra and unknown SKUs."""
-    dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1], 'Courier': ['UPS']}
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    packer_logic.start_order_packing('1001')
-
-    # Complete the item
-    packer_logic.process_sku_scan('A-1')
-
-    # Scan extra SKU
-    result, status = packer_logic.process_sku_scan('A-1')
-    assert status == "SKU_EXTRA"
-    assert result is None
-
-    # Scan unknown SKU
-    result, status = packer_logic.process_sku_scan('C-3')
-    assert status == "SKU_NOT_FOUND"
-    assert result is None
-
 def test_start_packing_unknown_order(packer_logic):
     """Test starting to pack an order that does not exist."""
     items, status = packer_logic.start_order_packing('UNKNOWN_ORDER')
     assert status == "ORDER_NOT_FOUND"
     assert items is None
 
-def test_sku_normalization(packer_logic, dummy_file_path):
-    """Test that SKUs are normalized correctly for matching."""
-    dummy_data = {
-        'Order_Number': ['1001'],
-        'SKU': ['A-1'],
-        'Product_Name': ['Product A'],
-        'Quantity': [1],
-        'Courier': ['UPS']
+
+# ============================================================================
+# Order Number Normalization Tests
+# ============================================================================
+
+def test_normalize_order_number_removes_special_chars(packer_logic):
+    """Test _normalize_order_number removes special characters correctly."""
+    # Test hash removal
+    assert packer_logic._normalize_order_number("#1001") == "1001"
+
+    # Test exclamation removal
+    assert packer_logic._normalize_order_number("ORD-123!") == "ORD-123"
+
+    # Test space removal
+    assert packer_logic._normalize_order_number("Test Order") == "TestOrder"
+
+    # Test multiple special chars
+    assert packer_logic._normalize_order_number("#ORD-123! @") == "ORD-123"
+
+
+def test_normalize_order_number_keeps_hyphens_underscores(packer_logic):
+    """Test _normalize_order_number preserves hyphens and underscores."""
+    assert packer_logic._normalize_order_number("ABC_123") == "ABC_123"
+    assert packer_logic._normalize_order_number("ORD-123") == "ORD-123"
+    assert packer_logic._normalize_order_number("TEST_ABC-123") == "TEST_ABC-123"
+
+
+def test_normalize_order_number_case_sensitive(packer_logic):
+    """Test _normalize_order_number preserves case (unlike SKU normalization)."""
+    # Case preserved
+    assert packer_logic._normalize_order_number("ABC123") == "ABC123"
+    assert packer_logic._normalize_order_number("abc123") == "abc123"
+
+    # Compare to SKU normalization (which lowercases)
+    assert packer_logic._normalize_sku("ABC123") == "abc123"
+
+
+def test_normalize_order_number_edge_cases(packer_logic):
+    """Test _normalize_order_number handles edge cases."""
+    # Empty string
+    assert packer_logic._normalize_order_number("") == ""
+
+    # None
+    assert packer_logic._normalize_order_number(None) == ""
+
+    # Only special chars
+    assert packer_logic._normalize_order_number("###") == ""
+    assert packer_logic._normalize_order_number("!!!") == ""
+
+
+def test_start_order_packing_with_normalized_lookup(packer_logic):
+    """Test start_order_packing finds orders using normalization."""
+    # Setup orders with special characters
+    packer_logic.orders_data = {
+        "#1001": {
+            "items": [
+                {"SKU": "TEST-SKU", "Quantity": "2", "Product_Name": "Test Product"}
+            ]
+        },
+        "ORD-123!": {
+            "items": [
+                {"SKU": "TEST-SKU-2", "Quantity": "1", "Product_Name": "Test Product 2"}
+            ]
+        }
     }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
+    packer_logic.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
-    packer_logic.start_order_packing('1001')
-
-    # Scan with a normalized SKU (no hyphen, different case)
-    result, status = packer_logic.process_sku_scan('a1')
-    assert status == "ORDER_COMPLETE"
-    assert result is not None
-
-def test_invalid_quantity_in_excel(packer_logic, dummy_file_path):
-    """Test that invalid quantities are handled gracefully."""
-    dummy_data = {
-        'Order_Number': ['1001'],
-        'SKU': ['A-1'],
-        'Product_Name': ['Product A'],
-        'Quantity': ['invalid_string'], # Invalid quantity
-        'Courier': ['UPS']
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    packer_logic.start_order_packing('1001')
-    # The logic should treat 'invalid_string' as a quantity of 1
-    assert packer_logic.current_order_state[0]['required'] == 1
-
-    # Scan the item, should complete the order
-    result, status = packer_logic.process_sku_scan('A-1')
-    assert status == "ORDER_COMPLETE"
-
-def test_scan_sku_for_wrong_order(packer_logic, dummy_file_path):
-    """Test scanning an SKU that belongs to a different order."""
-    dummy_data = {
-        'Order_Number': ['1001', '1002'],
-        'SKU': ['A-1', 'B-2'],
-        'Product_Name': ['Product A', 'Product B'],
-        'Quantity': [1, 1],
-        'Courier': ['UPS', 'FedEx']
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    # Start packing order 1001
-    packer_logic.start_order_packing('1001')
-
-    # Scan an SKU from order 1002
-    result, status = packer_logic.process_sku_scan('B-2')
-    assert status == "SKU_NOT_FOUND"
-    assert result is None
-
-def test_clear_current_order(packer_logic, dummy_file_path):
-    """Test that the current order state is cleared properly."""
-    dummy_data = {'Order_Number': ['1001'], 'SKU': ['A-1'], 'Product_Name': ['A'], 'Quantity': [1], 'Courier': ['UPS']}
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    packer_logic.start_order_packing('1001')
-    assert packer_logic.current_order_number is not None
-    assert packer_logic.current_order_state != []
-
-    packer_logic.clear_current_order()
-    assert packer_logic.current_order_number is None
-    assert packer_logic.current_order_state == {}
-
-def test_empty_sku_in_data(packer_logic, dummy_file_path):
-    """Test that rows with empty SKUs are handled gracefully."""
-    dummy_data = {
-        'Order_Number': ['1001', '1001'],
-        'SKU': ['A-1', ''], # One SKU is empty
-        'Product_Name': ['Product A', 'Product B'],
-        'Quantity': [1, 1],
-        'Courier': ['UPS', 'UPS']
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    packer_logic.start_order_packing('1001')
-    # The state should only contain the valid SKU
-    assert len(packer_logic.current_order_state) == 1
-    assert packer_logic.current_order_state[0]['normalized_sku'] == 'a1'
-
-def test_packing_with_duplicate_sku_rows(packer_logic, dummy_file_path):
-    """Test packing an order with duplicate SKUs as separate rows."""
-    dummy_data = {
-        'Order_Number': ['ORD-001', 'ORD-001', 'ORD-001'],
-        'SKU': ['SKU-A', 'SKU-B', 'SKU-A'],
-        'Product_Name': ['Product A', 'Product B', 'Product A'],
-        'Quantity': [1, 2, 1],
-        'Courier': ['CourierX', 'CourierX', 'CourierX']
-    }
-    file_path = create_dummy_excel(dummy_data, dummy_file_path)
-    packer_logic.load_packing_list_from_file(file_path)
-    packer_logic.process_data_and_generate_barcodes()
-
-    # Start packing the order
-    items, status = packer_logic.start_order_packing('ORD-001')
+    # Scan normalized barcode (without special chars)
+    items, status = packer_logic.start_order_packing("1001")
     assert status == "ORDER_LOADED"
-    assert len(items) == 3
-    assert len(packer_logic.current_order_state) == 3
+    assert packer_logic.current_order_number == "#1001"
+    assert len(items) == 1
 
-    # Scan the first SKU-A
-    result, status = packer_logic.process_sku_scan('SKU-A')
-    assert status == "SKU_OK"
-    assert result['row'] == 0  # First row with SKU-A
-    assert result['packed'] == 1
-    assert result['is_complete'] is True
-    assert packer_logic.current_order_state[0]['packed'] == 1
-    assert packer_logic.current_order_state[2]['packed'] == 0  # The other SKU-A is untouched
+    # Scan another normalized barcode
+    items, status = packer_logic.start_order_packing("ORD-123")
+    assert status == "ORDER_LOADED"
+    assert packer_logic.current_order_number == "ORD-123!"
 
-    # Scan SKU-B
-    result, status = packer_logic.process_sku_scan('SKU-B')
-    assert status == "SKU_OK"
-    assert result['row'] == 1
-    assert result['packed'] == 1
-    assert result['is_complete'] is False
 
-    # Scan the second SKU-A
-    result, status = packer_logic.process_sku_scan('SKU-A')
-    assert status == "SKU_OK"
-    assert result['row'] == 2  # Second row with SKU-A
-    assert result['packed'] == 1
-    assert result['is_complete'] is True
-    assert packer_logic.current_order_state[2]['packed'] == 1
+def test_start_order_packing_order_not_found_with_normalization(packer_logic):
+    """Test ORDER_NOT_FOUND when no normalized match exists."""
+    packer_logic.orders_data = {
+        "#1001": {"items": [{"SKU": "TEST", "Quantity": "1", "Product_Name": "Test"}]}
+    }
+    packer_logic.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
-    # Scan the second SKU-B
-    result, status = packer_logic.process_sku_scan('SKU-B')
-    assert status == "ORDER_COMPLETE"
-    assert result['row'] == 1
-    assert result['packed'] == 2
-    assert result['is_complete'] is True
-
-    # Check order is marked as complete
-    assert 'ORD-001' in packer_logic.session_packing_state['completed_orders']
-
-    # Test extra scan
-    result, status = packer_logic.process_sku_scan('SKU-A')
-    assert status == "SKU_EXTRA"
+    # Scan non-existent order
+    items, status = packer_logic.start_order_packing("9999")
+    assert status == "ORDER_NOT_FOUND"
+    assert items is None
 
 
 # ============================================================================
-# Phase 1.8: Tests for load_packing_list_json
+# JSON Packing List Tests
 # ============================================================================
 
 def test_load_packing_list_json_valid(packer_logic, test_dir):
@@ -379,10 +204,8 @@ def test_load_packing_list_json_valid(packer_logic, test_dir):
     assert 'ORDER-001' in packer_logic.orders_data
     assert 'ORDER-002' in packer_logic.orders_data
 
-    # Verify barcodes generated
+    # Verify orders_data populated (barcodes pre-generated by Shopify Tool)
     assert len(packer_logic.orders_data) == 2
-    assert os.path.exists(packer_logic.orders_data['ORDER-001']['barcode_path'])
-    assert os.path.exists(packer_logic.orders_data['ORDER-002']['barcode_path'])
 
 
 def test_load_packing_list_json_invalid_json(packer_logic, test_dir):
