@@ -1,8 +1,6 @@
 PySide6
 pandas
 openpyxl
-python-barcode
-Pillow
 pyinstaller
 pytest
 pytest-qt
