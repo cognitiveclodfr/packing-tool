@@ -1,8 +1,8 @@
-# Documentation Reference Index - v1.2.0
+# Documentation Reference Index - v1.3.0.0
 
-**Last Updated:** 2025-11-19
-**Version:** 1.2.0
-**Phase:** Phase 1 Complete - Shopify Integration
+**Last Updated:** 2026-01-22
+**Version:** 1.3.0.0
+**Phase:** Phase 3.1 Complete - Session Browser & Performance Optimizations
 
 Quick navigation and reference guide for all Packer's Assistant documentation.
 
@@ -12,8 +12,8 @@ Quick navigation and reference guide for all Packer's Assistant documentation.
 
 **New to Packer's Assistant?**
 1. Start with [README.md](../README.md) for installation and basic usage
-2. Review [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) for latest features
-3. See [CHANGELOG.md](../CHANGELOG.md) for version history
+2. Review [CHANGELOG.md](../CHANGELOG.md) for v1.3.0.0 features and version history
+3. Check migration guide if upgrading from v1.2.0
 
 **Developers:**
 1. [ARCHITECTURE.md](ARCHITECTURE.md) - Understand the system design
@@ -37,11 +37,14 @@ Quick navigation and reference guide for all Packer's Assistant documentation.
 - Data Models and Utilities
 
 **Key Sections:**
-- `PackerLogic` - Order processing and barcode generation
+- `PackerLogic` - Order processing (barcode generation removed in v1.3.0.0)
 - `SessionManager` - Session lifecycle management
-  - **NEW v1.2.0:** `get_packing_work_dir()` - Phase 1 work directory creation
+  - `get_packing_work_dir()` - Phase 1 work directory creation
 - `PackerLogic` Methods:
-  - **NEW v1.2.0:** `load_packing_list_json()` - Shopify JSON support
+  - `load_from_shopify_analysis()` - Primary loading method (v1.3.0.0)
+  - `_normalize_order_number()` - **NEW v1.3.0.0** Order normalization
+- `SessionCacheManager` - **NEW v1.3.0.0** Session Browser caching
+- `RefreshWorker` - **NEW v1.3.0.0** Background session scanning
 
 **When to use:** When you need detailed API signatures, parameters, return types, and examples
 
@@ -60,9 +63,10 @@ Quick navigation and reference guide for all Packer's Assistant documentation.
 - Technology stack
 
 **Key Sections:**
+- Phase 3.1 Session Browser Architecture
 - Phase 1 Shopify session structure (`packing/` directory)
-- Legacy Excel session structure (`barcodes/` directory)
-- Dual workflow support
+- Performance optimizations (caching, background threading)
+- Removed: Excel workflow and barcode generation (moved to Shopify Tool)
 - Unified statistics system
 
 **When to use:** When you need to understand how components interact or system design decisions
@@ -78,9 +82,11 @@ Quick navigation and reference guide for all Packer's Assistant documentation.
 - Concise descriptions
 - Public and private method listings
 
-**Key Updates v1.2.0:**
-- `load_packing_list_json()` - PackerLogic
-- `get_packing_work_dir()` - SessionManager
+**Key Updates v1.3.0.0:**
+- `_normalize_order_number()` - PackerLogic (new)
+- `SessionCacheManager` - Session Browser caching (new)
+- `RefreshWorker` - Background scanning (new)
+- Removed: `process_data_and_generate_barcodes()`, `generate_barcode()`
 
 **When to use:** When you need to quickly find a specific function or method
 
@@ -181,6 +187,36 @@ packing-tool/
 
 ---
 
+## Phase 3.1 Features (v1.3.0.0)
+
+### Key Changes
+
+1. **Session Browser Complete**
+   - Three tabs: Active, Completed, Available
+   - See: [ARCHITECTURE.md - Session Browser Architecture](ARCHITECTURE.md#session-browser-architecture-phase-31)
+
+2. **Performance Optimizations**
+   - Persistent cache with 5-minute TTL
+   - Background scanning with QThread
+   - See: [ARCHITECTURE.md - Performance](ARCHITECTURE.md#performance-improvements)
+
+3. **Code Cleanup**
+   - Barcode generation removed (moved to Shopify Tool)
+   - Excel workflow removed
+   - 1,073 lines of code removed
+
+4. **Breaking Changes**
+   - Excel input no longer supported
+   - All sessions created through Shopify Tool
+   - See: [CHANGELOG.md - Breaking Changes](../CHANGELOG.md#breaking-changes)
+
+5. **Order Normalization**
+   - Method: `PackerLogic._normalize_order_number()`
+   - Automatic barcode matching without manual mapping
+   - See: [API.md - _normalize_order_number](API.md#_normalize_order_number)
+
+---
+
 ## Phase 1 Features (v1.2.0)
 
 ### Key Architectural Changes
@@ -201,10 +237,6 @@ packing-tool/
    - Module: `shared/stats_manager.py`
    - See: [API.md - StatisticsManager](API.md#statisticsmanager)
 
-5. **Backward Compatibility**
-   - Excel workflow fully supported
-   - See: [ARCHITECTURE.md - Directory Structure](ARCHITECTURE.md#directory-structure)
-
 ---
 
 ## Common Tasks
@@ -220,8 +252,11 @@ packing-tool/
 **...implement a new feature?**
 → Review [ARCHITECTURE.md](ARCHITECTURE.md) for design patterns, [API.md](API.md) for existing APIs
 
-**...understand Phase 1 changes?**
-→ See [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) and [ARCHITECTURE.md - Storage Architecture](ARCHITECTURE.md#storage-architecture)
+**...understand v1.3.0.0 changes?**
+→ See [CHANGELOG.md](../CHANGELOG.md) and [ARCHITECTURE.md - Session Browser](ARCHITECTURE.md#session-browser-architecture-phase-31)
+
+**...migrate from v1.2.0?**
+→ See [README.md - Migration](../README.md#migration-from-v120) and [CHANGELOG.md - Migration Guide](../CHANGELOG.md#migration-guide)
 
 **...integrate with Shopify Tool?**
 → See [INTEGRATION.md](INTEGRATION.md)
@@ -235,29 +270,28 @@ packing-tool/
 
 | Document | Version | Last Updated |
 |----------|---------|--------------|
-| API.md | 1.2.0 | 2025-11-19 |
-| ARCHITECTURE.md | 1.2.0 | 2025-11-19 |
-| FUNCTIONS.md | 1.2.0 | 2025-11-19 |
-| REFERENCE_INDEX.md | 1.2.0 | 2025-11-19 |
-| RELEASE_NOTES_v1.2.0.md | 1.2.0 | 2025-11-19 |
-| README.md | 1.2.0 | 2025-11-19 |
-| CHANGELOG.md | 1.2.0 | 2025-11-19 |
+| API.md | 1.3.0.0 | 2026-01-22 |
+| ARCHITECTURE.md | 1.3.0.0 | 2026-01-22 |
+| FUNCTIONS.md | 1.3.0.0 | 2026-01-22 |
+| REFERENCE_INDEX.md | 1.3.0.0 | 2026-01-22 |
+| README.md | 1.3.0.0 | 2026-01-22 |
+| CHANGELOG.md | 1.3.0.0 | 2026-01-22 |
 
 ---
 
 ## Document Status
 
-### Up-to-Date (v1.2.0)
+### Up-to-Date (v1.3.0.0)
 - ✅ API.md
 - ✅ ARCHITECTURE.md
 - ✅ FUNCTIONS.md
 - ✅ REFERENCE_INDEX.md
+- ✅ README.md
+- ✅ CHANGELOG.md
 - ✅ Version in `shared/__init__.py`
 
-### Needs Review
-- ⏳ README.md (pending update)
-- ⏳ CHANGELOG.md (pending update)
-- ⏳ RELEASE_NOTES_v1.2.0.md (needs review)
+### Previous Versions
+- 📁 RELEASE_NOTES_v1.2.0.md (archived)
 
 ---
 

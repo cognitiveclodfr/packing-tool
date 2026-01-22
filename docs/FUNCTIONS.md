@@ -1,7 +1,7 @@
 # Packer's Assistant - Functions Catalog
 
-**Version:** 1.2.0
-**Last Updated:** 2025-11-19
+**Version:** 1.3.0.0
+**Last Updated:** 2026-01-22
 
 Complete catalog of all classes, methods, and functions in the Packer's Assistant application.
 
@@ -56,9 +56,9 @@ Order processing and packing state management.
 - `__init__(session_dir, profile_manager, sku_mapping_manager, parent=None)` - Initialize PackerLogic
 
 **Public Methods:**
-- `load_packing_list_from_file(file_path, restore_dir=None) -> bool` - Load packing list from Excel
-- `load_packing_list_json(packing_list_path) -> Tuple[int, str]` - **[NEW v1.2.0]** Load packing list from Shopify JSON
-- `process_data_and_generate_barcodes() -> pd.DataFrame` - Generate barcodes for all orders
+- `load_packing_list_from_file(file_path, restore_dir=None) -> bool` - **[DEPRECATED v1.3.0.0]** Load packing list from Excel (use Shopify Tool instead)
+- `load_packing_list_json(packing_list_path) -> Tuple[int, str]` - Load packing list from Shopify JSON
+- `load_from_shopify_analysis(analysis_path) -> Tuple[int, str]` - **[PRIMARY v1.3.0.0]** Load session from Shopify Tool
 - `start_order_packing(barcode_data) -> tuple[bool, str, list]` - Start packing an order
 - `process_sku_scan(barcode_data) -> tuple[bool, str, int, int, bool]` - Process SKU scan
 - `get_order_details(order_number) -> list[dict]` - Get order items
@@ -69,11 +69,41 @@ Order processing and packing state management.
 - `load_state()` - Load packing state from file
 - `end_session_cleanup()` - Clean up session files
 
+**Removed Methods (v1.3.0.0):**
+- ❌ `process_data_and_generate_barcodes()` - Barcode generation moved to Shopify Tool
+- ❌ `_generate_code128_barcode()` - Barcode generation moved to Shopify Tool
+
 **Private Methods:**
 - `_validate_and_map_columns(file_path, required_columns) -> tuple[bool, dict]` - Validate columns
-- `_generate_code128_barcode(barcode_data, file_path, label_text, courier=None)` - Generate barcode
+- `_normalize_order_number(order_number) -> str` - **[NEW v1.3.0.0]** Normalize order numbers for barcode matching
 - `_normalize_sku(sku) -> str` - Normalize SKU for comparison
 - `_apply_sku_mapping(scanned_barcode) -> str` - Apply SKU mapping
+
+**New Components (Phase 3.1):**
+
+### SessionCacheManager
+
+**Location:** `src/session_browser/session_cache_manager.py`
+
+**Methods:**
+- `get_cached_data(client_id=None) -> Optional[Dict]` - Retrieve cached session data for a client
+- `save_to_cache(client_id, data) -> None` - Save session scan results to persistent cache
+- `clear_cache() -> None` - Clear all cached data
+
+**Description:** Manages disk-based persistent cache for Session Browser. Provides 5-minute TTL caching with per-client data storage.
+
+### RefreshWorker (QThread)
+
+**Location:** `src/session_browser/session_browser_widget.py`
+
+**Methods:**
+- `run() -> None` - Background worker method for session scanning
+
+**Signals:**
+- `refresh_progress(str)` - Progress update signal
+- `refresh_complete(dict)` - Completion signal with scanned data
+
+**Description:** Background thread worker for scanning session directories without blocking UI.
 
 ---
 
@@ -454,19 +484,19 @@ Monitors active sessions across clients.
 
 ### mapping_dialog.py
 
-**Description**: Excel column mapping dialog.
+**Status:** ❌ REMOVED in v1.3.0.0
+
+**Reason:** Excel input workflow removed. All sessions now created through Shopify Tool.
+
+**Previous Functionality (v1.2.0 and earlier):**
 
 #### Class: `ColumnMappingDialog(QDialog)`
 
-Maps required columns to file columns.
+Mapped required columns to file columns for Excel imports.
 
-**Constructor:**
+**Removed Methods:**
 - `__init__(required_columns, file_columns, parent=None)` - Initialize dialog
-
-**Public Methods:**
 - `get_mapping() -> dict[str, str]` - Get column mapping
-
-**Private Methods:**
 - `validate_and_accept()` - Validate before accepting
 
 ---
