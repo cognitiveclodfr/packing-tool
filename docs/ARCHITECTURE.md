@@ -1,8 +1,8 @@
 # Packer's Assistant - System Architecture
 
-**Version:** 1.2.0
-**Last Updated:** 2025-11-19
-**Architecture Phase:** Phase 1 Complete - Shopify Integration
+**Version:** 1.3.0.0
+**Last Updated:** 2026-01-22
+**Architecture Phase:** Phase 3.1 Complete - Session Browser & Performance Optimizations
 
 ---
 
@@ -786,20 +786,115 @@ Shopify → Shopify Tool → Excel File → Packing Tool → Session Output → 
                                   Statistics Manager
 ```
 
+## Session Browser Architecture (Phase 3.1)
+
+### Overview
+
+The Session Browser is a unified interface for managing all packing sessions. Introduced in Phase 3.1, it replaces the previous Restore Session dialog and Session Monitor widgets with a comprehensive three-tab interface.
+
+### Components
+
+#### SessionCacheManager
+Persistent disk-based cache for session scan results.
+
+**Location:** `src/session_browser/session_cache_manager.py`
+
+**Features:**
+- Disk-based storage: `{sessions_root}/.session_browser_cache.json`
+- Cache TTL: 300 seconds (5 minutes)
+- Per-client caching with timestamps
+- Thread-safe operations
+
+**Cache Structure:**
+```json
+{
+  "version": "1.0",
+  "last_updated": 1234567890.123,
+  "clients": {
+    "CLIENT_X": {
+      "active": [...],
+      "completed": [...],
+      "available": [...],
+      "timestamp": 1234567890.123
+    }
+  }
+}
+```
+
+#### RefreshWorker (QThread)
+Background session scanning worker.
+
+**Location:** `src/session_browser/session_browser_widget.py`
+
+**Responsibilities:**
+- Scan session directories in background thread
+- Prevent UI blocking during scans
+- Signal completion to main thread
+- Update cache with fresh data
+
+**Workflow:**
+1. User opens Session Browser
+2. Load from cache (instant display)
+3. Start RefreshWorker in background
+4. Worker scans directories
+5. Signal UI to update with fresh data
+6. Save results to cache
+
+### Performance Improvements
+
+**Before Phase 3.1:**
+- UI freezes: 60-100 seconds every 30 seconds
+- Blocking directory scans
+- No caching
+- Poor user experience
+
+**After Phase 3.1:**
+- Instant UI response
+- Background scanning
+- 5-minute persistent cache
+- Smooth user experience
+
+**Metrics:**
+- First open (no cache): 10-15s with loading overlay
+- Second+ opens (fresh cache): <1s instant display
+- Background refresh: 3-5s without blocking UI
+- UI freeze time: 0 seconds (was 60-100s)
+
+### Tab Architecture
+
+**Active Sessions Tab:**
+- Scans for locked sessions across warehouse PCs
+- Displays lock status, worker info, progress
+- Resume and force unlock capabilities
+
+**Completed Sessions Tab:**
+- Integrates with SessionHistoryManager
+- Date range and client filters
+- Excel export functionality
+- Detailed session statistics
+
+**Available Sessions Tab:**
+- Scans for Shopify sessions ready to pack
+- Shows sessions without packing work directories
+- Direct session opening capability
+- Multi-packing-list support
+
 ## Technology Stack
 
 ### Core Technologies
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| **Language** | Python 3.8+ | Application logic |
+| **Language** | Python 3.9+ | Application logic |
 | **GUI Framework** | PySide6 (Qt6) | Desktop UI |
-| **Data Processing** | pandas | Excel file handling |
-| **Excel I/O** | openpyxl | Reading/writing .xlsx files |
-| **Barcode Generation** | python-barcode | Code-128 barcodes |
-| **Image Processing** | Pillow (PIL) | Label generation |
+| **Data Processing** | pandas | Data handling and Excel export |
+| **Excel I/O** | openpyxl | Export completed sessions to .xlsx |
 | **Build Tool** | PyInstaller | Standalone .exe compilation |
 | **Testing** | pytest, pytest-qt | Unit and integration tests |
+
+**Removed in v1.3.0.0:**
+- ❌ `python-barcode` - Barcode generation moved to Shopify Tool
+- ❌ `reportlab/pypdf` - PDF generation moved to Shopify Tool
 
 ### Key Libraries
 
@@ -822,8 +917,9 @@ Shopify → Shopify Tool → Excel File → Packing Tool → Session Output → 
   - Aggregations for summary table
 
 #### python-barcode
-- **Version**: Latest stable
-- **Usage**:
+- **Status**: ❌ REMOVED in v1.3.0.0
+- **Migration**: Barcode generation now handled by Shopify Tool (Feature #5)
+- **Previous Usage** (v1.2.0 and earlier):
   - Code-128 barcode generation
   - ImageWriter for PNG output
   - Custom DPI and dimensions (203 DPI, 65x35mm labels)

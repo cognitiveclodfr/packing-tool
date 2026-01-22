@@ -1,8 +1,8 @@
 # Packer's Assistant - API Reference
 
-**Version:** 1.2.0
-**Last Updated:** 2025-11-19
-**Phase:** Phase 1 Complete - Shopify Integration
+**Version:** 1.3.0.0
+**Last Updated:** 2026-01-22
+**Phase:** Phase 3.1 Complete - Session Browser & Performance Optimizations
 
 ---
 
@@ -204,31 +204,19 @@ print(f"Loaded '{list_name}': {order_count} orders ready for packing")
 
 ##### process_data_and_generate_barcodes
 
-```python
-def process_data_and_generate_barcodes(self) -> pd.DataFrame
-```
+**Status:** ❌ REMOVED in v1.3.0.0
 
-**Description**: Process the loaded DataFrame and generate barcode images for all orders.
+**Migration:** Barcode generation is now handled by Shopify Tool (Feature #5). All sessions must be created in Shopify Tool first, which generates barcodes automatically.
 
-**Returns:**
-- `pd.DataFrame`: Summarized order data grouped by order number
+**Previous Functionality (v1.2.0 and earlier):**
+- Processed loaded DataFrame and generated barcode images
+- Created Code-128 barcodes for each order
+- Saved images to barcode directory
 
-**Raises:**
-- `ValueError`: If no data has been loaded yet
-
-**Processing Steps:**
-1. Validate all required columns exist
-2. Group items by Order_Number
-3. Generate Code-128 barcode for each order
-4. Create barcode images (203 DPI, 65x35mm labels)
-5. Add order number and courier text to labels
-6. Save images to barcode directory
-
-**Example:**
-```python
-summary_df = packer_logic.process_data_and_generate_barcodes()
-print(f"Generated barcodes for {len(summary_df)} orders")
-```
+**Replacement Workflow:**
+1. Create session in Shopify Tool
+2. Use Shopify Tool's Barcode Generator (Feature #5)
+3. Load session in Packer Tool using `load_from_shopify_analysis()`
 
 ##### start_order_packing
 
@@ -498,6 +486,33 @@ def _normalize_sku(self, sku: str) -> str
 ```python
 normalized = self._normalize_sku("SKU-001  ")  # Returns "sku-001"
 ```
+
+##### _normalize_order_number
+
+```python
+def _normalize_order_number(self, order_number: str) -> str
+```
+
+**Description**: Normalizes order numbers for barcode matching. Removes special characters (#, !, spaces) while keeping alphanumeric, hyphens, and underscores. This matches the normalization logic used by Shopify Tool's barcode generation.
+
+**Added in:** v1.3.0.0
+
+**Args:**
+- `order_number` (str): Raw order number (may contain #, !, spaces, etc.)
+
+**Returns:**
+- `str`: Normalized order number (alphanumeric + hyphens + underscores only)
+
+**Example:**
+```python
+result = logic._normalize_order_number("#ORDER-123!")
+# Returns: "ORDER-123"
+
+result = logic._normalize_order_number("ORDER 456")
+# Returns: "ORDER456"
+```
+
+**Used by:** `start_order_packing()` for barcode scanning workflow
 
 ##### _apply_sku_mapping
 

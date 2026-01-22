@@ -1,6 +1,227 @@
-# Changelog
+# Changelog - Packer Tool
 
-All notable changes to Packing Tool will be documented in this file.
+All notable changes to Packer Tool will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+---
+
+## [1.3.0.0] - 2026-01-22 - Major Cleanup & Performance Release
+
+### 🎯 Summary
+
+Major release focused on removing duplicate functionality, performance optimizations,
+and complete Shopify Tool integration. Excel input workflow removed in favor of
+unified Shopify-first approach.
+
+### ⚠️ BREAKING CHANGES
+
+#### Removed Features (Integrated with Shopify Tool)
+- ❌ **Local barcode generation** - Now handled by Shopify Tool (Feature #5)
+- ❌ **Excel input workflow** - All sessions created through Shopify Tool
+- ❌ **Manual barcode mapping** - Replaced with automatic order number normalization
+
+**Migration:** All new sessions must be created in Shopify Tool first. Packer Tool
+now operates as a warehouse execution tool only.
+
+### ✨ New Features
+
+#### Session Browser (Phase 3.1) ✅
+Complete session management interface with three tabs:
+
+**Active Sessions Tab:**
+- Real-time monitoring of in-progress packing sessions
+- Lock status indicators
+- Resume capability with state restoration
+
+**Completed Sessions Tab:**
+- Historical session tracking
+- Excel export functionality
+- Statistics and metrics
+
+**Available Sessions Tab:**
+- Browse Shopify Tool sessions ready for packing
+- Multi-packing-list support per session
+- Direct session opening
+
+**Technical Implementation:**
+- `SessionCacheManager` - 5-minute persistent cache for instant loading
+- `RefreshWorker(QThread)` - Background session scanning (non-blocking UI)
+- Auto-refresh with user toggle control
+- Loading overlay with state management
+
+#### Order Number Normalization ✅
+- `_normalize_order_number()` - Robust order matching
+- Removes special characters (#, !, spaces) for consistent comparison
+- Matches Shopify Tool's barcode normalization logic
+- 7 new unit tests for normalization scenarios
+
+### 🚀 Performance Improvements
+
+#### Session Browser Optimizations:
+- **Persistent cache** - Session data cached on disk (5 min TTL)
+- **Background scanning** - QThread workers prevent UI freezing
+- **Instant loading** - First open uses cache, refresh in background
+- **60-100 second scans** eliminated from UI thread
+
+**Metrics:**
+- Before: 60-100 second UI freezes every 30 seconds
+- After: Instant UI response, background updates
+
+#### State Save Optimizations:
+- **Debounced saves** - Batch multiple state changes
+- **Reduced I/O** - Fewer file operations during scanning
+- **Timer-based batching** - QTimer for efficient save scheduling
+
+### 🐛 Bug Fixes
+
+#### Critical Fixes:
+- Fixed Session Browser UI freezing during directory scans
+- Fixed session resume AttributeError (missing order_state)
+- Fixed dict/SessionHistoryRecord serialization issues
+- Fixed state save race conditions in multi-PC environments
+
+#### Shopify Integration Fixes:
+- Fixed session detection for multi-packing-list sessions
+- Fixed packing_state.json path detection (packing/{list}/packing_state.json)
+- Fixed session summary location detection
+
+### 📉 Code Cleanup
+
+**Removed (Dead Code):**
+- 1,073 lines of duplicate barcode generation code
+- `process_data_and_generate_barcodes()` - 390 lines
+- `generate_barcode()` method
+- `barcode_to_order_number` mapping dictionary
+- `mapping_dialog.py` - 99 lines
+- `test_barcode_size.py` - 236 lines
+
+**Removed Dependencies:**
+- `python-barcode` (barcode generation moved to Shopify Tool)
+- `reportlab` or `pypdf` (PDF generation moved to Shopify Tool)
+
+**Simplified:**
+- Excel workflow logic removed
+- Column mapping dialog removed
+- Manual SKU mapping simplified
+
+### 🔧 Technical Changes
+
+#### Session Structure (Shopify Integration):
+```
+Sessions/CLIENT_X/2025-11-19_1/
+├── analysis/
+│   └── analysis_data.json          ← From Shopify Tool
+├── packing/
+│   ├── DHL_Orders/
+│   │   ├── packing_list.json       ← From Shopify Tool
+│   │   ├── barcodes/               ← From Shopify Tool
+│   │   ├── packing_state.json      ← Packer Tool (saves state)
+│   │   └── session_summary.json    ← Packer Tool (completion)
+│   └── PostOne_Orders/
+│       └── ...
+```
+
+#### New Methods:
+- `SessionCacheManager.get_cached_data()` - Retrieve cached sessions
+- `SessionCacheManager.save_to_cache()` - Persist session data
+- `RefreshWorker.run()` - Background session scanning
+- `PackerLogic._normalize_order_number()` - Order matching
+
+#### Modified Methods:
+- `load_from_shopify_analysis()` - Now primary loading method
+- `load_packing_list_json()` - Support for Shopify JSON format
+- `start_order_packing()` - Uses normalization for matching
+- `_save_session_state()` - Debounced saves
+
+### 🧪 Testing
+
+**Test Updates:**
+- 4 Excel workflow tests marked as skipped (workflow removed)
+- 7 new unit tests for order normalization
+- Updated integration tests for Shopify workflow
+- Fixed serialization tests
+
+**Test Files:** 18 total
+- All tests passing except intentionally skipped (Excel workflow)
+- Test coverage maintained after cleanup
+
+### 📦 Dependencies
+
+**Current (Minimal):**
+```
+PySide6          # GUI framework
+pandas           # Data processing
+openpyxl         # Excel export only
+pyinstaller      # Build tool
+pytest           # Testing
+pytest-qt        # Qt testing
+```
+
+**Removed:**
+```
+python-barcode   # Moved to Shopify Tool
+reportlab/pypdf  # Moved to Shopify Tool
+```
+
+### 🔄 Migration Guide
+
+#### For Warehouse Users:
+1. **New Session Creation:**
+   - Create all sessions in Shopify Tool (Feature #5)
+   - Generate barcodes in Shopify Tool
+   - Open session in Packer Tool for warehouse execution
+
+2. **Existing Sessions:**
+   - Old sessions remain accessible in Completed Sessions tab
+   - New sessions must follow Shopify Tool workflow
+
+3. **Scanning Workflow:**
+   - Scan order barcodes generated by Shopify Tool
+   - System automatically normalizes and matches orders
+   - No manual mapping required
+
+#### For Developers:
+1. **Removed APIs:**
+   - `process_data_and_generate_barcodes()` → REMOVED
+   - `generate_barcode()` → REMOVED
+   - `barcode_to_order_number` → REMOVED
+
+2. **New APIs:**
+   - `load_from_shopify_analysis()` - Load sessions
+   - `_normalize_order_number()` - Match orders
+   - `SessionCacheManager` - Cache management
+
+3. **Testing:**
+   - Excel workflow tests now skipped
+   - Focus on Shopify integration tests
+
+### 📊 Release Metrics
+
+| Metric | Value |
+|--------|-------|
+| **Code Removed** | 1,073 lines |
+| **Files Deleted** | 2 (mapping_dialog.py, test_barcode_size.py) |
+| **Tests Added** | 7 (normalization) |
+| **Tests Updated** | 18 files |
+| **Commits** | 139 since v1.2.0 |
+| **Performance Gain** | 60-100s → instant UI response |
+
+### 🎯 Next Steps (Post-Release)
+
+**Optional Improvements:**
+- Add performance timing logs (module exists, integrate fully)
+- Complete test coverage documentation
+- User-facing release notes for warehouse staff
+
+### 📞 Support
+
+For issues or questions:
+- GitHub Issues: https://github.com/cognitiveclodfr/packing-tool/issues
+- Documentation: `docs/` directory
+- Logs: `~/.packers_assistant/logs/`
+
+---
 
 ## [1.3.1] - 2025-12-12
 
