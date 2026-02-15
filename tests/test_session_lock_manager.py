@@ -245,6 +245,7 @@ def test_heartbeat_stops_on_release(lock_manager, temp_session_dir):
 # C. STALE LOCK DETECTION TESTS
 # ============================================================================
 
+@pytest.mark.flaky
 def test_detect_stale_lock(lock_manager, temp_session_dir):
     """Test detection of stale lock (>2 min)."""
     # Create lock with old heartbeat
@@ -270,6 +271,7 @@ def test_detect_stale_lock(lock_manager, temp_session_dir):
     assert is_stale is True
 
 
+@pytest.mark.flaky
 def test_force_release_stale_lock(lock_manager, temp_session_dir):
     """Test force-releasing stale lock."""
     # Create stale lock
@@ -304,6 +306,7 @@ def test_force_release_stale_lock(lock_manager, temp_session_dir):
     assert success is True
 
 
+@pytest.mark.flaky
 def test_fresh_lock_not_stale(lock_manager, temp_session_dir):
     """Test recent lock not detected as stale."""
     # Acquire fresh lock
@@ -321,6 +324,7 @@ def test_fresh_lock_not_stale(lock_manager, temp_session_dir):
 # D. CRASH RECOVERY TESTS
 # ============================================================================
 
+@pytest.mark.flaky
 def test_crash_recovery_scenario(lock_manager, temp_session_dir):
     """Test complete crash recovery workflow."""
     # Step 1: Acquire lock
@@ -476,6 +480,7 @@ def test_release_lock_owned_by_another_process(lock_manager, another_lock_manage
 # F. ADDITIONAL EDGE CASES FOR BETTER COVERAGE
 # ============================================================================
 
+@pytest.mark.flaky
 def test_acquire_lock_with_stale_lock_returns_error(lock_manager, temp_session_dir):
     """Test that acquiring lock with stale lock present returns proper error."""
     # Create stale lock

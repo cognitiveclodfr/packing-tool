@@ -4,3 +4,5 @@ openpyxl
 pyinstaller
 pytest
 pytest-qt
+pytest-cov
+pytest-timeout

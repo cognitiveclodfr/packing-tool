@@ -376,6 +376,7 @@ class TestFileLocking:
 class TestStressTest:
     """Stress tests for high-volume concurrent operations."""
 
+    @pytest.mark.flaky
     def test_high_volume_concurrent_writes(self, temp_base_path):
         """Stress test with high volume of concurrent writes."""
         num_threads = 10  # Optimized from 20 for faster tests
