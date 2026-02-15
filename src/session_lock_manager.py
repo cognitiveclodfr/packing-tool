@@ -141,10 +141,10 @@ class SessionLockManager:
             lock_data = {
                 "locked_by": self.hostname,
                 "user_name": self.username,
-                "lock_time": datetime.now().isoformat(),
+                "lock_time": datetime.now().astimezone().isoformat(),
                 "process_id": self.process_id,
                 "app_version": self.app_version,
-                "heartbeat": datetime.now().isoformat(),
+                "heartbeat": datetime.now().astimezone().isoformat(),
                 "worker_id": worker_id,
                 "worker_name": worker_name
             }
@@ -333,7 +333,7 @@ class SessionLockManager:
                             return False
 
                         # Update heartbeat
-                        data['heartbeat'] = datetime.now().isoformat()
+                        data['heartbeat'] = datetime.now().astimezone().isoformat()
 
                         # Write back
                         f.seek(0)

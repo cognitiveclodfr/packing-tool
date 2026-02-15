@@ -222,7 +222,7 @@ def test_heartbeat_timer_starts(lock_manager, temp_session_dir):
         lock_data = json.load(f)
 
     heartbeat_time = datetime.fromisoformat(lock_data['heartbeat'])
-    now = datetime.now()
+    now = datetime.now().astimezone()
     time_diff = (now - heartbeat_time).total_seconds()
 
     assert time_diff < 5  # Heartbeat should be very recent
@@ -245,11 +245,10 @@ def test_heartbeat_stops_on_release(lock_manager, temp_session_dir):
 # C. STALE LOCK DETECTION TESTS
 # ============================================================================
 
-@pytest.mark.flaky
 def test_detect_stale_lock(lock_manager, temp_session_dir):
     """Test detection of stale lock (>2 min)."""
     # Create lock with old heartbeat
-    old_time = datetime.now() - timedelta(minutes=5)
+    old_time = datetime.now().astimezone() - timedelta(minutes=5)
     lock_data = {
         'locked_by': 'OLD-PC',
         'user_name': 'OldUser',
@@ -271,11 +270,10 @@ def test_detect_stale_lock(lock_manager, temp_session_dir):
     assert is_stale is True
 
 
-@pytest.mark.flaky
 def test_force_release_stale_lock(lock_manager, temp_session_dir):
     """Test force-releasing stale lock."""
     # Create stale lock
-    old_time = datetime.now() - timedelta(minutes=5)
+    old_time = datetime.now().astimezone() - timedelta(minutes=5)
     lock_data = {
         'locked_by': 'OLD-PC',
         'user_name': 'OldUser',
@@ -306,7 +304,6 @@ def test_force_release_stale_lock(lock_manager, temp_session_dir):
     assert success is True
 
 
-@pytest.mark.flaky
 def test_fresh_lock_not_stale(lock_manager, temp_session_dir):
     """Test recent lock not detected as stale."""
     # Acquire fresh lock
@@ -324,7 +321,6 @@ def test_fresh_lock_not_stale(lock_manager, temp_session_dir):
 # D. CRASH RECOVERY TESTS
 # ============================================================================
 
-@pytest.mark.flaky
 def test_crash_recovery_scenario(lock_manager, temp_session_dir):
     """Test complete crash recovery workflow."""
     # Step 1: Acquire lock
@@ -336,7 +332,7 @@ def test_crash_recovery_scenario(lock_manager, temp_session_dir):
     with open(lock_path, 'r+', encoding='utf-8') as f:
         lock_data = json.load(f)
         # Set heartbeat to 5 minutes ago (simulate crash)
-        old_time = datetime.now() - timedelta(minutes=5)
+        old_time = datetime.now().astimezone() - timedelta(minutes=5)
         lock_data['heartbeat'] = old_time.isoformat()
         f.seek(0)
         f.truncate()
@@ -361,7 +357,7 @@ def test_crash_recovery_scenario(lock_manager, temp_session_dir):
 def test_lock_metadata_preserved(lock_manager, temp_session_dir):
     """Test lock metadata available after crash."""
     # Create lock with specific metadata
-    old_time = datetime.now() - timedelta(minutes=5)
+    old_time = datetime.now().astimezone() - timedelta(minutes=5)
     lock_data = {
         'locked_by': 'CRASHED-PC',
         'user_name': 'CrashedUser',
@@ -480,11 +476,10 @@ def test_release_lock_owned_by_another_process(lock_manager, another_lock_manage
 # F. ADDITIONAL EDGE CASES FOR BETTER COVERAGE
 # ============================================================================
 
-@pytest.mark.flaky
 def test_acquire_lock_with_stale_lock_returns_error(lock_manager, temp_session_dir):
     """Test that acquiring lock with stale lock present returns proper error."""
     # Create stale lock
-    old_time = datetime.now() - timedelta(minutes=5)
+    old_time = datetime.now().astimezone() - timedelta(minutes=5)
     lock_data = {
         'locked_by': 'STALE-PC',
         'user_name': 'StaleUser',
@@ -620,7 +615,7 @@ def test_get_lock_display_info(lock_manager, temp_session_dir):
         'locked_by': 'DISPLAY-PC',
         'user_name': 'DisplayUser',
         'lock_time': lock_time.isoformat(),
-        'heartbeat': datetime.now().isoformat(),
+        'heartbeat': datetime.now().astimezone().isoformat(),
         'process_id': 11111,
         'app_version': '1.2.0'
     }
@@ -650,7 +645,7 @@ def test_update_heartbeat_for_another_process_lock(lock_manager, another_lock_ma
 def test_is_lock_stale_with_custom_timeout(lock_manager):
     """Test stale detection with custom timeout."""
     # Create lock info with 1 minute old heartbeat
-    one_min_ago = datetime.now() - timedelta(minutes=1)
+    one_min_ago = datetime.now().astimezone() - timedelta(minutes=1)
     lock_info = {
         'heartbeat': one_min_ago.isoformat()
     }
@@ -684,8 +679,8 @@ def test_get_all_active_sessions(lock_manager, mock_profile_manager, tmp_path):
     lock_data1 = {
         'locked_by': 'PC1',
         'user_name': 'User1',
-        'lock_time': datetime.now().isoformat(),
-        'heartbeat': datetime.now().isoformat(),
+        'lock_time': datetime.now().astimezone().isoformat(),
+        'heartbeat': datetime.now().astimezone().isoformat(),
         'process_id': 1111,
         'app_version': '1.0.0'
     }
@@ -697,8 +692,8 @@ def test_get_all_active_sessions(lock_manager, mock_profile_manager, tmp_path):
     lock_data2 = {
         'locked_by': 'PC2',
         'user_name': 'User2',
-        'lock_time': datetime.now().isoformat(),
-        'heartbeat': datetime.now().isoformat(),
+        'lock_time': datetime.now().astimezone().isoformat(),
+        'heartbeat': datetime.now().astimezone().isoformat(),
         'process_id': 2222,
         'app_version': '1.0.0'
     }
@@ -707,7 +702,7 @@ def test_get_all_active_sessions(lock_manager, mock_profile_manager, tmp_path):
         json.dump(lock_data2, f)
 
     # Create stale lock in session3
-    old_time = datetime.now() - timedelta(minutes=10)
+    old_time = datetime.now().astimezone() - timedelta(minutes=10)
     lock_data3 = {
         'locked_by': 'PC3',
         'user_name': 'User3',
