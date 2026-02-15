@@ -37,6 +37,8 @@ from worker_selection_dialog import WorkerSelectionDialog
 
 logger = get_logger(__name__)
 
+DEFAULT_CONFIG_PATH = "config.ini"
+
 def find_latest_session_dir(base_dir: str = ".") -> str | None:
     """
     Finds the most recent, valid, and incomplete session directory.
@@ -92,7 +94,7 @@ class MainWindow(QMainWindow):
         table_model (OrderTableModel): The model for the orders table.
         proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
     """
-    def __init__(self, skip_worker_selection: bool = False, config_path: str = "config.ini"):
+    def __init__(self, skip_worker_selection: bool = False, config_path: str = DEFAULT_CONFIG_PATH):
         """Initialize the MainWindow, sets up UI, and loads initial state.
 
         Args:
@@ -2708,9 +2710,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Packer's Assistant")
     parser.add_argument(
         '--config',
-        default='config.ini',
+        default=DEFAULT_CONFIG_PATH,
         metavar='PATH',
-        help='Path to config file (default: config.ini). '
+        help=f'Path to config file (default: {DEFAULT_CONFIG_PATH}). '
              'Use config.dev.ini for local development / mock server.'
     )
     args = parser.parse_args()
