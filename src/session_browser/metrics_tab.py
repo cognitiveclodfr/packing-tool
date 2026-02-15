@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLabel,
-    QGroupBox
+    QGroupBox, QScrollArea
 )
 from PySide6.QtCore import Qt
 
@@ -25,7 +25,15 @@ class MetricsTab(QWidget):
 
     def _init_ui(self):
         """Initialize UI."""
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        layout = QVBoxLayout(scroll_widget)
+        scroll.setWidget(scroll_widget)
+        outer_layout.addWidget(scroll)
 
         # Check if metrics available
         metrics = self._get_metrics()
@@ -35,7 +43,8 @@ class MetricsTab(QWidget):
                 "⚠️ Metrics not available\n\n"
                 "This session was created before Phase 2b or has no timing data."
             )
-            no_data_label.setStyleSheet("color: orange; font-weight: bold;")
+            no_data_label.setObjectName("no_metrics_label")
+            no_data_label.setStyleSheet("color: #b06020; font-weight: bold;")
             no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(no_data_label)
             layout.addStretch()
