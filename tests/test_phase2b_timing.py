@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Manual test script for Phase 2b - Enhanced Metadata Collection (v1.3.0)
+Test for Phase 2b - Enhanced Metadata Collection (v1.3.0)
 
 Tests:
 1. Timing variables initialization
@@ -12,38 +12,24 @@ Tests:
 """
 
 import sys
-import os
 import json
 import time
+import tempfile
 from pathlib import Path
 from datetime import datetime
+import pytest
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-sys.path.insert(0, str(Path(__file__).parent))
+# Add src to path (conftest.py handles this, but keep for standalone __main__ run)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Import required modules
 from src.packer_logic import PackerLogic
-from src.profile_manager import ProfileManager
 
-def test_phase2b_timing():
-    """Test Phase 2b timing implementation"""
 
-    print("=" * 80)
-    print("Phase 2b - Enhanced Metadata Collection Test")
-    print("=" * 80)
-
-    # Setup test environment (clean slate each run)
-    import shutil
-    test_dir = Path("/tmp/packing_test_phase2b")
-    if test_dir.exists():
-        shutil.rmtree(test_dir)
-    test_dir.mkdir(exist_ok=True)
-
+def _run_phase2b_tests(test_dir: Path):
+    """Core test logic, accepts a directory path."""
     work_dir = test_dir / "work"
     work_dir.mkdir(exist_ok=True)
-
-    print(f"\n✓ Test directory created: {test_dir}")
 
     # Create a mock ProfileManager
     class MockProfileManager:
@@ -58,17 +44,14 @@ def test_phase2b_timing():
     packer = PackerLogic(client_id="TEST", profile_manager=profile_mgr, work_dir=str(work_dir))
 
     # Test 1: Check timing variables initialized
-    print("\n[Test 1] Timing Variables Initialization")
     assert hasattr(packer, 'current_order_start_time'), "Missing current_order_start_time"
     assert hasattr(packer, 'current_order_items_scanned'), "Missing current_order_items_scanned"
     assert hasattr(packer, 'completed_orders_metadata'), "Missing completed_orders_metadata"
     assert packer.current_order_start_time is None, "current_order_start_time should be None initially"
     assert packer.current_order_items_scanned == [], "current_order_items_scanned should be empty list"
     assert packer.completed_orders_metadata == [], "completed_orders_metadata should be empty list"
-    print("✓ All timing variables initialized correctly")
 
-    # Create a simple test packing list
-    print("\n[Test 2] Create Test Packing List")
+    # Test 2: Create test packing list
     test_orders = {
         "list_name": "Test_Orders",
         "created_at": datetime.now().isoformat(),
@@ -97,36 +80,19 @@ def test_phase2b_timing():
     with open(packing_list_path, 'w') as f:
         json.dump(test_orders, f, indent=2)
 
-    print(f"✓ Test packing list created: {packing_list_path}")
-
-    # Load packing list
-    print("\n[Test 3] Load Packing List")
-    try:
-        order_count, list_name = packer.load_packing_list_json(packing_list_path)
-        print(f"✓ Loaded {order_count} orders from '{list_name}'")
-    except Exception as e:
-        print(f"✗ Error loading packing list: {e}")
-        return False
+    # Test 3: Load packing list
+    order_count, list_name = packer.load_packing_list_json(packing_list_path)
+    assert order_count == 2, f"Expected 2 orders, got {order_count}"
 
     # Test 4: Start order and check timing capture
-    print("\n[Test 4] Start Order and Check Timing")
-
-    # In v1.3.0+ start_order_packing accepts the order number directly
     items, status = packer.start_order_packing("ORDER-001")
-
     assert status == "ORDER_LOADED", f"Expected ORDER_LOADED, got {status}"
     assert packer.current_order_start_time is not None, "Order start time not recorded"
     assert isinstance(packer.current_order_start_time, str), "Order start time should be ISO string"
     assert packer.current_order_items_scanned == [], "Items scanned should be empty initially"
 
-    print(f"✓ Order started at: {packer.current_order_start_time}")
-    print(f"✓ Order has {len(items)} items")
-
     # Test 5: Scan items and check timestamps
-    print("\n[Test 5] Scan Items and Check Timestamps")
-
-    # Scan SKU-A (quantity 2)
-    time.sleep(1)  # Wait 1 second
+    time.sleep(1)
     result, status = packer.process_sku_scan("SKU-A")
     assert status == "SKU_OK", f"First SKU-A scan failed: {status}"
     assert len(packer.current_order_items_scanned) == 1, "Should have 1 item scan record"
@@ -136,27 +102,16 @@ def test_phase2b_timing():
     assert 'time_from_order_start_seconds' in scan1, "Missing time_from_order_start_seconds"
     assert scan1['time_from_order_start_seconds'] > 0, "Time from order start should be > 0"
 
-    print(f"✓ First scan: SKU-A at +{scan1['time_from_order_start_seconds']}s")
-
-    # Scan SKU-A again (complete quantity 2)
     time.sleep(1)
     result, status = packer.process_sku_scan("SKU-A")
     assert status == "SKU_OK", f"Second SKU-A scan failed: {status}"
     assert len(packer.current_order_items_scanned) == 2, "Should have 2 item scan records"
 
-    scan2 = packer.current_order_items_scanned[1]
-    print(f"✓ Second scan: SKU-A at +{scan2['time_from_order_start_seconds']}s")
-
-    # Scan SKU-B (quantity 1, completes order)
     time.sleep(1)
     result, status = packer.process_sku_scan("SKU-B")
     assert status == "ORDER_COMPLETE", f"SKU-B scan should complete order: {status}"
 
-    print(f"✓ Order completed with status: {status}")
-
     # Test 6: Check completed order metadata
-    print("\n[Test 6] Check Completed Order Metadata")
-
     assert len(packer.completed_orders_metadata) == 1, "Should have 1 completed order"
 
     completed = packer.completed_orders_metadata[0]
@@ -171,16 +126,7 @@ def test_phase2b_timing():
     assert completed['items_count'] == 3, "Should have 3 item scans (2x SKU-A, 1x SKU-B)"
     assert len(completed['items']) == 3, "Items array should have 3 entries"
 
-    print(f"✓ Order metadata complete:")
-    print(f"  - Order: {completed['order_number']}")
-    print(f"  - Duration: {completed['duration_seconds']}s")
-    print(f"  - Items: {completed['items_count']}")
-    print(f"  - Started: {completed['started_at']}")
-    print(f"  - Completed: {completed['completed_at']}")
-
     # Test 7: Check state persistence
-    print("\n[Test 7] Check State Persistence")
-
     state_file = work_dir / "packing_state.json"
     assert state_file.exists(), "State file not created"
 
@@ -196,11 +142,7 @@ def test_phase2b_timing():
     assert 'duration_seconds' in state_order, "State order missing duration_seconds"
     assert 'items' in state_order, "State order missing items"
 
-    print(f"✓ State persisted correctly with timing data")
-
     # Test 8: Generate session summary
-    print("\n[Test 8] Generate Session Summary")
-
     summary = packer.generate_session_summary(
         worker_id="test_worker",
         worker_name="Test Worker",
@@ -216,34 +158,35 @@ def test_phase2b_timing():
     assert 'fastest_order_seconds' in metrics, "Missing fastest_order_seconds"
     assert 'slowest_order_seconds' in metrics, "Missing slowest_order_seconds"
 
-    # Should have real timing data (not 0)
     assert metrics['avg_time_per_order'] > 0, "avg_time_per_order should be > 0"
     assert metrics['fastest_order_seconds'] > 0, "fastest_order_seconds should be > 0"
     assert metrics['slowest_order_seconds'] > 0, "slowest_order_seconds should be > 0"
 
-    # Orders array should be populated
     assert len(summary['orders']) == 1, "Orders array should have 1 order"
     assert summary['orders'][0]['order_number'] == "ORDER-001", "Wrong order in summary"
 
-    print(f"✓ Session summary generated correctly:")
-    print(f"  - Avg time per order: {metrics['avg_time_per_order']}s")
-    print(f"  - Avg time per item: {metrics['avg_time_per_item']}s")
-    print(f"  - Fastest order: {metrics['fastest_order_seconds']}s")
-    print(f"  - Slowest order: {metrics['slowest_order_seconds']}s")
-    print(f"  - Orders array: {len(summary['orders'])} entries")
 
-    print("\n" + "=" * 80)
-    print("✓ ALL TESTS PASSED - Phase 2b Implementation Verified!")
-    print("=" * 80)
+@pytest.mark.slow
+def test_phase2b_timing(tmp_path):
+    """Test Phase 2b timing implementation (uses tmp_path, takes ~3s due to sleep calls)."""
+    _run_phase2b_tests(tmp_path)
 
-    return True
 
 if __name__ == "__main__":
+    import shutil
+    test_dir = Path(tempfile.mkdtemp(prefix="packing_test_phase2b_"))
     try:
-        success = test_phase2b_timing()
-        sys.exit(0 if success else 1)
+        print("=" * 80)
+        print("Phase 2b - Enhanced Metadata Collection Test")
+        print("=" * 80)
+        _run_phase2b_tests(test_dir)
+        print("\n✓ ALL TESTS PASSED - Phase 2b Implementation Verified!")
+        print("=" * 80)
+        sys.exit(0)
     except Exception as e:
         print(f"\n✗ TEST FAILED WITH EXCEPTION: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        shutil.rmtree(test_dir, ignore_errors=True)
