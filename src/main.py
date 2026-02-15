@@ -30,7 +30,6 @@ from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
 from shared.stats_manager import StatsManager
 from shared.worker_manager import WorkerManager
-from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
@@ -163,9 +162,6 @@ class MainWindow(QMainWindow):
         # 4. Per-client analytics and reporting
         # Note: Called once per session (at completion) by design - records session totals
         self.stats_manager = StatsManager(base_path=str(base_path))
-
-        # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
-        self.sku_manager = SKUMappingManager()
 
         # Settings for remembering last client
         self.settings = QSettings("PackingTool", "ClientSelection")

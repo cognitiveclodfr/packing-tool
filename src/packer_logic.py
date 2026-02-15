@@ -43,11 +43,6 @@ STATE_FILE_NAME = "packing_state.json"
 # for the completed packing session
 SUMMARY_FILE_NAME = "session_summary.json"
 
-# Deprecated: Backup suffix for old state file behavior
-# In previous versions, packing_state.json was renamed to .backup on completion
-# This is now deprecated - we keep the original state file as history
-BACKUP_SUFFIX = ".backup"  # deprecated, not used in new workflow
-
 class PackerLogic(QObject):
     """
     Handles the core business logic of the Packer's Assistant application.

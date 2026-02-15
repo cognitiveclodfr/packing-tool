@@ -327,3 +327,82 @@ class TestWorkerActiveStatus:
 
         profile = worker_manager.get_worker_profile("001")
         assert profile['active'] is True
+
+
+class TestEdgeCases:
+    """Edge case and invalid input tests."""
+
+    def test_list_workers_skips_non_worker_dirs(self, worker_manager):
+        """Directories not starting with WORKER_ are ignored by list_workers."""
+        # Create a directory that doesn't match the WORKER_ prefix
+        other_dir = worker_manager.workers_dir / "OTHER_DIR"
+        other_dir.mkdir()
+        (other_dir / "profile.json").write_text('{"name": "ghost"}', encoding="utf-8")
+
+        workers = worker_manager.list_workers()
+        assert workers == []
+
+    def test_list_workers_skips_dir_without_profile(self, worker_manager):
+        """WORKER_ directory missing profile.json is silently skipped."""
+        no_profile_dir = worker_manager.workers_dir / "WORKER_NO_PROFILE"
+        no_profile_dir.mkdir()
+
+        workers = worker_manager.list_workers()
+        assert workers == []
+
+    def test_list_workers_skips_corrupted_profile(self, worker_manager):
+        """Corrupted profile.json files are silently skipped."""
+        bad_dir = worker_manager.workers_dir / "WORKER_BAD"
+        bad_dir.mkdir()
+        (bad_dir / "profile.json").write_text("not json }{", encoding="utf-8")
+
+        workers = worker_manager.list_workers()
+        assert workers == []
+
+    def test_get_worker_profile_corrupted_file_returns_none(self, worker_manager):
+        """Corrupted profile.json returns None."""
+        bad_dir = worker_manager.workers_dir / "WORKER_BAD"
+        bad_dir.mkdir()
+        (bad_dir / "profile.json").write_text("not json", encoding="utf-8")
+
+        assert worker_manager.get_worker_profile("BAD") is None
+
+    def test_log_activity_for_worker_without_activity_log(self, worker_manager):
+        """log_activity creates a new activity log if one doesn't exist."""
+        worker_manager.create_worker_profile("001", "John Doe")
+        # Manually delete the activity log to simulate missing file
+        activity_path = worker_manager.workers_dir / "WORKER_001" / "activity_log.json"
+        activity_path.unlink()
+
+        result = worker_manager.log_activity("001", "manual_test", {"note": "recreated"})
+        assert result is True
+
+        activities = worker_manager.get_worker_activities("001")
+        assert len(activities) == 1
+        assert activities[0]["type"] == "manual_test"
+
+    def test_update_worker_profile_stores_updated_at(self, worker_manager):
+        """update_worker_profile always stamps updated_at."""
+        worker_manager.create_worker_profile("001", "Alice")
+        profile = worker_manager.get_worker_profile("001")
+        worker_manager.update_worker_profile("001", profile)
+
+        updated = worker_manager.get_worker_profile("001")
+        assert "updated_at" in updated
+
+    def test_worker_stats_initial_values(self, worker_manager):
+        """Newly created worker has zeroed stats."""
+        worker_manager.create_worker_profile("001", "New Worker")
+        profile = worker_manager.get_worker_profile("001")
+        stats = profile["stats"]
+        assert stats["total_sessions"] == 0
+        assert stats["total_orders_packed"] == 0
+        assert stats["avg_orders_per_session"] == 0.0
+
+    def test_set_worker_active_toggle(self, worker_manager):
+        """Worker active status can be toggled back and forth."""
+        worker_manager.create_worker_profile("001", "Toggle Worker")
+        worker_manager.set_worker_active("001", False)
+        assert worker_manager.get_worker_profile("001")["active"] is False
+        worker_manager.set_worker_active("001", True)
+        assert worker_manager.get_worker_profile("001")["active"] is True
