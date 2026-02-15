@@ -1,3 +1,7 @@
+# Dev/local config (machine-specific paths, not for production)
+config.dev.ini
+config.local.ini
+
 # Ignore the directory for generated barcodes
 /barcodes/
 

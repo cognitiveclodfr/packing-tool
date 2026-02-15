@@ -2,7 +2,8 @@ import logging
 from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QLineEdit, QHeaderView, QPushButton, QAbstractItemView, QFrame
+    QLabel, QLineEdit, QHeaderView, QPushButton, QAbstractItemView, QFrame,
+    QGroupBox
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal
@@ -38,14 +39,17 @@ class PackerModeWidget(QWidget):
     barcode_scanned = Signal(str)
     exit_packing_mode = Signal()
 
-    def __init__(self, parent: QWidget = None):
+    def __init__(self, parent: QWidget = None, sim_mode: bool = False):
         """
         Initializes the PackerModeWidget and its UI components.
 
         Args:
             parent (QWidget, optional): The parent widget. Defaults to None.
+            sim_mode (bool): When True, show a visible scan simulator panel for
+                development/testing without a physical barcode scanner. Defaults to False.
         """
         super().__init__(parent)
+        self._sim_mode = sim_mode
 
         main_layout = QHBoxLayout(self)
 
@@ -74,6 +78,25 @@ class PackerModeWidget(QWidget):
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setAlignment(Qt.AlignCenter)
+
+        # Dev mode: visible scan simulator panel (replaces physical barcode scanner)
+        if self._sim_mode:
+            sim_group = QGroupBox("Scan Simulator (Dev Mode)")
+            sim_group.setStyleSheet(
+                "QGroupBox { border: 2px dashed #e67e22; border-radius: 6px; "
+                "margin-top: 6px; padding: 4px; color: #e67e22; font-weight: bold; }"
+                "QGroupBox::title { subcontrol-origin: margin; left: 8px; }"
+            )
+            sim_layout = QHBoxLayout(sim_group)
+            self.sim_input = QLineEdit()
+            self.sim_input.setPlaceholderText("Type order number or SKU, press Enter to scan...")
+            self.sim_input.returnPressed.connect(self._on_sim_scan)
+            sim_btn = QPushButton("Scan")
+            sim_btn.setFixedWidth(70)
+            sim_btn.clicked.connect(self._on_sim_scan)
+            sim_layout.addWidget(self.sim_input)
+            sim_layout.addWidget(sim_btn)
+            right_layout.addWidget(sim_group)
 
         self.status_label = QLabel("Scan an order barcode")
         font = QFont(); font.setPointSize(20)
@@ -142,6 +165,19 @@ class PackerModeWidget(QWidget):
         text = self.scanner_input.text()
         self.scanner_input.clear()
         self.barcode_scanned.emit(text)
+
+    def _on_sim_scan(self):
+        """
+        Private slot for the scan simulator panel (dev mode only).
+
+        Reads text from the visible simulator input field and emits
+        the same ``barcode_scanned`` signal as a physical scanner would,
+        so all normal packing logic handles it unchanged.
+        """
+        text = self.sim_input.text().strip()
+        if text:
+            self.sim_input.clear()
+            self.barcode_scanned.emit(text)
 
     def _on_manual_confirm(self, sku: str):
         """
