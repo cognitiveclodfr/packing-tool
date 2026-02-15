@@ -24,6 +24,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from main import MainWindow
 from restore_session_dialog import RestoreSessionDialog
+from worker_selection_dialog import WorkerSelectionDialog
+from session_browser.metrics_tab import MetricsTab
+from PySide6.QtWidgets import QLabel, QDialog, QScrollArea
+from shared.worker_manager import WorkerProfile
 
 
 class TestPackingModeNavigation(unittest.TestCase):
@@ -394,6 +398,100 @@ class TestRestoreSessionDialog(unittest.TestCase):
         self.assertEqual(dialog.session_list.count(), 2)
 
         dialog.close()
+
+
+class TestDialogsAndStatusBar(unittest.TestCase):
+    """Tests for WorkerSelectionDialog, MetricsTab, and MainWindow status bar."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not QApplication.instance():
+            cls.app = QApplication(sys.argv)
+        else:
+            cls.app = QApplication.instance()
+
+    @patch('main.ProfileManager')
+    @patch('main.SessionLockManager')
+    def test_status_bar_worker_label(self, mock_lock_mgr, mock_profile_mgr):
+        """MainWindow.sb_worker_label should exist and be in the status bar."""
+        temp_dir = Path(tempfile.mkdtemp())
+        try:
+            mock_pm = Mock()
+            mock_pm.base_path = temp_dir
+            mock_pm.get_available_clients.return_value = []
+            mock_pm.get_incomplete_sessions.return_value = []
+            mock_pm.get_global_stats_path.return_value = temp_dir / "stats.json"
+            mock_profile_mgr.return_value = mock_pm
+            mock_lock_mgr.return_value = Mock()
+
+            window = MainWindow()
+            try:
+                self.assertIsNotNone(getattr(window, 'sb_worker_label', None))
+                self.assertIsNotNone(window.statusBar())
+                permanent_labels = window.statusBar().findChildren(QLabel)
+                self.assertIn(window.sb_worker_label, permanent_labels)
+            finally:
+                window.close()
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_worker_selection_dialog_cancel(self):
+        """WorkerSelectionDialog cancel_button should reject the dialog."""
+        mock_wm = Mock()
+        mock_wm.get_all_workers.return_value = []
+
+        dialog = WorkerSelectionDialog(worker_manager=mock_wm)
+        try:
+            self.assertIsNotNone(dialog.cancel_button)
+            QTest.mouseClick(dialog.cancel_button, Qt.MouseButton.LeftButton)
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
+        finally:
+            dialog.close()
+
+    def test_worker_selection_dialog_worker_cards_populated(self):
+        """WorkerSelectionDialog should expose worker_cards for loaded workers."""
+        profile = WorkerProfile(
+            id="w001",
+            name="Alice",
+            created_at="2025-01-01T00:00:00+00:00",
+            total_sessions=3,
+            total_orders=10,
+        )
+        mock_wm = Mock()
+        mock_wm.get_all_workers.return_value = [profile]
+
+        dialog = WorkerSelectionDialog(worker_manager=mock_wm)
+        try:
+            self.assertEqual(len(dialog.worker_cards), 1)
+            self.assertEqual(dialog.worker_cards[0].worker.id, "w001")
+        finally:
+            dialog.close()
+
+    def test_metrics_tab_no_data_label(self):
+        """MetricsTab with no metrics should show the no_metrics_label with #b06020."""
+        tab = MetricsTab(details={})
+        label = tab.findChild(QLabel, "no_metrics_label")
+        self.assertIsNotNone(label)
+        self.assertIn("#b06020", label.styleSheet())
+
+    def test_metrics_tab_scroll_area(self):
+        """MetricsTab should always wrap content in a widgetResizable QScrollArea."""
+        details = {
+            "session_summary": {
+                "metrics": {
+                    "avg_time_per_order": 120.0,
+                    "fastest_order_seconds": 60.0,
+                    "slowest_order_seconds": 300.0,
+                    "avg_time_per_item": 15.0,
+                    "orders_per_hour": 30.0,
+                    "items_per_hour": 240.0,
+                }
+            }
+        }
+        tab = MetricsTab(details=details)
+        scroll_areas = tab.findChildren(QScrollArea)
+        self.assertTrue(len(scroll_areas) > 0)
+        self.assertTrue(scroll_areas[0].widgetResizable())
 
 
 if __name__ == '__main__':

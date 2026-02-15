@@ -122,6 +122,7 @@ class WorkerSelectionDialog(QDialog):
         super().__init__(parent)
         self.worker_manager = worker_manager
         self.selected_worker_id = None
+        self.worker_cards: list = []
 
         self.setWindowTitle("Select Your Profile")
         self.setModal(True)
@@ -182,9 +183,9 @@ class WorkerSelectionDialog(QDialog):
 
         button_row.addStretch()
 
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
-        button_row.addWidget(cancel_button)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(self.cancel_button)
 
         layout.addLayout(button_row)
 
@@ -198,6 +199,7 @@ class WorkerSelectionDialog(QDialog):
         Errors during loading are caught and displayed in a critical dialog.
         """
         # Clear existing cards
+        self.worker_cards = []
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item.widget():
@@ -226,6 +228,7 @@ class WorkerSelectionDialog(QDialog):
                 card = WorkerCard(worker)
                 card.clicked.connect(self._on_worker_selected)
                 self.cards_layout.addWidget(card)
+                self.worker_cards.append(card)
 
             # Add stretch at end
             self.cards_layout.addStretch()

@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
         client_selection_widget = QWidget()
         client_selection_widget.setObjectName("ClientSelection")
         client_selection_widget.setStyleSheet(
-            "QWidget#ClientSelection { border-bottom: 1px solid #ffffff; padding-bottom: 4px; }"
+            "QWidget#ClientSelection { border-bottom: 1px solid palette(mid); padding-bottom: 4px; }"
         )
         client_selection_layout = QHBoxLayout(client_selection_widget)
         client_selection_layout.setContentsMargins(6, 4, 6, 4)
@@ -269,7 +269,7 @@ class MainWindow(QMainWindow):
         self.status_label.setObjectName("status_msg_label")
         self.status_label.setStyleSheet(
             "QLabel#status_msg_label { "
-            "border-top: 1px solid #ffffff; "
+            "border-top: 1px solid palette(mid); "
             "padding: 4px 6px; "
             "font-size: 10pt; "
             "color: #aaaaaa; "
@@ -955,7 +955,7 @@ class MainWindow(QMainWindow):
         "red": "#c0392b",
         "orange": "#b06020",
     }
-    _FRAME_DEFAULT_STYLE = "QFrame#TableFrame { border: 1px solid #ffffff; border-radius: 3px; }"
+    _FRAME_DEFAULT_STYLE = PackerModeWidget.FRAME_DEFAULT_STYLE
 
     def flash_border(self, color: str, duration_ms: int = 500):
         """
@@ -1094,7 +1094,7 @@ class MainWindow(QMainWindow):
         """Toggle between dark and light themes."""
         from PySide6.QtWidgets import QApplication
         new_theme = toggle_theme(QApplication.instance())
-        self.status_label.setText(f"Theme switched to: {new_theme}")
+        self.statusBar().showMessage(f"Theme switched to: {new_theme}", 3000)
 
     def open_sku_mapping_dialog(self):
         """

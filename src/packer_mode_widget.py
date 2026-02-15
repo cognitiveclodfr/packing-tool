@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QHeaderView, QPushButton, QAbstractItemView, QFrame,
     QGroupBox
 )
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QColor, QPalette
 from PySide6.QtCore import Qt, Signal
 from typing import List, Dict, Any
 
@@ -39,6 +39,8 @@ class PackerModeWidget(QWidget):
     barcode_scanned = Signal(str)
     exit_packing_mode = Signal()
 
+    FRAME_DEFAULT_STYLE = "QFrame#TableFrame { border: 1px solid palette(mid); border-radius: 3px; }"
+
     def __init__(self, parent: QWidget = None, sim_mode: bool = False):
         """
         Initializes the PackerModeWidget and its UI components.
@@ -60,9 +62,7 @@ class PackerModeWidget(QWidget):
         self.table_frame.setObjectName("TableFrame")
         self.table_frame.setFrameShape(QFrame.Shape.Box)
         self.table_frame.setFrameShadow(QFrame.Shadow.Plain)
-        self.table_frame.setStyleSheet(
-            "QFrame#TableFrame { border: 1px solid #ffffff; border-radius: 3px; }"
-        )
+        self.table_frame.setStyleSheet(self.FRAME_DEFAULT_STYLE)
         frame_layout = QVBoxLayout(self.table_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -220,8 +220,11 @@ class PackerModeWidget(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(f"0 / {quantity}")) # Default to 0 packed
 
             status_item = QTableWidgetItem("Pending")
-            status_item.setBackground(QColor("#3a3000"))  # muted dark yellow
-            status_item.setForeground(QColor("#e8e800"))
+            palette = self.table.palette()
+            pending_bg = palette.color(QPalette.ColorRole.Highlight).lighter(180)
+            pending_fg = palette.color(QPalette.ColorRole.HighlightedText)
+            status_item.setBackground(pending_bg)
+            status_item.setForeground(pending_fg)
             self.table.setItem(row, 3, status_item)
 
             confirm_button = QPushButton("Confirm Manually")

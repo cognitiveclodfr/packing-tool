@@ -5,6 +5,7 @@ Applies both QSS stylesheet AND QPalette so that Qt's native widget
 rendering (labels, window backgrounds, etc.) also uses the correct colors.
 """
 
+import logging
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSettings
@@ -18,6 +19,7 @@ def _load_qss(filename: str) -> str:
     qss_path = Path(__file__).parent / filename
     if qss_path.exists():
         return qss_path.read_text(encoding="utf-8")
+    logging.warning("QSS theme file not found: %s", qss_path)
     return ""
 
 
