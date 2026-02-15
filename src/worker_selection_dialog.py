@@ -7,8 +7,8 @@ No authentication - trust-based system.
 
 import logging
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QPushButton, QLabel,
-    QScrollArea, QWidget, QFrame, QMessageBox, QInputDialog
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QScrollArea, QWidget, QFrame, QMessageBox, QInputDialog, QApplication
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -33,24 +33,23 @@ class WorkerCard(QFrame):
         self.setLineWidth(2)
         self.setCursor(Qt.PointingHandCursor)
 
-        # Hover effect
         self.setStyleSheet("""
             WorkerCard {
-                background-color: #2b2b2b;
-                border: 2px solid #444;
-                border-radius: 8px;
-                padding: 15px;
+                background-color: #000000;
+                border: 1px solid #ffffff;
+                border-radius: 6px;
+                padding: 12px;
             }
             WorkerCard:hover {
-                background-color: #363636;
-                border: 2px solid #0d7377;
+                background-color: #0f1a2a;
+                border: 1px solid #5a9fd4;
             }
         """)
 
         layout = QVBoxLayout(self)
 
         # Worker name (large)
-        name_label = QLabel(f"👤 {self.worker.name}")
+        name_label = QLabel(self.worker.name)
         name_font = QFont()
         name_font.setPointSize(16)
         name_font.setBold(True)
@@ -60,7 +59,7 @@ class WorkerCard(QFrame):
         # Stats
         stats_text = self._format_stats()
         stats_label = QLabel(stats_text)
-        stats_label.setStyleSheet("color: #aaa;")
+        stats_label.setStyleSheet("color: #888888;")
         layout.addWidget(stats_label)
 
         # Last active
@@ -70,7 +69,7 @@ class WorkerCard(QFrame):
             if last_active:
                 time_str = self._format_time_ago(last_active)
                 active_label = QLabel(f"Last active: {time_str}")
-                active_label.setStyleSheet("color: #888; font-size: 11px;")
+                active_label.setStyleSheet("color: #666666; font-size: 10pt;")
                 layout.addWidget(active_label)
 
     def _format_stats(self) -> str:
@@ -126,17 +125,29 @@ class WorkerSelectionDialog(QDialog):
 
         self.setWindowTitle("Select Your Profile")
         self.setModal(True)
-        self.setMinimumSize(500, 400)
+        self.setMinimumSize(560, 500)
+
+        # Ensure this dialog surfaces on top even before the main window is shown
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         self._init_ui()
         self._load_workers()
+
+        # Center on screen
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move(
+                geo.center().x() - self.width() // 2,
+                geo.center().y() - self.height() // 2
+            )
 
     def _init_ui(self):
         """Initialize UI"""
         layout = QVBoxLayout(self)
 
         # Title
-        title = QLabel("👤 Select Your Profile")
+        title = QLabel("Select Your Profile")
         title_font = QFont()
         title_font.setPointSize(18)
         title_font.setBold(True)
@@ -162,23 +173,20 @@ class WorkerSelectionDialog(QDialog):
         scroll.setWidget(self.cards_widget)
         layout.addWidget(scroll, stretch=1)
 
-        # Create new worker button
-        create_button = QPushButton("➕ Create New Worker")
-        create_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0d7377;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #14a085;
-            }
-        """)
+        # Bottom button row
+        button_row = QHBoxLayout()
+
+        create_button = QPushButton("+ Create New Worker")
         create_button.clicked.connect(self._create_new_worker)
-        layout.addWidget(create_button)
+        button_row.addWidget(create_button)
+
+        button_row.addStretch()
+
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(cancel_button)
+
+        layout.addLayout(button_row)
 
     def _load_workers(self):
         """Load worker profiles from the WorkerManager and populate the scroll area with cards.

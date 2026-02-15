@@ -94,9 +94,8 @@ Environment = test
         try:
             window = MainWindow()
 
-            # Initial state: should be on tabbed widget (Session tab)
-            self.assertEqual(window.stacked_widget.currentWidget(), window.tab_widget)
-            self.assertEqual(window.tab_widget.currentIndex(), 0)  # Session tab
+            # Initial state: should be on session widget
+            self.assertEqual(window.stacked_widget.currentWidget(), window.session_widget)
 
             # Simulate session start and switch to packer mode
             # (We'll mock the logic to avoid file operations)
@@ -113,9 +112,8 @@ Environment = test
             # Click "Back to Menu" button (simulate)
             QTest.mouseClick(window.packer_mode_widget.exit_button, Qt.MouseButton.LeftButton)
 
-            # Verify we're back to tabbed widget
-            self.assertEqual(window.stacked_widget.currentWidget(), window.tab_widget)
-            self.assertEqual(window.tab_widget.currentIndex(), 0)  # Session tab
+            # Verify we're back to session widget
+            self.assertEqual(window.stacked_widget.currentWidget(), window.session_widget)
 
             # Verify clear_current_order was called
             window.logic.clear_current_order.assert_called()
@@ -145,12 +143,8 @@ Environment = test
         try:
             window = MainWindow()
 
-            # Check Session tab exists (Dashboard and History removed in Priority 2)
-            self.assertEqual(window.tab_widget.count(), 1)
-            self.assertEqual(window.tab_widget.tabText(0), "Session")
-
-            # Verify current tab is Session
-            self.assertEqual(window.tab_widget.currentWidget(), window.session_widget)
+            # Verify session widget is the current widget in stacked widget
+            self.assertEqual(window.stacked_widget.currentWidget(), window.session_widget)
 
         finally:
             window.close()

@@ -261,7 +261,7 @@ class SessionBrowserWidget(QWidget):
         controls_layout.addStretch()
 
         # Abort button (only visible during refresh)
-        self.abort_button = QPushButton("❌ Abort")
+        self.abort_button = QPushButton("Abort")
         self.abort_button.clicked.connect(self._abort_refresh)
         self.abort_button.setVisible(False)
         controls_layout.addWidget(self.abort_button)

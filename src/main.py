@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QMessageBox, QLineEdit, QComboBox, QDialog, QFormLayout, QDialogButtonBox, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QGroupBox, QScrollArea
 )
-from PySide6.QtGui import QAction, QFont, QCloseEvent
-from PySide6.QtCore import QTimer, QSettings, QSize
+from PySide6.QtGui import QAction, QFont, QCloseEvent, QKeySequence
+from PySide6.QtCore import QTimer, QSettings, QSize, Qt
 from datetime import datetime
 from openpyxl.styles import PatternFill
 import pandas as pd
@@ -34,6 +34,7 @@ from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
+from theme import load_saved_theme, toggle_theme
 
 logger = get_logger(__name__)
 
@@ -201,57 +202,25 @@ class MainWindow(QMainWindow):
         self.session_widget = QWidget()
         main_layout = QVBoxLayout(self.session_widget)
 
-        # Apply global styling
-        self.session_widget.setStyleSheet("""
-            QWidget {
-                font-size: 11pt;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #cccccc;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QLabel {
-                padding: 2px;
-            }
-            QPushButton {
-                padding: 8px 15px;
-                font-size: 11pt;
-                border-radius: 4px;
-            }
-            QLineEdit {
-                padding: 5px;
-                font-size: 11pt;
-                border: 1px solid #cccccc;
-                border-radius: 3px;
-            }
-        """)
+        # (no inline stylesheet — global QSS + QPalette handle all colors and fonts)
 
         # Set minimum window size
-        self.setMinimumSize(1200, 700)
+        self.setMinimumSize(900, 600)
 
         # ====================================================================
         # CLIENT SELECTION (NEW)
         # ====================================================================
         client_selection_widget = QWidget()
         client_selection_widget.setObjectName("ClientSelection")
+        client_selection_widget.setStyleSheet(
+            "QWidget#ClientSelection { border-bottom: 1px solid #ffffff; padding-bottom: 4px; }"
+        )
         client_selection_layout = QHBoxLayout(client_selection_widget)
+        client_selection_layout.setContentsMargins(6, 4, 6, 4)
         main_layout.addWidget(client_selection_widget)
 
-        # Worker display
-        worker_label = QLabel(f"Worker: {self.current_worker_name}")
-        worker_label.setStyleSheet("color: #0d7377; font-weight: bold; font-size: 12pt; margin-right: 20px;")
-        client_selection_layout.addWidget(worker_label)
-
         client_label = QLabel("Client:")
-        client_label.setStyleSheet("font-size: 14pt; font-weight: bold;")
+        client_label.setStyleSheet("font-size: 12pt; font-weight: bold;")
         client_selection_layout.addWidget(client_label)
 
         self.client_combo = QComboBox()
@@ -260,44 +229,14 @@ class MainWindow(QMainWindow):
         self.client_combo.currentIndexChanged.connect(self.on_client_changed)
         client_selection_layout.addWidget(self.client_combo)
 
-        self.new_client_button = QPushButton("+ New Client")
-        self.new_client_button.clicked.connect(self.create_new_client)
-        client_selection_layout.addWidget(self.new_client_button)
-
         client_selection_layout.addStretch()
 
-        # Control panel (stats display removed)
-        control_panel = QWidget()
-        control_layout = QHBoxLayout(control_panel)
-        main_layout.addWidget(control_panel)
+        # "+ New Client" button kept as hidden helper — accessible via logic only
+        self.new_client_button = QPushButton("+ New Client")
+        self.new_client_button.clicked.connect(self.create_new_client)
+        self.new_client_button.setVisible(False)  # hidden from main UI
 
-        self.load_shopify_button = QPushButton("Open Shopify Session")
-        self.load_shopify_button.clicked.connect(self.open_shopify_session)
-        self.load_shopify_button.setStyleSheet("background-color: #4CAF50; color: white;")
-        self.load_shopify_button.setToolTip("Open Shopify session and select packing list to work on")
-        control_layout.addWidget(self.load_shopify_button)
-
-        self.session_browser_button = QPushButton("Session Browser")
-        self.session_browser_button.clicked.connect(self.open_session_browser)
-        self.session_browser_button.setStyleSheet("background-color: #2196F3; color: white;")
-        self.session_browser_button.setToolTip("Browse active, completed, and available sessions")
-        control_layout.addWidget(self.session_browser_button)
-
-        self.end_session_button = QPushButton("End Session")
-        self.end_session_button.setEnabled(False)
-        self.end_session_button.clicked.connect(self.end_session)
-        control_layout.addWidget(self.end_session_button)
-
-        control_layout.addStretch()
-
-        self.packer_mode_button = QPushButton("Switch to Packer Mode")
-        self.packer_mode_button.setEnabled(False)
-        self.packer_mode_button.clicked.connect(self.switch_to_packer_mode)
-        control_layout.addWidget(self.packer_mode_button)
-
-        self.sku_mapping_button = QPushButton("SKU Mapping")
-        self.sku_mapping_button.clicked.connect(self.open_sku_mapping_dialog)
-        control_layout.addWidget(self.sku_mapping_button)
+        # (control panel removed — all actions are in the toolbar)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search by Order Number, SKU, or Status...")
@@ -315,44 +254,50 @@ class MainWindow(QMainWindow):
         self._setup_order_tree()
         packing_layout.addWidget(self.order_tree)
 
-        self.session_tabs.addTab(packing_tab, "📦 Packing")
+        self.session_tabs.addTab(packing_tab, "Packing")
 
         # Tab 2: Statistics View
         stats_tab = QWidget()
         stats_layout = QVBoxLayout(stats_tab)
         stats_layout.setContentsMargins(0, 0, 0, 0)
         self._setup_statistics_tab(stats_layout)
-        self.session_tabs.addTab(stats_tab, "📊 Statistics")
+        self.session_tabs.addTab(stats_tab, "Statistics")
 
         main_layout.addWidget(self.session_tabs)
 
         self.status_label = QLabel("Start a new session to load a packing list.")
+        self.status_label.setObjectName("status_msg_label")
+        self.status_label.setStyleSheet(
+            "QLabel#status_msg_label { "
+            "border-top: 1px solid #ffffff; "
+            "padding: 4px 6px; "
+            "font-size: 10pt; "
+            "color: #aaaaaa; "
+            "}"
+        )
         main_layout.addWidget(self.status_label)
 
         self.packer_mode_widget = PackerModeWidget(sim_mode=self._sim_mode)
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
 
-        # Create tab widget for main views (Dashboard and History removed)
-        self.tab_widget = QTabWidget()
-        self.tab_widget.addTab(self.session_widget, "Session")
-
-        # Stacked widget to switch between tabbed view and packer mode
+        # Stacked widget to switch between session view and packer mode
         self.stacked_widget = QStackedWidget()
-        self.stacked_widget.addWidget(self.tab_widget)
+        self.stacked_widget.addWidget(self.session_widget)
         self.stacked_widget.addWidget(self.packer_mode_widget)
         self.setCentralWidget(self.stacked_widget)
 
         # Create menu bar and toolbar
         self._init_menu_bar()
         self._init_toolbar()
+        self._init_status_bar()
 
     def _init_menu_bar(self):
         """Initialize the menu bar with organized actions."""
         menubar = self.menuBar()
 
         # File menu
-        file_menu = menubar.addMenu("📁 &File")
+        file_menu = menubar.addMenu("&File")
 
         import_action = QAction("Import Packing List...", self)
         import_action.triggered.connect(lambda: self.start_session())
@@ -365,28 +310,31 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
         # Session menu
-        session_menu = menubar.addMenu("📦 &Session")
+        session_menu = menubar.addMenu("&Session")
 
         new_session_action = QAction("Start New Session", self)
         new_session_action.triggered.connect(lambda: self.start_session())
         session_menu.addAction(new_session_action)
 
         shopify_session_action = QAction("Open Shopify Session...", self)
+        shopify_session_action.setShortcut(QKeySequence("Ctrl+O"))
         shopify_session_action.triggered.connect(self.open_shopify_session)
         session_menu.addAction(shopify_session_action)
 
         browse_action = QAction("Session Browser...", self)
+        browse_action.setShortcut(QKeySequence("Ctrl+B"))
         browse_action.triggered.connect(self.open_session_browser)
         session_menu.addAction(browse_action)
 
         session_menu.addSeparator()
 
         end_action = QAction("End Current Session", self)
+        end_action.setShortcut(QKeySequence("Ctrl+E"))
         end_action.triggered.connect(self.end_session)
         session_menu.addAction(end_action)
 
         # Settings menu
-        settings_menu = menubar.addMenu("⚙️ &Settings")
+        settings_menu = menubar.addMenu("&Settings")
 
         worker_action = QAction("Select Worker...", self)
         worker_action.triggered.connect(self._select_worker)
@@ -396,31 +344,38 @@ class MainWindow(QMainWindow):
         sku_mapping_action.triggered.connect(self.open_sku_mapping_dialog)
         settings_menu.addAction(sku_mapping_action)
 
+        settings_menu.addSeparator()
+
+        theme_action = QAction("Toggle Dark/Light Theme", self)
+        theme_action.triggered.connect(self._toggle_theme)
+        settings_menu.addAction(theme_action)
+
     def _init_toolbar(self):
-        """Create balanced toolbar with session actions."""
+        """Create toolbar with all session actions."""
         from PySide6.QtWidgets import QToolBar
 
         toolbar = QToolBar()
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(24, 24))
 
-        # Session actions
-        new_session_btn = QPushButton("📦 New Session")
-        new_session_btn.clicked.connect(lambda: self.start_session())
-        toolbar.addWidget(new_session_btn)
-
-        shopify_btn = QPushButton("🔍 Shopify Session")
+        # Session start actions (primary blue — main entry points)
+        shopify_btn = QPushButton("Shopify Session")
         shopify_btn.clicked.connect(self.open_shopify_session)
+        shopify_btn.setToolTip("Open a Shopify packing session")
+        shopify_btn.setProperty("primary", "true")
         toolbar.addWidget(shopify_btn)
 
-        browser_btn = QPushButton("📋 Session Browser")
+        browser_btn = QPushButton("Session Browser")
         browser_btn.clicked.connect(self.open_session_browser)
+        browser_btn.setToolTip("Browse active, completed, and available sessions")
+        browser_btn.setProperty("primary", "true")
         toolbar.addWidget(browser_btn)
 
         toolbar.addSeparator()
 
-        # Current session info
+        # Current session info label
         self.session_info_label = QLabel("No active session")
+        self.session_info_label.setObjectName("session_info_label")
         font = QFont()
         font.setPointSize(10)
         font.setBold(True)
@@ -429,13 +384,38 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # Packing mode button
+        self.packer_mode_button = QPushButton("Start Packing")
+        self.packer_mode_button.setEnabled(False)
+        self.packer_mode_button.clicked.connect(self.switch_to_packer_mode)
+        self.packer_mode_button.setToolTip("Switch to barcode scanning / packer mode")
+        self.packer_mode_button.setProperty("primary", "true")
+        toolbar.addWidget(self.packer_mode_button)
+
+        # SKU mapping button
+        self.sku_mapping_button = QPushButton("SKU Mapping")
+        self.sku_mapping_button.clicked.connect(self.open_sku_mapping_dialog)
+        self.sku_mapping_button.setToolTip("Manage barcode to SKU mappings")
+        toolbar.addWidget(self.sku_mapping_button)
+
+        toolbar.addSeparator()
+
         # End session button
-        self.toolbar_end_btn = QPushButton("⏹️ End Session")
+        self.toolbar_end_btn = QPushButton("End Session")
+        self.toolbar_end_btn.setObjectName("danger")
         self.toolbar_end_btn.clicked.connect(self.end_session)
         self.toolbar_end_btn.setEnabled(False)
+        self.toolbar_end_btn.setToolTip("End the current packing session")
         toolbar.addWidget(self.toolbar_end_btn)
 
         self.addToolBar(toolbar)
+
+    def _init_status_bar(self):
+        """Set up the bottom status bar with permanent worker label."""
+        status_bar = self.statusBar()
+        self.sb_worker_label = QLabel(f"Worker: {self.current_worker_name or 'None'}")
+        self.sb_worker_label.setObjectName("worker_label")
+        status_bar.addPermanentWidget(self.sb_worker_label)
 
     def _setup_order_tree(self):
         """Setup expandable order tree view."""
@@ -444,12 +424,13 @@ class MainWindow(QMainWindow):
             "Order / Item", "Product", "Quantity", "Status", "Courier"
         ])
 
-        # Column widths
-        self.order_tree.setColumnWidth(0, 200)  # Order/SKU
-        self.order_tree.setColumnWidth(1, 300)  # Product
-        self.order_tree.setColumnWidth(2, 100)  # Quantity
-        self.order_tree.setColumnWidth(3, 120)  # Status
-        self.order_tree.setColumnWidth(4, 150)  # Courier
+        # Column widths (interactive, with sensible defaults)
+        from PySide6.QtWidgets import QHeaderView
+        self.order_tree.setColumnWidth(0, 180)  # Order/SKU
+        self.order_tree.setColumnWidth(2, 80)   # Quantity
+        self.order_tree.setColumnWidth(3, 110)  # Status
+        self.order_tree.setColumnWidth(4, 130)  # Courier
+        self.order_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)  # Product stretches
 
         # Styling
         font = QFont()
@@ -465,10 +446,6 @@ class MainWindow(QMainWindow):
             QTreeWidget::item {
                 height: 30px;
                 padding: 5px;
-            }
-            QTreeWidget::item:selected {
-                background-color: #0078d4;
-                color: white;
             }
         """)
 
@@ -518,7 +495,7 @@ class MainWindow(QMainWindow):
 
             # Create top-level order item
             order_item = QTreeWidgetItem([
-                f"📦 {order_num}",
+                f"{order_num}",
                 f"{total_items} items",
                 "",
                 status_text,
@@ -648,36 +625,48 @@ class MainWindow(QMainWindow):
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
 
-        # --- Session Totals ---
-        totals_group = QGroupBox("📋 Session Totals")
-        totals_layout = QFormLayout()
-        totals_layout.setSpacing(10)
+        # --- Session Totals (horizontal compact cards) ---
+        totals_group = QGroupBox("Session Totals")
+        totals_row = QHBoxLayout()
+        totals_row.setSpacing(16)
 
-        font = QFont()
-        font.setPointSize(11)
+        bold_font = QFont()
+        bold_font.setPointSize(18)
+        bold_font.setBold(True)
+        label_font = QFont()
+        label_font.setPointSize(9)
 
-        self.stats_total_orders = QLabel("0")
-        self.stats_total_orders.setFont(font)
-        self.stats_completed_orders = QLabel("0")
-        self.stats_completed_orders.setFont(font)
-        self.stats_total_items = QLabel("0")
-        self.stats_total_items.setFont(font)
-        self.stats_unique_skus = QLabel("0")
-        self.stats_unique_skus.setFont(font)
-        self.stats_progress_pct = QLabel("0%")
-        self.stats_progress_pct.setFont(font)
+        def _make_stat_card(title: str) -> QLabel:
+            """Create a vertical mini-card: big value on top, small label below."""
+            card = QWidget()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(12, 8, 12, 8)
+            card_layout.setSpacing(2)
+            card.setStyleSheet("QWidget { border: 1px solid #2a2a2a; border-radius: 4px; }")
+            value_lbl = QLabel("0")
+            value_lbl.setFont(bold_font)
+            value_lbl.setAlignment(Qt.AlignCenter)
+            title_lbl = QLabel(title)
+            title_lbl.setFont(label_font)
+            title_lbl.setAlignment(Qt.AlignCenter)
+            title_lbl.setStyleSheet("color: #888888; border: none;")
+            card_layout.addWidget(value_lbl)
+            card_layout.addWidget(title_lbl)
+            totals_row.addWidget(card)
+            return value_lbl
 
-        totals_layout.addRow("Total Orders:", self.stats_total_orders)
-        totals_layout.addRow("Completed Orders:", self.stats_completed_orders)
-        totals_layout.addRow("Total Items:", self.stats_total_items)
-        totals_layout.addRow("Unique SKUs:", self.stats_unique_skus)
-        totals_layout.addRow("Progress:", self.stats_progress_pct)
+        self.stats_total_orders = _make_stat_card("Orders")
+        self.stats_completed_orders = _make_stat_card("Completed")
+        self.stats_total_items = _make_stat_card("Items")
+        self.stats_unique_skus = _make_stat_card("Unique SKUs")
+        self.stats_progress_pct = _make_stat_card("Progress")
+        totals_row.addStretch()
 
-        totals_group.setLayout(totals_layout)
+        totals_group.setLayout(totals_row)
         scroll_layout.addWidget(totals_group)
 
         # --- By Courier ---
-        courier_group = QGroupBox("🚚 By Courier")
+        courier_group = QGroupBox("By Courier")
         courier_layout = QVBoxLayout()
         self.courier_stats_widget = QWidget()
         self.courier_stats_layout = QVBoxLayout(self.courier_stats_widget)
@@ -686,7 +675,7 @@ class MainWindow(QMainWindow):
         scroll_layout.addWidget(courier_group)
 
         # --- SKU Summary Table ---
-        sku_group = QGroupBox("📦 SKU Summary")
+        sku_group = QGroupBox("SKU Summary")
         sku_layout = QVBoxLayout()
 
         self.sku_table = QTableWidget()
@@ -694,7 +683,6 @@ class MainWindow(QMainWindow):
         self.sku_table.setHorizontalHeaderLabels(["SKU", "Product", "Total Qty", "Status"])
         self.sku_table.horizontalHeader().setStretchLastSection(True)
         self.sku_table.setAlternatingRowColors(True)
-        self.sku_table.setFont(font)
         self.sku_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.sku_table.setSelectionMode(QTableWidget.NoSelection)
 
@@ -961,19 +949,32 @@ class MainWindow(QMainWindow):
                 f"Client '{dialog.client_name}' (ID: {client_id}) created successfully!"
             )
 
+    # Muted theme-aware flash colors
+    _FLASH_COLORS = {
+        "green": "#43a047",
+        "red": "#c0392b",
+        "orange": "#b06020",
+    }
+    _FRAME_DEFAULT_STYLE = "QFrame#TableFrame { border: 1px solid #ffffff; border-radius: 3px; }"
+
     def flash_border(self, color: str, duration_ms: int = 500):
         """
         Flashes the border of the packer mode table's frame.
 
-        This provides visual feedback for scan results (e.g., green for success,
-        red for error).
+        Provides visual feedback for scan results (green = success, red = error).
 
         Args:
-            color (str): The color of the border (e.g., "green", "red").
-            duration_ms (int): The duration of the flash in milliseconds.
+            color (str): Key color: "green", "red", or "orange".
+            duration_ms (int): Duration of the flash in milliseconds.
         """
-        self.packer_mode_widget.table_frame.setStyleSheet(f"QFrame#TableFrame {{ border: 2px solid {color}; }}")
-        QTimer.singleShot(duration_ms, lambda: self.packer_mode_widget.table_frame.setStyleSheet(""))
+        hex_color = self._FLASH_COLORS.get(color, color)
+        self.packer_mode_widget.table_frame.setStyleSheet(
+            f"QFrame#TableFrame {{ border: 2px solid {hex_color}; border-radius: 3px; }}"
+        )
+        QTimer.singleShot(
+            duration_ms,
+            lambda: self.packer_mode_widget.table_frame.setStyleSheet(self._FRAME_DEFAULT_STYLE)
+        )
 
 
     def start_session(self, file_path: str = None, restore_dir: str = None):
@@ -1065,7 +1066,6 @@ class MainWindow(QMainWindow):
 
             # Update UI
             self.status_label.setText(f"Successfully loaded {order_count} orders for session '{session_id}'.")
-            self.end_session_button.setEnabled(True)
             self.packer_mode_button.setEnabled(True)
 
         except StaleLockError as e:
@@ -1089,6 +1089,12 @@ class MainWindow(QMainWindow):
                 self.session_manager.end_session()
             self.session_manager = None
             self.logic = None
+
+    def _toggle_theme(self):
+        """Toggle between dark and light themes."""
+        from PySide6.QtWidgets import QApplication
+        new_theme = toggle_theme(QApplication.instance())
+        self.status_label.setText(f"Theme switched to: {new_theme}")
 
     def open_sku_mapping_dialog(self):
         """
@@ -1733,9 +1739,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'packing_data'):
             self.packing_data = None
 
-        self.load_shopify_button.setEnabled(True)
-        self.session_browser_button.setEnabled(True)
-        self.end_session_button.setEnabled(False)
         self.packer_mode_button.setEnabled(False)
 
         # Disable toolbar end button and reset session info
@@ -1812,9 +1815,7 @@ class MainWindow(QMainWindow):
         self.logic.clear_current_order()
         self.packer_mode_widget.clear_screen()
         # Phase 1.3: Return to tabbed widget (Session tab will be active)
-        self.stacked_widget.setCurrentWidget(self.tab_widget)
-        # Ensure Session tab is active
-        self.tab_widget.setCurrentIndex(0)
+        self.stacked_widget.setCurrentWidget(self.session_widget)
 
     def open_print_dialog(self):
         """Opens the dialog for printing order barcodes."""
@@ -1835,7 +1836,7 @@ class MainWindow(QMainWindow):
             text (str): The decoded text from the barcode scanner.
         """
         self.packer_mode_widget.update_raw_scan_display(text)
-        self.packer_mode_widget.show_notification("", "black")
+        self.packer_mode_widget.show_notification("", "transparent")
 
         if self.logic.current_order_number is None:
             # Find order by normalized comparison
@@ -1847,12 +1848,12 @@ class MainWindow(QMainWindow):
                     break
 
             if not order_number_from_scan:
-                self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
+                self.packer_mode_widget.show_notification("ORDER NOT FOUND", "#c0392b")
                 self.flash_border("red")
                 return
 
             if order_number_from_scan in self.logic.session_packing_state.get('completed_orders', []):
-                self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "orange")
+                self.packer_mode_widget.show_notification(f"ORDER {order_number_from_scan} ALREADY COMPLETED", "#b06020")
                 self.flash_border("orange")
                 return
 
@@ -1862,7 +1863,7 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
             else:
-                self.packer_mode_widget.show_notification("ORDER NOT FOUND", "red")
+                self.packer_mode_widget.show_notification("ORDER NOT FOUND", "#c0392b")
                 self.flash_border("red")
         else:
             result, status = self.logic.process_sku_scan(text)
@@ -1870,14 +1871,14 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
                 self.flash_border("green")
             elif status == "SKU_NOT_FOUND":
-                self.packer_mode_widget.show_notification("INCORRECT ITEM!", "red")
+                self.packer_mode_widget.show_notification("INCORRECT ITEM!", "#c0392b")
                 self.flash_border("red")
             elif status == "ORDER_COMPLETE":
                 current_order_num = self.logic.current_order_number
                 # Phase 1.4: No need to record individual order completion - only record at session completion
 
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
-                self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "green")
+                self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "#43a047")
                 self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
                 self.packer_mode_widget.scanner_input.setEnabled(False)
@@ -2185,12 +2186,7 @@ class MainWindow(QMainWindow):
         """
         logger.info("Enabling packing mode UI")
 
-        # Disable session start buttons
-        self.load_shopify_button.setEnabled(False)
-        self.session_browser_button.setEnabled(False)
-
         # Enable packing operation buttons
-        self.end_session_button.setEnabled(True)
         self.packer_mode_button.setEnabled(True)
 
         # Enable toolbar end button
@@ -2200,7 +2196,7 @@ class MainWindow(QMainWindow):
         # Update session info label in toolbar
         if hasattr(self, 'session_info_label') and hasattr(self, 'current_packing_list'):
             session_name = self.current_packing_list if self.current_packing_list else "Active Session"
-            self.session_info_label.setText(f"📦 {session_name}")
+            self.session_info_label.setText(f"Session: {session_name}")
 
         # Update status
         if hasattr(self, 'packing_data') and self.packing_data:
@@ -2719,12 +2715,8 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
-    # Load and apply stylesheet
-    try:
-        with open("src/styles.qss", "r") as f:
-            app.setStyleSheet(f.read())
-    except FileNotFoundError:
-        print("Warning: stylesheet 'src/styles.qss' not found.")
+    # Load saved theme (dark by default)
+    load_saved_theme(app)
 
     window = MainWindow(config_path=args.config)
 

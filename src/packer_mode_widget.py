@@ -58,8 +58,11 @@ class PackerModeWidget(QWidget):
 
         self.table_frame = QFrame()
         self.table_frame.setObjectName("TableFrame")
-        self.table_frame.setFrameShape(QFrame.Shape.NoFrame)
+        self.table_frame.setFrameShape(QFrame.Shape.Box)
         self.table_frame.setFrameShadow(QFrame.Shadow.Plain)
+        self.table_frame.setStyleSheet(
+            "QFrame#TableFrame { border: 1px solid #ffffff; border-radius: 3px; }"
+        )
         frame_layout = QVBoxLayout(self.table_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -217,7 +220,8 @@ class PackerModeWidget(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(f"0 / {quantity}")) # Default to 0 packed
 
             status_item = QTableWidgetItem("Pending")
-            status_item.setBackground(QColor("yellow"))
+            status_item.setBackground(QColor("#3a3000"))  # muted dark yellow
+            status_item.setForeground(QColor("#e8e800"))
             self.table.setItem(row, 3, status_item)
 
             confirm_button = QPushButton("Confirm Manually")
@@ -258,7 +262,8 @@ class PackerModeWidget(QWidget):
 
         if is_complete:
             status_item = QTableWidgetItem("Packed")
-            status_item.setBackground(QColor("lightgreen"))
+            status_item.setBackground(QColor("#1e4d2b"))  # muted dark green
+            status_item.setForeground(QColor("#43a047"))
             self.table.setItem(row, 3, status_item)
             self.table.cellWidget(row, 4).setEnabled(False)
 

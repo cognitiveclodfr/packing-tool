@@ -47,6 +47,7 @@ class SessionDetailsDialog(QDialog):
 
         self.setWindowTitle(f"Session Details: {session_data['session_id']}")
         self.resize(900, 700)
+        self.setMinimumSize(700, 500)
 
     def _load_session_details(self):
         """Load session details from files or use provided session_data."""
