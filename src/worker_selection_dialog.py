@@ -181,7 +181,14 @@ class WorkerSelectionDialog(QDialog):
         layout.addWidget(create_button)
 
     def _load_workers(self):
-        """Load and display worker cards"""
+        """Load worker profiles from the WorkerManager and populate the scroll area with cards.
+
+        Clears any previously displayed cards, fetches all workers via
+        ``worker_manager.get_all_workers()``, sorts them by ``last_active``
+        (most recent first), and creates a :class:`WorkerCard` for each one.
+        If no workers exist, a placeholder label is shown instead.
+        Errors during loading are caught and displayed in a critical dialog.
+        """
         # Clear existing cards
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
@@ -224,17 +231,30 @@ class WorkerSelectionDialog(QDialog):
             )
 
     def _on_worker_selected(self, worker_id: str):
-        """Handle worker selection
+        """Handle worker card click — store the selected ID and close the dialog.
+
+        Connected to the :attr:`WorkerCard.clicked` signal. Sets
+        ``selected_worker_id`` to the given *worker_id* and calls
+        :meth:`QDialog.accept` so the caller can retrieve the result via
+        :meth:`get_selected_worker_id`.
 
         Args:
-            worker_id: Selected worker ID
+            worker_id: The ID of the worker whose card was clicked.
         """
         logger.info(f"Worker selected: {worker_id}")
         self.selected_worker_id = worker_id
         self.accept()
 
     def _create_new_worker(self):
-        """Create new worker profile"""
+        """Prompt for a name and create a new worker profile via the WorkerManager.
+
+        Shows a :class:`QInputDialog` text prompt.  If the user confirms and
+        provides a non-empty name, delegates to ``worker_manager.create_worker(name)``
+        and then refreshes the worker list by calling :meth:`_load_workers`.
+        Shows a success :class:`QMessageBox` on success, or warning / critical
+        dialogs for :class:`ValueError` and unexpected exceptions respectively.
+        Does nothing if the dialog is cancelled or the entered name is empty.
+        """
         # Ask for name
         name, ok = QInputDialog.getText(
             self,

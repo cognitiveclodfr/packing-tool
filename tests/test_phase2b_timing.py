@@ -33,8 +33,11 @@ def test_phase2b_timing():
     print("Phase 2b - Enhanced Metadata Collection Test")
     print("=" * 80)
 
-    # Setup test environment
+    # Setup test environment (clean slate each run)
+    import shutil
     test_dir = Path("/tmp/packing_test_phase2b")
+    if test_dir.exists():
+        shutil.rmtree(test_dir)
     test_dir.mkdir(exist_ok=True)
 
     work_dir = test_dir / "work"
@@ -108,18 +111,8 @@ def test_phase2b_timing():
     # Test 4: Start order and check timing capture
     print("\n[Test 4] Start Order and Check Timing")
 
-    # Get the barcode for ORDER-001
-    barcode = None
-    for bc, order_num in packer.barcode_to_order_number.items():
-        if order_num == "ORDER-001":
-            barcode = bc
-            break
-
-    if not barcode:
-        print("✗ Could not find barcode for ORDER-001")
-        return False
-
-    items, status = packer.start_order_packing(barcode)
+    # In v1.3.0+ start_order_packing accepts the order number directly
+    items, status = packer.start_order_packing("ORDER-001")
 
     assert status == "ORDER_LOADED", f"Expected ORDER_LOADED, got {status}"
     assert packer.current_order_start_time is not None, "Order start time not recorded"

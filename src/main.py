@@ -30,13 +30,14 @@ from packer_logic import PackerLogic, REQUIRED_COLUMNS
 from session_manager import SessionManager
 from shared.stats_manager import StatsManager
 from shared.worker_manager import WorkerManager
-from sku_mapping_manager import SKUMappingManager
 from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
 from worker_selection_dialog import WorkerSelectionDialog
 
 logger = get_logger(__name__)
+
+DEFAULT_CONFIG_PATH = "config.ini"
 
 def find_latest_session_dir(base_dir: str = ".") -> str | None:
     """
@@ -93,11 +94,13 @@ class MainWindow(QMainWindow):
         table_model (OrderTableModel): The model for the orders table.
         proxy_model (CustomFilterProxyModel): The proxy model for filtering the table.
     """
-    def __init__(self, skip_worker_selection: bool = False):
+    def __init__(self, skip_worker_selection: bool = False, config_path: str = DEFAULT_CONFIG_PATH):
         """Initialize the MainWindow, sets up UI, and loads initial state.
 
         Args:
             skip_worker_selection: If True, skip worker selection dialog (for tests)
+            config_path: Path to the configuration file (default: config.ini).
+                Use a dev config (e.g. config.dev.ini) to point at a local mock server.
         """
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
@@ -110,7 +113,7 @@ class MainWindow(QMainWindow):
 
         # Initialize ProfileManager (may raise NetworkError)
         try:
-            self.profile_manager = ProfileManager()
+            self.profile_manager = ProfileManager(config_path)
             logger.info("ProfileManager initialized successfully")
         except NetworkError as e:
             logger.error(f"Failed to initialize ProfileManager: {e}")
@@ -139,6 +142,13 @@ class MainWindow(QMainWindow):
         self.session_history_manager = SessionHistoryManager(self.profile_manager)
         logger.info("SessionHistoryManager initialized successfully")
 
+        # Read scan simulator mode from config (enabled in development / no physical scanner)
+        self._sim_mode = self.profile_manager.config.getboolean(
+            'General', 'ScanSimulatorMode', fallback=False
+        )
+        if self._sim_mode:
+            logger.info("Scan Simulator Mode enabled (dev/test environment)")
+
         # Worker state
         self.current_worker_id = None
         self.current_worker_name = None
@@ -163,9 +173,6 @@ class MainWindow(QMainWindow):
         # 4. Per-client analytics and reporting
         # Note: Called once per session (at completion) by design - records session totals
         self.stats_manager = StatsManager(base_path=str(base_path))
-
-        # Legacy SKU manager (kept for backward compatibility, but not used in new workflow)
-        self.sku_manager = SKUMappingManager()
 
         # Settings for remembering last client
         self.settings = QSettings("PackingTool", "ClientSelection")
@@ -322,7 +329,7 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Start a new session to load a packing list.")
         main_layout.addWidget(self.status_label)
 
-        self.packer_mode_widget = PackerModeWidget()
+        self.packer_mode_widget = PackerModeWidget(sim_mode=self._sim_mode)
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
 
@@ -2699,6 +2706,17 @@ def restore_session(window: MainWindow):
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Packer's Assistant")
+    parser.add_argument(
+        '--config',
+        default=DEFAULT_CONFIG_PATH,
+        metavar='PATH',
+        help=f'Path to config file (default: {DEFAULT_CONFIG_PATH}). '
+             'Use config.dev.ini for local development / mock server.'
+    )
+    args = parser.parse_args()
+
     app = QApplication(sys.argv)
 
     # Load and apply stylesheet
@@ -2708,7 +2726,7 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print("Warning: stylesheet 'src/styles.qss' not found.")
 
-    window = MainWindow()
+    window = MainWindow(config_path=args.config)
 
     # Check for abandoned sessions before showing the main window
     restore_session(window)
