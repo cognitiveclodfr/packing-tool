@@ -41,8 +41,12 @@ class WorkerCard(QFrame):
                 padding: 12px;
             }
             WorkerCard:hover {
-                background-color: #0f1a2a;
+                background-color: #1a3a5c;
                 border: 1px solid #5a9fd4;
+            }
+            WorkerCard:hover QLabel {
+                color: #ffffff;
+                background-color: transparent;
             }
         """)
 

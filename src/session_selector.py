@@ -20,8 +20,9 @@ import json
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QListWidget, QListWidgetItem, QPushButton, QDateEdit,
-    QCheckBox, QMessageBox, QGroupBox
+    QCheckBox, QMessageBox, QGroupBox, QApplication
 )
+from PySide6.QtGui import QPalette
 from PySide6.QtCore import Qt, QDate
 
 from logger import get_logger
@@ -559,7 +560,7 @@ class SessionSelectorDialog(QDialog):
 
                     list_item.setText(display_text)
                     list_item.setData(Qt.UserRole, pl)
-                    list_item.setForeground(Qt.darkBlue)
+                    list_item.setForeground(QApplication.palette().color(QPalette.Text))
 
                     self.packing_lists_widget.addItem(list_item)
 
