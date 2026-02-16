@@ -124,20 +124,23 @@ class PackerLogic(QObject):
         # Load SKU mapping from ProfileManager
         self.sku_map = self._load_sku_mapping()
 
-        # Load session state if exists
-        self._load_session_state()
-
-        # Phase 2b: Order-level timing tracking
+        # Phase 2b: Order-level timing tracking — initialised BEFORE _load_session_state()
+        # so that _load_session_state() can overwrite them when resuming an existing session.
         self.current_order_start_time = None  # ISO timestamp when order scanning started
         self.current_order_items_scanned = []  # List of items with scan timestamps
-        self.completed_orders_metadata = []  # List of completed orders with timing data
+        self.completed_orders_metadata = []    # List of completed orders with timing data
+
+        # Excess scan tracking — reset per order in start_order_packing()
+        self.current_order_excess_scans: list = []
+
+        # Load session state if exists (may overwrite timing variables above)
+        self._load_session_state()
 
         logger.info(f"PackerLogic initialized for client {client_id}")
         logger.debug(f"Work directory: {self.work_dir}")
         logger.debug(f"Barcode directory: {self.barcode_dir}")
         logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
-        logger.debug("Phase 2b timing variables initialized")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
@@ -804,6 +807,7 @@ class PackerLogic(QObject):
         from shared.metadata_utils import get_current_timestamp
         self.current_order_start_time = get_current_timestamp()
         self.current_order_items_scanned = []
+        self.current_order_excess_scans = []  # Reset excess tracking for each new order
 
         logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
 
@@ -841,7 +845,8 @@ class PackerLogic(QObject):
                   * "SKU_OK" - Item packed successfully, order still in progress
                   * "ORDER_COMPLETE" - Item packed and order is now complete
                   * "SKU_NOT_FOUND" - Scanned SKU is not in this order
-                  * "SKU_EXTRA" - All items with this SKU are already packed
+                  * "SKU_EXTRA" - All items with this SKU are already packed (no excess yet recorded)
+                  * "SKU_EXCESS_TRACKED" - Excess scan recorded; all items complete, needs confirmation
                   * "NO_ACTIVE_ORDER" - No order currently selected
         """
         # Safety check: ensure an order is actually loaded
@@ -989,13 +994,72 @@ class PackerLogic(QObject):
         is_sku_in_order = any(s['normalized_sku'] == normalized_final_sku for s in self.current_order_state)
 
         if is_sku_in_order:
-            # SKU is in order, but all required quantity already packed
-            # Example: Order needs 2x "SKU-CREAM-01", but user scanned it 3 times
-            return None, "SKU_EXTRA"  # All items with this SKU are already packed
+            # SKU is in order but all required quantity already packed — record excess scan
+            from shared.metadata_utils import get_current_timestamp
+            excess_record = {
+                "sku": normalized_final_sku,
+                "scanned_at": get_current_timestamp(),
+            }
+            self.current_order_excess_scans.append(excess_record)
+            logger.warning(
+                f"Excess scan for {normalized_final_sku} in order {self.current_order_number} "
+                f"({len(self.current_order_excess_scans)} excess total)"
+            )
+            return None, "SKU_EXCESS_TRACKED"
         else:
             # SKU is not in this order at all
             # Example: User scanned wrong product, or product from different order
             return None, "SKU_NOT_FOUND"
+
+    # ------------------------------------------------------------------
+    # Excess scan management
+    # ------------------------------------------------------------------
+
+    def get_current_order_excess(self) -> list:
+        """Return list of excess scan records for the current order."""
+        return list(self.current_order_excess_scans)
+
+    def confirm_order_complete_with_excess(self):
+        """
+        Complete the current order despite excess scans (worker confirmed).
+
+        Clears excess records, records order completion with timing metadata,
+        updates session state, and resets current_order_number so callers do
+        not need to call clear_current_order() afterwards.
+        """
+        if not self.current_order_number:
+            return
+
+        order_number = self.current_order_number  # capture before reset
+        self.current_order_excess_scans = []
+        self._complete_current_order()
+        del self.session_packing_state['in_progress'][order_number]
+        if order_number not in self.session_packing_state['completed_orders']:
+            self.session_packing_state['completed_orders'].append(order_number)
+        self._save_session_state()
+        logger.info(f"Order {order_number} completed with excess confirmation")
+        # Reset per-order transient state — mirrors clear_current_order()
+        self.current_order_number = None
+        self.current_order_state = {}
+
+    def cancel_excess_scan(self, sku: str | None = None):
+        """
+        Remove the last excess scan record (worker chose to ignore/cancel it).
+
+        Args:
+            sku: If provided, removes the last excess entry for that specific SKU.
+                 If None, removes the most recent excess entry regardless of SKU.
+        """
+        if not self.current_order_excess_scans:
+            return
+        if sku is None:
+            self.current_order_excess_scans.pop()
+        else:
+            normalized = self._normalize_sku(sku)
+            for i in range(len(self.current_order_excess_scans) - 1, -1, -1):
+                if self.current_order_excess_scans[i].get("sku") == normalized:
+                    self.current_order_excess_scans.pop(i)
+                    break
 
     def clear_current_order(self):
         """Clears the currently active order from memory."""
@@ -1593,6 +1657,72 @@ class PackerLogic(QObject):
         except Exception as e:
             logger.error(f"Failed to save session summary: {e}", exc_info=True)
             raise IOError(f"Failed to save session summary: {e}")
+
+    def save_state(self):
+        """Public alias for _save_session_state() — used by closeEvent."""
+        self._save_session_state()
+
+    def is_session_active(self) -> bool:
+        """Return True if a packing session is currently loaded and has data."""
+        return bool(
+            self.orders_data
+            or self.session_packing_state.get('in_progress')
+            or self.session_packing_state.get('completed_orders')
+        )
+
+    def save_partial_summary(
+        self,
+        worker_id: str = None,
+        worker_name: str = None,
+        session_type: str = "shopify"
+    ) -> str | None:
+        """
+        Write a session_summary.json with status='incomplete' when the app closes
+        without a full session completion.
+
+        This allows metrics from the current visit to be preserved even if the
+        session is never resumed and completed.
+
+        Does NOT record to global_stats.json — only full completions do that.
+
+        Returns path to written file, or None on failure.
+        """
+        if not self.is_session_active():
+            return None
+
+        summary_path = self._get_summary_file_path()
+
+        # Don't overwrite an existing completed summary
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+                if existing.get('status') == 'completed':
+                    logger.debug("Completed summary already exists, skipping partial write")
+                    return None
+            except Exception:
+                pass  # Overwrite if unreadable
+
+        try:
+            summary = self.generate_session_summary(
+                worker_id=worker_id,
+                worker_name=worker_name,
+                session_type=session_type
+            )
+            summary['status'] = 'incomplete'
+
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, indent=2, ensure_ascii=False)
+
+            completed = len(self.session_packing_state.get('completed_orders', []))
+            logger.info(
+                f"Partial session summary saved ({completed} completed orders): {summary_path}"
+            )
+            return summary_path
+
+        except Exception as e:
+            logger.error(f"Failed to save partial summary: {e}", exc_info=True)
+            return None
 
     def end_session_cleanup(self):
         """

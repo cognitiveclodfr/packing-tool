@@ -1,342 +1,293 @@
 """
-Session cache manager for persistent session data caching.
+Session cache manager — backed by local SQLite.
 
-This module provides disk-based caching of session scan results to enable
-instant Session Browser opening. Cache is stored as JSON and includes
-timestamp metadata for staleness detection.
+Replaces the old .session_browser_cache.json approach with a per-PC SQLite DB
+located in %%APPDATA%%\\PackingTool\\local_cache.db.
 
-Cache Location: {sessions_root}/.session_browser_cache.json
-Cache TTL: 300 seconds (5 minutes)
-
-Author: Claude Code
-Created: 2025-12-11
+TTL per status:
+  completed   → 3600 s (1 hour)   — immutable once written
+  available   → 300 s  (5 min)    — same as before
+  in_progress → 30 s              — must stay fresh (heartbeat is 60 s)
 """
 
-import json
 import time
+import sys
+import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Optional
+
+# Allow importing from parent src/ when running standalone
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from local_db import LocalDB, CACHE_TTL_COMPLETED, CACHE_TTL_AVAILABLE, CACHE_TTL_IN_PROGRESS
 from logger import get_logger
 
 logger = get_logger(__name__)
 
+_STATUS_TTL = {
+    "completed":   CACHE_TTL_COMPLETED,
+    "available":   CACHE_TTL_AVAILABLE,
+    "in_progress": CACHE_TTL_IN_PROGRESS,
+}
+
 
 class SessionCacheManager:
     """
-    Manages persistent caching of session scan results.
+    Manages persistent local caching of session scan results via SQLite.
 
-    Features:
-    - Disk-based cache (survives app restarts)
-    - Per-client caching with timestamps
-    - Automatic staleness detection
-    - Thread-safe read/write operations
-
-    Cache Structure:
-    {
-        "version": "1.0",
-        "last_updated": 1234567890.123,
-        "clients": {
-            "ALMADERM": {
-                "active": [...],
-                "completed": [...],
-                "available": [...],
-                "timestamp": 1234567890.123
-            }
-        }
-    }
+    Public API is intentionally kept compatible with the old JSON-based version
+    so existing callers need minimal changes.
     """
 
-    CACHE_VERSION = "1.0"
-    CACHE_FILENAME = ".session_browser_cache.json"
-    CACHE_TTL = 300  # 5 minutes
-
-    def __init__(self, sessions_root: Path):
+    def __init__(self, sessions_root: Path, db: Optional[LocalDB] = None):
         """
-        Initialize cache manager.
-
         Args:
-            sessions_root: Root directory containing all session data
+            sessions_root: Root directory containing all session data (file server path).
+                           Kept for compatibility; no longer used for cache storage.
+            db: Optional LocalDB instance (injected for testing). If None, a default
+                instance pointing to %%APPDATA%%\\PackingTool\\local_cache.db is created.
         """
         self.sessions_root = sessions_root
-        self.cache_file = sessions_root / self.CACHE_FILENAME
+        self._db = db or LocalDB()
+        logger.info(f"SessionCacheManager initialized (SQLite: {self._db.db_path})")
 
-        logger.info(f"SessionCacheManager initialized: {self.cache_file}")
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
 
-    def get_cached_data(self, client_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_cached_data(self, client_id: Optional[str] = None) -> Optional[dict]:
         """
-        Get cached session data for a specific client or all clients.
+        Return cached session data for a client (or all clients).
 
-        Args:
-            client_id: Client ID to retrieve (None = all clients)
-
-        Returns:
-            Cached data dict or None if cache miss/stale
-
-        Format:
-            {
-                "active": [...],
-                "completed": [...],
-                "available": [...],
-                "timestamp": 1234567890.123,
-                "is_stale": False
-            }
+        Returns dict with keys: active, completed, available, timestamp, is_stale
+        Returns None only if no data exists at all.
         """
         try:
-            if not self.cache_file.exists():
-                logger.debug("Cache file not found")
-                return None
-
-            # Load cache
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
-
-            # Validate version
-            if cache.get('version') != self.CACHE_VERSION:
-                logger.warning(f"Cache version mismatch: {cache.get('version')} != {self.CACHE_VERSION}")
-                return None
-
-            # Get specific client or all clients
             if client_id:
-                client_data = cache.get('clients', {}).get(client_id)
-                if not client_data:
-                    logger.debug(f"No cached data for client {client_id}")
-                    return None
-
-                # Check staleness
-                age = time.time() - client_data.get('timestamp', 0)
-                is_stale = age > self.CACHE_TTL
-
-                logger.info(
-                    f"Cache {'STALE' if is_stale else 'HIT'} for {client_id}: "
-                    f"age={age:.1f}s, TTL={self.CACHE_TTL}s"
-                )
-
-                return {
-                    'active': client_data.get('active', []),
-                    'completed': client_data.get('completed', []),
-                    'available': client_data.get('available', []),
-                    'timestamp': client_data.get('timestamp'),
-                    'is_stale': is_stale
-                }
+                return self._get_client_data(client_id)
             else:
-                # Return all clients data
-                all_data = {
-                    'active': [],
-                    'completed': [],
-                    'available': [],
-                    'timestamp': cache.get('last_updated', 0),
-                    'is_stale': False
-                }
-
-                # Aggregate from all clients
-                for cid, cdata in cache.get('clients', {}).items():
-                    all_data['active'].extend(cdata.get('active', []))
-                    all_data['completed'].extend(cdata.get('completed', []))
-                    all_data['available'].extend(cdata.get('available', []))
-
-                # Check overall staleness
-                age = time.time() - cache.get('last_updated', 0)
-                all_data['is_stale'] = age > self.CACHE_TTL
-
-                logger.info(
-                    f"Cache {'STALE' if all_data['is_stale'] else 'HIT'}: "
-                    f"age={age:.1f}s, {len(all_data['active'])} active, "
-                    f"{len(all_data['completed'])} completed, {len(all_data['available'])} available"
-                )
-
-                return all_data
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Cache file corrupted: {e}")
-            return None
-
+                return self._get_all_clients_data()
         except Exception as e:
             logger.error(f"Failed to read cache: {e}", exc_info=True)
             return None
 
+    def _get_client_data(self, client_id: str) -> Optional[dict]:
+        active    = self._db.get_sessions_by_status(client_id, "in_progress")
+        completed = self._db.get_sessions_by_status(client_id, "completed")
+        available = self._db.get_sessions_by_status(client_id, "available")
+
+        if not (active or completed or available):
+            logger.debug(f"No cached data for client {client_id}")
+            return None
+
+        # Staleness: any status group is stale if its oldest row exceeds TTL.
+        # We report overall staleness based on the shortest-TTL populated group.
+        is_stale = self._is_any_group_stale(client_id)
+        oldest_ts = self._oldest_timestamp(active + completed + available)
+
+        logger.info(
+            f"Cache {'STALE' if is_stale else 'HIT'} for {client_id}: "
+            f"{len(active)} active, {len(completed)} completed, {len(available)} available"
+        )
+        return {
+            "active":    active,
+            "completed": completed,
+            "available": available,
+            "timestamp": oldest_ts,
+            "is_stale":  is_stale,
+        }
+
+    def _get_all_clients_data(self) -> Optional[dict]:
+        all_clients = self._db.get_clients()
+
+        if not all_clients:
+            return None  # DB is empty — no cache exists yet
+
+        active, completed, available = [], [], []
+        is_stale = False
+        for cid in all_clients:
+            active    += self._db.get_sessions_by_status(cid, "in_progress")
+            completed += self._db.get_sessions_by_status(cid, "completed")
+            available += self._db.get_sessions_by_status(cid, "available")
+            if self._is_any_group_stale(cid):
+                is_stale = True
+
+        oldest_ts = self._oldest_timestamp(active + completed + available)
+        logger.info(
+            f"Cache {'STALE' if is_stale else 'HIT'} (all): "
+            f"{len(active)} active, {len(completed)} completed, {len(available)} available"
+        )
+        return {
+            "active":    active,
+            "completed": completed,
+            "available": available,
+            "timestamp": oldest_ts,
+            "is_stale":  is_stale,
+        }
+
+    # ------------------------------------------------------------------
+    # Write
+    # ------------------------------------------------------------------
+
     def save_cached_data(
         self,
-        active_data: List[dict],
-        completed_data: List[dict],
-        available_data: List[dict],
-        client_id: Optional[str] = None
+        active_data: list,
+        completed_data: list,
+        available_data: list,
+        client_id: Optional[str] = None,
     ):
         """
-        Save session scan results to cache.
+        Persist scan results to SQLite.
 
-        Args:
-            active_data: List of active session records
-            completed_data: List of completed session records
-            available_data: List of available session records
-            client_id: Client ID (None = all clients aggregated)
+        Accepts both plain dicts and SessionHistoryRecord objects (same as before).
         """
         try:
-            # Load existing cache or create new
-            if self.cache_file.exists():
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    cache = json.load(f)
-            else:
-                cache = {
-                    'version': self.CACHE_VERSION,
-                    'last_updated': 0,
-                    'clients': {}
-                }
+            rows = []
+            for status, records in (
+                ("in_progress", active_data),
+                ("completed",   completed_data),
+                ("available",   available_data),
+            ):
+                for record in records:
+                    d = self._to_dict(record, status)
+                    if client_id and not d.get("client_id"):
+                        d["client_id"] = client_id
+                    rows.append(d)
 
-            current_time = time.time()
-
-            # Helper to extract client_id from record (dict or object)
-            def get_client_id(record):
-                if isinstance(record, dict):
-                    return record.get('client_id', 'UNKNOWN')
-                else:
-                    # SessionHistoryRecord object
-                    return getattr(record, 'client_id', 'UNKNOWN')
-
-            # Helper to convert record to dict if needed
-            def to_dict(record):
-                if isinstance(record, dict):
-                    return record
-                else:
-                    # SessionHistoryRecord object - convert to dict
-                    return {
-                        'session_id': getattr(record, 'session_id', ''),
-                        'client_id': getattr(record, 'client_id', ''),
-                        'packing_list_path': getattr(record, 'packing_list_path', ''),
-                        'pc_name': getattr(record, 'pc_name', ''),
-                        'start_time': getattr(record, 'start_time', None).isoformat() if hasattr(record, 'start_time') and record.start_time else None,
-                        'end_time': getattr(record, 'end_time', None).isoformat() if hasattr(record, 'end_time') and record.end_time else None,
-                        'duration_seconds': getattr(record, 'duration_seconds', 0),
-                        'total_orders': getattr(record, 'total_orders', 0),
-                        'completed_orders': getattr(record, 'completed_orders', 0),
-                        'total_items_packed': getattr(record, 'total_items_packed', 0),
-                        'session_path': getattr(record, 'session_path', ''),
-                    }
-
-            # Update cache
-            if client_id:
-                # Update specific client
-                cache['clients'][client_id] = {
-                    'active': [to_dict(r) for r in active_data],
-                    'completed': [to_dict(r) for r in completed_data],
-                    'available': [to_dict(r) for r in available_data],
-                    'timestamp': current_time
-                }
-            else:
-                # Group by client_id from data
-                clients_data: Dict[str, Dict[str, List]] = {}
-
-                for record in active_data:
-                    cid = get_client_id(record)
-                    if cid not in clients_data:
-                        clients_data[cid] = {'active': [], 'completed': [], 'available': []}
-                    clients_data[cid]['active'].append(to_dict(record))
-
-                for record in completed_data:
-                    cid = get_client_id(record)
-                    if cid not in clients_data:
-                        clients_data[cid] = {'active': [], 'completed': [], 'available': []}
-                    clients_data[cid]['completed'].append(to_dict(record))
-
-                for record in available_data:
-                    cid = get_client_id(record)
-                    if cid not in clients_data:
-                        clients_data[cid] = {'active': [], 'completed': [], 'available': []}
-                    clients_data[cid]['available'].append(to_dict(record))
-
-                # Update all clients
-                for cid, data in clients_data.items():
-                    cache['clients'][cid] = {
-                        'active': data['active'],
-                        'completed': data['completed'],
-                        'available': data['available'],
-                        'timestamp': current_time
-                    }
-
-            cache['last_updated'] = current_time
-
-            # Write to disk (atomic write)
-            import tempfile
-            import shutil
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                encoding='utf-8',
-                suffix='.json',
-                dir=self.sessions_root,
-                delete=False
-            ) as tmp_file:
-                json.dump(cache, tmp_file, indent=2, ensure_ascii=False)
-                tmp_path = tmp_file.name
-
-            # Atomic replace
-            shutil.move(tmp_path, self.cache_file)
-
+            self._db.upsert_sessions(rows)
             logger.info(
                 f"Cache saved: {len(active_data)} active, {len(completed_data)} completed, "
                 f"{len(available_data)} available"
             )
-
         except Exception as e:
             logger.error(f"Failed to save cache: {e}", exc_info=True)
 
+    # ------------------------------------------------------------------
+    # Maintenance
+    # ------------------------------------------------------------------
+
     def clear_cache(self):
-        """Clear cache file."""
+        """Clear all cached data (equivalent to old cache file deletion)."""
         try:
-            if self.cache_file.exists():
-                self.cache_file.unlink()
-                logger.info("Cache cleared")
+            self._db.clear_all()
+            logger.info("Cache cleared")
         except Exception as e:
             logger.error(f"Failed to clear cache: {e}")
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict:
         """
-        Get cache statistics.
+        Return cache statistics (compatible with old API).
 
-        Returns:
-            {
-                'exists': bool,
-                'age_seconds': float,
-                'is_stale': bool,
-                'clients_count': int,
-                'total_sessions': int
-            }
+        'exists' mirrors the old JSON-file semantics: True when the SQLite DB
+        file is present on disk (regardless of whether it has rows), so callers
+        can still distinguish first-run from cleared state.
         """
+        import os as _os
+        db_exists = _os.path.exists(self._db.db_path)
         try:
-            if not self.cache_file.exists():
-                return {
-                    'exists': False,
-                    'age_seconds': 0,
-                    'is_stale': True,
-                    'clients_count': 0,
-                    'total_sessions': 0
-                }
+            rows = self._db.get_status_stats()
 
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
+            if not rows:
+                return {"exists": db_exists, "age_seconds": 0, "is_stale": True,
+                        "clients_count": 0, "total_sessions": 0}
 
-            last_updated = cache.get('last_updated', 0)
-            age = time.time() - last_updated
-            is_stale = age > self.CACHE_TTL
+            now = time.time()
+            oldest_synced = min(r["oldest"] for r in rows)
+            age = now - oldest_synced
+            total = sum(r["cnt"] for r in rows)
+            clients_count = self._db.get_clients_count()
 
-            clients_count = len(cache.get('clients', {}))
-            total_sessions = sum(
-                len(c.get('active', [])) + len(c.get('completed', [])) + len(c.get('available', []))
-                for c in cache.get('clients', {}).values()
+            is_stale = any(
+                (now - r["oldest"]) > _STATUS_TTL.get(r["status"], CACHE_TTL_AVAILABLE)
+                for r in rows
             )
 
             return {
-                'exists': True,
-                'age_seconds': age,
-                'is_stale': is_stale,
-                'clients_count': clients_count,
-                'total_sessions': total_sessions
+                "exists": db_exists,
+                "age_seconds": age,
+                "is_stale": is_stale,
+                "clients_count": clients_count,
+                "total_sessions": total,
             }
-
         except Exception as e:
             logger.error(f"Failed to get cache stats: {e}")
-            return {
-                'exists': False,
-                'age_seconds': 0,
-                'is_stale': True,
-                'clients_count': 0,
-                'total_sessions': 0
+            return {"exists": db_exists, "age_seconds": 0, "is_stale": True,
+                    "clients_count": 0, "total_sessions": 0}
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _is_any_group_stale(self, client_id: str) -> bool:
+        now = time.time()
+        for status, ttl in _STATUS_TTL.items():
+            rows = self._db.get_sessions_by_status(client_id, status)
+            if rows:
+                oldest = min(r["last_synced"] for r in rows)
+                if (now - oldest) > ttl:
+                    return True
+        return False
+
+    @staticmethod
+    def _oldest_timestamp(rows: list) -> float:
+        if not rows:
+            return 0.0
+        return min(r.get("last_synced", 0) for r in rows)
+
+    @staticmethod
+    def _to_dict(record, status: str) -> dict:
+        """
+        Normalise a record (plain dict or SessionHistoryRecord object) into a
+        DB-ready dict with a consistent key set.
+
+        Dict inputs may use either 'packing_list_name' or 'packing_list_path'
+        (or 'session_path') for the path fields — both are handled so no value
+        is silently dropped.
+        """
+        if isinstance(record, dict):
+            raw = record
+            d = {
+                "session_id":        raw.get("session_id", ""),
+                "client_id":         raw.get("client_id", ""),
+                # Accept session_path, packing_list_path, or packing_list_name
+                "session_path":      (
+                    raw.get("session_path")
+                    or raw.get("packing_list_path")
+                    or ""
+                ),
+                "packing_list_name": (
+                    raw.get("packing_list_name")
+                    or raw.get("packing_list_path")
+                    or ""
+                ),
+                "pc_name":           raw.get("pc_name", ""),
+                "worker_name":       raw.get("worker_name", ""),
+                "start_time":        raw.get("start_time"),
+                "end_time":          raw.get("end_time"),
+                "duration_seconds":  raw.get("duration_seconds"),
+                "total_orders":      raw.get("total_orders"),
+                "completed_orders":  raw.get("completed_orders"),
+                "total_items_packed":raw.get("total_items_packed"),
             }
+        else:
+            # SessionHistoryRecord object
+            st = getattr(record, "start_time", None)
+            et = getattr(record, "end_time", None)
+            # Objects use packing_list_path; map to packing_list_name for DB
+            packing_path = getattr(record, "packing_list_path", "")
+            d = {
+                "session_id":        getattr(record, "session_id", ""),
+                "client_id":         getattr(record, "client_id", ""),
+                "session_path":      getattr(record, "session_path", "") or packing_path,
+                "packing_list_name": packing_path,
+                "pc_name":           getattr(record, "pc_name", ""),
+                "worker_name":       getattr(record, "worker_name", ""),
+                "start_time":        st.isoformat() if st else None,
+                "end_time":          et.isoformat() if et else None,
+                "duration_seconds":  getattr(record, "duration_seconds", 0),
+                "total_orders":      getattr(record, "total_orders", 0),
+                "completed_orders":  getattr(record, "completed_orders", 0),
+                "total_items_packed":getattr(record, "total_items_packed", 0),
+            }
+        d["status"] = status
+        return d
