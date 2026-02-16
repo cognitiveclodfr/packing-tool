@@ -72,7 +72,7 @@ class ActiveSessionsTab(QWidget):
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
             "Session ID", "Client", "Packing List", "Status",
-            "Worker", "PC", "Lock Age", "Orders Progress"
+            "Worker", "PC", "Lock Age", "Active For"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -216,10 +216,6 @@ class ActiveSessionsTab(QWidget):
                             continue
 
                     if session_data:
-                        # Get progress from packing_state.json
-                        progress = self._get_progress(work_dir)
-                        session_data['progress'] = progress
-
                         sessions.append(session_data)
 
         logger.debug(f"Found {len(sessions)} active sessions")
@@ -452,31 +448,15 @@ class ActiveSessionsTab(QWidget):
             age_text = f"{int(lock_age)} min" if lock_age else "N/A"
             self.table.setItem(row, 6, QTableWidgetItem(age_text))
 
-            # Progress (with percentage and color coding)
-            progress = session['progress']
-            completed = progress.get('completed', 0)
-            total = progress.get('total', 0)
-            progress_pct = progress.get('progress_pct', 0.0)
-
-            # Format: "5/10 (50%)"
-            if total > 0:
-                progress_text = f"{completed}/{total} ({progress_pct:.0f}%)"
+            # Elapsed time — calculated from lock_time without reading packing_state.json
+            lock_age = session.get('lock_age_minutes')
+            if lock_age is not None and lock_age > 0:
+                total_minutes = int(lock_age)
+                hours, minutes = divmod(total_minutes, 60)
+                elapsed_text = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
             else:
-                progress_text = "N/A"
-
-            progress_item = QTableWidgetItem(progress_text)
-
-            # Color code based on progress percentage
-            if progress_pct >= 75:
-                progress_item.setForeground(QColor(0, 150, 0))  # Green - almost done
-            elif progress_pct >= 25:
-                progress_item.setForeground(QColor(200, 100, 0))  # Orange - in progress
-            elif progress_pct > 0:
-                progress_item.setForeground(QColor(100, 100, 100))  # Gray - just started
-            else:
-                progress_item.setForeground(QColor(150, 150, 150))  # Light gray - not started
-
-            self.table.setItem(row, 7, progress_item)
+                elapsed_text = "—"
+            self.table.setItem(row, 7, QTableWidgetItem(elapsed_text))
 
     def _get_worker_name(self, worker_id: str) -> str:
         """Get worker display name from worker_id."""

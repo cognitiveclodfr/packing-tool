@@ -1236,13 +1236,21 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.warning(f"Failed to stop heartbeat timer: {e}")
 
-            # 2. Save current packing state (if session active)
+            # 2. Save current packing state and partial metrics (if session active)
             if hasattr(self, 'logic') and self.logic:
                 try:
                     self.logic.save_state()
                     logger.info("Packing state saved")
                 except Exception as e:
                     logger.warning(f"Failed to save packing state: {e}")
+                try:
+                    if self.logic.is_session_active():
+                        self.logic.save_partial_summary(
+                            worker_id=getattr(self, 'current_worker_id', None),
+                            worker_name=getattr(self, 'current_worker_name', None),
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to save partial summary: {e}")
 
             # 3. Release lock on current work directory
             if hasattr(self, 'current_work_dir') and self.current_work_dir:
@@ -1900,6 +1908,62 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.scanner_input.setEnabled(False)
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+            elif status == "SKU_EXCESS_TRACKED":
+                self._handle_excess_scan()
+            elif status == "SKU_EXTRA":
+                # Legacy fallback (should not be reached with new logic, but keep for safety)
+                self.packer_mode_widget.show_notification("ITEM ALREADY SCANNED!", "#e67e22")
+                self.flash_border("orange")
+
+    def _handle_excess_scan(self):
+        """
+        Show a confirmation dialog when an excess item scan is detected.
+
+        The worker must either confirm (complete the order despite excess) or
+        cancel the excess scan (continue scanning without that extra item).
+        """
+        from PySide6.QtWidgets import QMessageBox
+        excess_list = self.logic.get_current_order_excess()
+        order_num = self.logic.current_order_number
+
+        # Build readable list of excess SKUs
+        sku_counts: dict = {}
+        for rec in excess_list:
+            sku = rec.get("sku", "?")
+            sku_counts[sku] = sku_counts.get(sku, 0) + 1
+        excess_text = "\n".join(
+            f"  • {sku} × {count}" for sku, count in sku_counts.items()
+        )
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Надлишковий артикул")
+        msg.setText(
+            f"Замовлення <b>{order_num}</b> містить зайві скани:<br><br>"
+            f"{excess_text.replace(chr(10), '<br>')}<br><br>"
+            "Як вчинити?"
+        )
+        msg.setIcon(QMessageBox.Icon.Warning)
+
+        confirm_btn = msg.addButton("Підтвердити завершення", QMessageBox.ButtonRole.AcceptRole)
+        cancel_btn  = msg.addButton("Скасувати надлишок",     QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(cancel_btn)
+        msg.exec()
+
+        if msg.clickedButton() == confirm_btn:
+            self.logic.confirm_order_complete_with_excess()
+            self.packer_mode_widget.show_notification(f"ORDER {order_num} COMPLETE!", "#43a047")
+            self.flash_border("green")
+            self.update_order_status(order_num, "Completed")
+            self.packer_mode_widget.scanner_input.setEnabled(False)
+            self.logic.clear_current_order()
+            QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+        else:
+            # Cancel the last excess entry
+            last_sku = excess_list[-1].get("sku") if excess_list else None
+            self.logic.cancel_excess_scan(last_sku)
+            self.packer_mode_widget.show_notification("НАДЛИШОК СКАСОВАНО", "#e67e22")
+            self.flash_border("orange")
+            logger.info(f"Excess scan cancelled for SKU {last_sku} in order {order_num}")
 
     # REMOVED: _process_shopify_packing_data() method (dead code)
     # This method was never called. Functionality replaced by PackerLogic.load_packing_list_json()
