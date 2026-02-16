@@ -6,6 +6,7 @@ rendering (labels, window backgrounds, etc.) also uses the correct colors.
 """
 
 import logging
+import sys
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSettings
@@ -16,7 +17,13 @@ THEME_LIGHT = "light"
 
 
 def _load_qss(filename: str) -> str:
-    qss_path = Path(__file__).parent / filename
+    # In a PyInstaller exe, bundled data files are extracted to sys._MEIPASS/src/
+    # When running from source, fall back to the directory of this file
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS) / "src"
+    else:
+        base = Path(__file__).parent
+    qss_path = base / filename
     if qss_path.exists():
         return qss_path.read_text(encoding="utf-8")
     logging.warning("QSS theme file not found: %s", qss_path)

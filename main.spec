@@ -7,6 +7,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('src/styles.qss', 'src'),
+        ('src/styles_dark.qss', 'src'),
+        ('src/styles_light.qss', 'src'),
         ('config.ini.example', '.'),
         ('shared', 'shared'),  # Include shared module directory
     ],
