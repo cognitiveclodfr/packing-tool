@@ -415,6 +415,7 @@ class ActiveSessionsTab(QWidget):
         """Fill table with session data."""
         self.table.setRowCount(len(self.sessions))
 
+        is_dark = QSettings("PackingTool", "Theme").value("current_theme", "dark") == "dark"
         for row, session in enumerate(self.sessions):
             # Session ID
             self.table.setItem(row, 0, QTableWidgetItem(session['session_id']))
@@ -427,7 +428,6 @@ class ActiveSessionsTab(QWidget):
 
             # Status (with theme-aware color)
             status_item = QTableWidgetItem(session['status'])
-            is_dark = QSettings("PackingTool", "Theme").value("current_theme", "dark") == "dark"
             if session['status'] == 'Active':
                 status_item.setBackground(QColor(26, 61, 26) if is_dark else QColor(200, 240, 200))
                 status_item.setForeground(QColor(127, 212, 127) if is_dark else QColor(20, 100, 20))

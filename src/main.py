@@ -734,7 +734,8 @@ class MainWindow(QMainWindow):
                 card_layout = QVBoxLayout(card)
                 card_layout.setContentsMargins(12, 8, 12, 8)
                 card_layout.setSpacing(2)
-                card.setStyleSheet("QWidget { border: 1px solid #2a2a2a; border-radius: 4px; }")
+                card.setObjectName("courier_card")
+                card.setStyleSheet("#courier_card { border: 1px solid #2a2a2a; border-radius: 4px; }")
                 value_lbl = QLabel(str(orders))
                 value_lbl.setFont(card_bold_font)
                 value_lbl.setAlignment(Qt.AlignCenter)
@@ -1828,6 +1829,7 @@ class MainWindow(QMainWindow):
         """Switches the view back to the main session widget (tabbed interface)."""
         if self.logic:
             self.logic.clear_current_order()
+        if self.packer_mode_widget:
             self.packer_mode_widget.clear_screen()
         self.stacked_widget.setCurrentWidget(self.session_widget)
 
