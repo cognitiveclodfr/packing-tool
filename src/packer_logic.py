@@ -1022,18 +1022,25 @@ class PackerLogic(QObject):
     def confirm_order_complete_with_excess(self):
         """
         Complete the current order despite excess scans (worker confirmed).
-        Clears excess records and calls the normal order-completion path.
+
+        Clears excess records, records order completion with timing metadata,
+        updates session state, and resets current_order_number so callers do
+        not need to call clear_current_order() afterwards.
         """
         if not self.current_order_number:
             return
 
+        order_number = self.current_order_number  # capture before reset
         self.current_order_excess_scans = []
         self._complete_current_order()
-        del self.session_packing_state['in_progress'][self.current_order_number]
-        if self.current_order_number not in self.session_packing_state['completed_orders']:
-            self.session_packing_state['completed_orders'].append(self.current_order_number)
+        del self.session_packing_state['in_progress'][order_number]
+        if order_number not in self.session_packing_state['completed_orders']:
+            self.session_packing_state['completed_orders'].append(order_number)
         self._save_session_state()
-        logger.info(f"Order {self.current_order_number} completed with excess confirmation")
+        logger.info(f"Order {order_number} completed with excess confirmation")
+        # Reset per-order transient state — mirrors clear_current_order()
+        self.current_order_number = None
+        self.current_order_state = {}
 
     def cancel_excess_scan(self, sku: str | None = None):
         """

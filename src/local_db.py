@@ -219,3 +219,40 @@ class LocalDB:
         """Remove all rows from the cache (equivalent to old clear_cache())."""
         with self._connect() as conn:
             conn.execute("DELETE FROM session_cache")
+
+    # ------------------------------------------------------------------
+    # Public helpers (avoid callers accessing private _connect / _path)
+    # ------------------------------------------------------------------
+
+    @property
+    def db_path(self) -> str:
+        """Public read-only path to the SQLite file."""
+        return self._path
+
+    def get_clients(self) -> list[str]:
+        """Return distinct client_ids present in the cache."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT client_id FROM session_cache"
+            ).fetchall()
+        return [r["client_id"] for r in rows]
+
+    def get_status_stats(self) -> list[dict]:
+        """
+        Return per-status aggregate rows used by SessionCacheManager.get_cache_stats().
+
+        Each row has: status, cnt, oldest (MIN last_synced for that status).
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as cnt, MIN(last_synced) as oldest "
+                "FROM session_cache GROUP BY status"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_clients_count(self) -> int:
+        """Return number of distinct client_ids in the cache."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(DISTINCT client_id) FROM session_cache"
+            ).fetchone()[0]

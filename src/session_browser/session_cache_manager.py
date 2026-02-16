@@ -49,7 +49,7 @@ class SessionCacheManager:
         """
         self.sessions_root = sessions_root
         self._db = db or LocalDB()
-        logger.info(f"SessionCacheManager initialized (SQLite: {self._db._path})")
+        logger.info(f"SessionCacheManager initialized (SQLite: {self._db.db_path})")
 
     # ------------------------------------------------------------------
     # Read
@@ -97,12 +97,11 @@ class SessionCacheManager:
             "is_stale":  is_stale,
         }
 
-    def _get_all_clients_data(self) -> dict:
-        # We don't have a dedicated "all clients" query; collect via per-status
-        # queries across all known clients in the DB.
-        with self._db._connect() as conn:
-            rows = conn.execute("SELECT DISTINCT client_id FROM session_cache").fetchall()
-        all_clients = [r["client_id"] for r in rows]
+    def _get_all_clients_data(self) -> Optional[dict]:
+        all_clients = self._db.get_clients()
+
+        if not all_clients:
+            return None  # DB is empty — no cache exists yet
 
         active, completed, available = [], [], []
         is_stale = False
@@ -176,27 +175,27 @@ class SessionCacheManager:
             logger.error(f"Failed to clear cache: {e}")
 
     def get_cache_stats(self) -> dict:
-        """Return cache statistics (compatible with old API)."""
+        """
+        Return cache statistics (compatible with old API).
+
+        'exists' mirrors the old JSON-file semantics: True when the SQLite DB
+        file is present on disk (regardless of whether it has rows), so callers
+        can still distinguish first-run from cleared state.
+        """
+        import os as _os
+        db_exists = _os.path.exists(self._db.db_path)
         try:
-            with self._db._connect() as conn:
-                rows = conn.execute(
-                    "SELECT status, COUNT(*) as cnt, MIN(last_synced) as oldest "
-                    "FROM session_cache GROUP BY status"
-                ).fetchall()
+            rows = self._db.get_status_stats()
 
             if not rows:
-                return {"exists": False, "age_seconds": 0, "is_stale": True,
+                return {"exists": db_exists, "age_seconds": 0, "is_stale": True,
                         "clients_count": 0, "total_sessions": 0}
 
             now = time.time()
             oldest_synced = min(r["oldest"] for r in rows)
             age = now - oldest_synced
             total = sum(r["cnt"] for r in rows)
-
-            with self._db._connect() as conn:
-                clients_count = conn.execute(
-                    "SELECT COUNT(DISTINCT client_id) FROM session_cache"
-                ).fetchone()[0]
+            clients_count = self._db.get_clients_count()
 
             is_stale = any(
                 (now - r["oldest"]) > _STATUS_TTL.get(r["status"], CACHE_TTL_AVAILABLE)
@@ -204,7 +203,7 @@ class SessionCacheManager:
             )
 
             return {
-                "exists": True,
+                "exists": db_exists,
                 "age_seconds": age,
                 "is_stale": is_stale,
                 "clients_count": clients_count,
@@ -212,7 +211,7 @@ class SessionCacheManager:
             }
         except Exception as e:
             logger.error(f"Failed to get cache stats: {e}")
-            return {"exists": False, "age_seconds": 0, "is_stale": True,
+            return {"exists": db_exists, "age_seconds": 0, "is_stale": True,
                     "clients_count": 0, "total_sessions": 0}
 
     # ------------------------------------------------------------------
@@ -237,19 +236,52 @@ class SessionCacheManager:
 
     @staticmethod
     def _to_dict(record, status: str) -> dict:
-        """Normalise a record (dict or SessionHistoryRecord) into a DB-ready dict."""
+        """
+        Normalise a record (plain dict or SessionHistoryRecord object) into a
+        DB-ready dict with a consistent key set.
+
+        Dict inputs may use either 'packing_list_name' or 'packing_list_path'
+        (or 'session_path') for the path fields — both are handled so no value
+        is silently dropped.
+        """
         if isinstance(record, dict):
-            d = dict(record)
+            raw = record
+            d = {
+                "session_id":        raw.get("session_id", ""),
+                "client_id":         raw.get("client_id", ""),
+                # Accept session_path, packing_list_path, or packing_list_name
+                "session_path":      (
+                    raw.get("session_path")
+                    or raw.get("packing_list_path")
+                    or ""
+                ),
+                "packing_list_name": (
+                    raw.get("packing_list_name")
+                    or raw.get("packing_list_path")
+                    or ""
+                ),
+                "pc_name":           raw.get("pc_name", ""),
+                "worker_name":       raw.get("worker_name", ""),
+                "start_time":        raw.get("start_time"),
+                "end_time":          raw.get("end_time"),
+                "duration_seconds":  raw.get("duration_seconds"),
+                "total_orders":      raw.get("total_orders"),
+                "completed_orders":  raw.get("completed_orders"),
+                "total_items_packed":raw.get("total_items_packed"),
+            }
         else:
             # SessionHistoryRecord object
             st = getattr(record, "start_time", None)
             et = getattr(record, "end_time", None)
+            # Objects use packing_list_path; map to packing_list_name for DB
+            packing_path = getattr(record, "packing_list_path", "")
             d = {
                 "session_id":        getattr(record, "session_id", ""),
                 "client_id":         getattr(record, "client_id", ""),
-                "session_path":      getattr(record, "session_path", ""),
-                "packing_list_name": getattr(record, "packing_list_path", ""),
+                "session_path":      getattr(record, "session_path", "") or packing_path,
+                "packing_list_name": packing_path,
                 "pc_name":           getattr(record, "pc_name", ""),
+                "worker_name":       getattr(record, "worker_name", ""),
                 "start_time":        st.isoformat() if st else None,
                 "end_time":          et.isoformat() if et else None,
                 "duration_seconds":  getattr(record, "duration_seconds", 0),
@@ -258,6 +290,4 @@ class SessionCacheManager:
                 "total_items_packed":getattr(record, "total_items_packed", 0),
             }
         d["status"] = status
-        if not d.get("session_path"):
-            d["session_path"] = d.get("packing_list_path", "")
         return d

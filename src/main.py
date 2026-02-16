@@ -1950,12 +1950,12 @@ class MainWindow(QMainWindow):
         msg.exec()
 
         if msg.clickedButton() == confirm_btn:
+            # confirm_order_complete_with_excess() resets current_order_number internally
             self.logic.confirm_order_complete_with_excess()
             self.packer_mode_widget.show_notification(f"ORDER {order_num} COMPLETE!", "#43a047")
             self.flash_border("green")
             self.update_order_status(order_num, "Completed")
             self.packer_mode_widget.scanner_input.setEnabled(False)
-            self.logic.clear_current_order()
             QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
         else:
             # Cancel the last excess entry
