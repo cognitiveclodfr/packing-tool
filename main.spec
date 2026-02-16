@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from glob import glob
 
 
 a = Analysis(
@@ -6,9 +7,7 @@ a = Analysis(
     pathex=['src', '.'],  # Added '.' for project root (to find 'shared' module)
     binaries=[],
     datas=[
-        ('src/styles.qss', 'src'),
-        ('src/styles_dark.qss', 'src'),
-        ('src/styles_light.qss', 'src'),
+        *[(qss, 'src') for qss in glob('src/*.qss')],
         ('config.ini.example', '.'),
         ('shared', 'shared'),  # Include shared module directory
     ],

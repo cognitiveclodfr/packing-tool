@@ -19,7 +19,7 @@ THEME_LIGHT = "light"
 def _load_qss(filename: str) -> str:
     # In a PyInstaller exe, bundled data files are extracted to sys._MEIPASS/src/
     # When running from source, fall back to the directory of this file
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         base = Path(sys._MEIPASS) / "src"
     else:
         base = Path(__file__).parent
