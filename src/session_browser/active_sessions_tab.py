@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QMessageBox, QLabel
 )
-from PySide6.QtCore import Signal, QTimer
+from PySide6.QtCore import Signal, QTimer, QSettings
 from PySide6.QtGui import QColor
 
 from pathlib import Path
@@ -415,6 +415,7 @@ class ActiveSessionsTab(QWidget):
         """Fill table with session data."""
         self.table.setRowCount(len(self.sessions))
 
+        is_dark = QSettings("PackingTool", "Theme").value("current_theme", "dark") == "dark"
         for row, session in enumerate(self.sessions):
             # Session ID
             self.table.setItem(row, 0, QTableWidgetItem(session['session_id']))
@@ -425,14 +426,17 @@ class ActiveSessionsTab(QWidget):
             # Packing List
             self.table.setItem(row, 2, QTableWidgetItem(session['packing_list_name']))
 
-            # Status (with color)
+            # Status (with theme-aware color)
             status_item = QTableWidgetItem(session['status'])
             if session['status'] == 'Active':
-                status_item.setBackground(QColor(200, 255, 200))  # Light green
+                status_item.setBackground(QColor(26, 61, 26) if is_dark else QColor(200, 240, 200))
+                status_item.setForeground(QColor(127, 212, 127) if is_dark else QColor(20, 100, 20))
             elif session['status'] == 'Stale':
-                status_item.setBackground(QColor(255, 200, 200))  # Light red
+                status_item.setBackground(QColor(61, 26, 26) if is_dark else QColor(240, 200, 200))
+                status_item.setForeground(QColor(212, 127, 127) if is_dark else QColor(160, 20, 20))
             else:  # Paused
-                status_item.setBackground(QColor(255, 255, 200))  # Light yellow
+                status_item.setBackground(QColor(61, 61, 26) if is_dark else QColor(240, 240, 190))
+                status_item.setForeground(QColor(212, 212, 127) if is_dark else QColor(100, 100, 20))
             self.table.setItem(row, 3, status_item)
 
             # Worker

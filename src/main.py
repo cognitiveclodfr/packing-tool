@@ -299,22 +299,12 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("&File")
 
-        import_action = QAction("Import Packing List...", self)
-        import_action.triggered.connect(lambda: self.start_session())
-        file_menu.addAction(import_action)
-
-        file_menu.addSeparator()
-
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
         # Session menu
         session_menu = menubar.addMenu("&Session")
-
-        new_session_action = QAction("Start New Session", self)
-        new_session_action.triggered.connect(lambda: self.start_session())
-        session_menu.addAction(new_session_action)
 
         shopify_session_action = QAction("Open Shopify Session...", self)
         shopify_session_action.setShortcut(QKeySequence("Ctrl+O"))
@@ -667,10 +657,12 @@ class MainWindow(QMainWindow):
 
         # --- By Courier ---
         courier_group = QGroupBox("By Courier")
-        courier_layout = QVBoxLayout()
+        courier_layout = QHBoxLayout()
         self.courier_stats_widget = QWidget()
-        self.courier_stats_layout = QVBoxLayout(self.courier_stats_widget)
+        self.courier_stats_layout = QHBoxLayout(self.courier_stats_widget)
+        self.courier_stats_layout.setSpacing(16)
         courier_layout.addWidget(self.courier_stats_widget)
+        courier_layout.addStretch()
         courier_group.setLayout(courier_layout)
         scroll_layout.addWidget(courier_group)
 
@@ -729,15 +721,36 @@ class MainWindow(QMainWindow):
             }).reset_index()
 
             # OPTIMIZED: replaced iterrows() with itertuples() for 5-10x speedup
+            card_bold_font = QFont()
+            card_bold_font.setPointSize(18)
+            card_bold_font.setBold(True)
+            card_label_font = QFont()
+            card_label_font.setPointSize(9)
             for row_tuple in courier_stats.itertuples(index=False):
                 courier = row_tuple.Courier
                 orders = row_tuple.Order_Number
                 items = int(row_tuple.Quantity) if pd.notna(row_tuple.Quantity) else 0
-                label = QLabel(f"• {courier}: {orders} orders ({items} items)")
-                font = QFont()
-                font.setPointSize(11)
-                label.setFont(font)
-                self.courier_stats_layout.addWidget(label)
+                card = QWidget()
+                card_layout = QVBoxLayout(card)
+                card_layout.setContentsMargins(12, 8, 12, 8)
+                card_layout.setSpacing(2)
+                card.setObjectName("courier_card")
+                card.setStyleSheet("#courier_card { border: 1px solid #2a2a2a; border-radius: 4px; }")
+                value_lbl = QLabel(str(orders))
+                value_lbl.setFont(card_bold_font)
+                value_lbl.setAlignment(Qt.AlignCenter)
+                courier_lbl = QLabel(courier)
+                courier_lbl.setFont(card_label_font)
+                courier_lbl.setAlignment(Qt.AlignCenter)
+                courier_lbl.setStyleSheet("color: #888888; border: none;")
+                items_lbl = QLabel(f"{items} items")
+                items_lbl.setFont(card_label_font)
+                items_lbl.setAlignment(Qt.AlignCenter)
+                items_lbl.setStyleSheet("color: #666666; border: none;")
+                card_layout.addWidget(value_lbl)
+                card_layout.addWidget(courier_lbl)
+                card_layout.addWidget(items_lbl)
+                self.courier_stats_layout.addWidget(card)
 
         # SKU Summary
         sku_summary = df.groupby(['SKU', 'Product_Name']).agg({
@@ -828,6 +841,8 @@ class MainWindow(QMainWindow):
                 worker = self.worker_manager.get_worker(self.current_worker_id)
                 if worker:
                     self.current_worker_name = worker.name
+                    if hasattr(self, 'sb_worker_label'):
+                        self.sb_worker_label.setText(f"Worker: {self.current_worker_name}")
                     logger.info(f"Logged in as: {self.current_worker_name} ({self.current_worker_id})")
                     return True
 
@@ -1812,9 +1827,10 @@ class MainWindow(QMainWindow):
 
     def switch_to_session_view(self):
         """Switches the view back to the main session widget (tabbed interface)."""
-        self.logic.clear_current_order()
-        self.packer_mode_widget.clear_screen()
-        # Phase 1.3: Return to tabbed widget (Session tab will be active)
+        if self.logic:
+            self.logic.clear_current_order()
+        if self.packer_mode_widget:
+            self.packer_mode_widget.clear_screen()
         self.stacked_widget.setCurrentWidget(self.session_widget)
 
     def open_print_dialog(self):

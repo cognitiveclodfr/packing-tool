@@ -40,11 +40,11 @@ class MetricsTab(QWidget):
 
         if not metrics:
             no_data_label = QLabel(
-                "⚠️ Metrics not available\n\n"
-                "This session was created before Phase 2b or has no timing data."
+                "ℹ️ Metrics not available\n\n"
+                "Timing metrics are not available for this session."
             )
             no_data_label.setObjectName("no_metrics_label")
-            no_data_label.setStyleSheet("color: #b06020; font-weight: bold;")
+            no_data_label.setStyleSheet("color: #888888; font-weight: bold;")
             no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(no_data_label)
             layout.addStretch()

@@ -115,8 +115,8 @@ class OrdersTab(QWidget):
 
         # Update info label
         if not self.all_orders:
-            self.info_label.setText("⚠️ No order timing data available (Session created before Phase 2b)")
-            self.info_label.setStyleSheet("color: orange; font-weight: bold;")
+            self.info_label.setText("ℹ️ No order data available for this session.")
+            self.info_label.setStyleSheet("color: #888888; font-weight: bold;")
             return
         else:
             self.info_label.setText(f"Showing {len(self.filtered_orders)} of {len(self.all_orders)} orders")

@@ -468,11 +468,11 @@ class TestDialogsAndStatusBar(unittest.TestCase):
             dialog.close()
 
     def test_metrics_tab_no_data_label(self):
-        """MetricsTab with no metrics should show the no_metrics_label with #b06020."""
+        """MetricsTab with no metrics should show the no_metrics_label."""
         tab = MetricsTab(details={})
         label = tab.findChild(QLabel, "no_metrics_label")
         self.assertIsNotNone(label)
-        self.assertIn("#b06020", label.styleSheet())
+        self.assertIn("#888888", label.styleSheet())
 
     def test_metrics_tab_scroll_area(self):
         """MetricsTab should always wrap content in a widgetResizable QScrollArea."""

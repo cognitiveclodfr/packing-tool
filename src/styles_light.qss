@@ -9,6 +9,10 @@ QWidget {
     font-size: 11pt;
 }
 
+QLabel {
+    background-color: transparent;
+}
+
 QWidget:disabled {
     color: #aaaaaa;
 }
