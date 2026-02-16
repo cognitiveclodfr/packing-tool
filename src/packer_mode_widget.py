@@ -228,6 +228,7 @@ class PackerModeWidget(QWidget):
             self.table.setItem(row, 3, status_item)
 
             confirm_button = QPushButton("Confirm Manually")
+            confirm_button.setFocusPolicy(Qt.NoFocus)
             confirm_button.clicked.connect(partial(self._on_manual_confirm, sku))
             self.table.setCellWidget(row, 4, confirm_button)
 
