@@ -134,9 +134,12 @@ class TestDisplayOrder:
         widget = PackerModeWidget()
         qtbot.addWidget(widget)
         widget.display_order(SAMPLE_ITEMS, EMPTY_STATE)
-        btn = widget.table.cellWidget(0, 4)
-        assert btn is not None
-        assert btn.text() == "Confirm Manually"
+        action_widget = widget.table.cellWidget(0, 4)
+        assert action_widget is not None
+        from PySide6.QtWidgets import QPushButton
+        buttons = action_widget.findChildren(QPushButton)
+        confirm_btn = next((b for b in buttons if "Confirm" in b.text()), None)
+        assert confirm_btn is not None
 
 
 # ============================================================================
@@ -163,8 +166,16 @@ class TestUpdateItemRow:
         qtbot.addWidget(widget)
         widget.display_order(SAMPLE_ITEMS, EMPTY_STATE)
         widget.update_item_row(0, 2, True)
-        btn = widget.table.cellWidget(0, 4)
-        assert not btn.isEnabled()
+        from PySide6.QtWidgets import QPushButton
+        action_widget = widget.table.cellWidget(0, 4)
+        buttons = action_widget.findChildren(QPushButton)
+        # ConfirmBtn and ForceBtn are disabled; CancelBtn (−1) stays enabled for undo
+        confirm = next((b for b in buttons if b.objectName() == "ConfirmBtn"), None)
+        force = next((b for b in buttons if b.objectName() == "ForceBtn"), None)
+        cancel = next((b for b in buttons if b.objectName() == "CancelBtn"), None)
+        assert confirm is not None and not confirm.isEnabled()
+        assert force is not None and not force.isEnabled()
+        assert cancel is not None and cancel.isEnabled()
 
     def test_invalid_row_does_not_raise(self, qtbot):
         """Calling update_item_row for a row that doesn't exist should not crash."""
@@ -306,7 +317,9 @@ class TestBarcodeScanSignal:
         received = []
         widget.barcode_scanned.connect(received.append)
 
-        btn = widget.table.cellWidget(0, 4)
-        btn.click()
+        from PySide6.QtWidgets import QPushButton
+        action_widget = widget.table.cellWidget(0, 4)
+        confirm_btn = next(b for b in action_widget.findChildren(QPushButton) if "Confirm" in b.text())
+        confirm_btn.click()
 
         assert received == ["SKU-A"]

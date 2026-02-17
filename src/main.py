@@ -280,6 +280,9 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget = PackerModeWidget(sim_mode=self._sim_mode)
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
+        self.packer_mode_widget.skip_order_requested.connect(self._on_skip_order)
+        self.packer_mode_widget.cancel_sku_scan.connect(self._on_cancel_sku)
+        self.packer_mode_widget.force_complete_sku.connect(self._on_force_complete_sku)
 
         # Stacked widget to switch between session view and packer mode
         self.stacked_widget = QStackedWidget()
@@ -1876,8 +1879,13 @@ class MainWindow(QMainWindow):
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
                 self.packer_mode_widget.add_order_to_history(order_number_from_scan)
-                self.packer_mode_widget.display_order(items, self.logic.current_order_state)
+                self.packer_mode_widget.display_order(
+                    items,
+                    self.logic.current_order_state,
+                    self.logic.current_order_metadata
+                )
                 self.update_order_status(order_number_from_scan, "In Progress")
+                self._update_session_progress()
             else:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "#c0392b")
                 self.flash_border("red")
@@ -1897,9 +1905,64 @@ class MainWindow(QMainWindow):
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "#43a047")
                 self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
+                self._update_session_progress()
                 self.packer_mode_widget.scanner_input.setEnabled(False)
                 self.logic.clear_current_order()
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+
+    def _update_session_progress(self):
+        """Pushes current session completion counts to the packer widget progress bar."""
+        if not self.logic or not self.packer_mode_widget:
+            return
+        total = len(self.logic.orders_data)
+        completed = len(self.logic.session_packing_state.get('completed_orders', []))
+        self.packer_mode_widget.update_session_progress(completed, total)
+
+    def _on_skip_order(self):
+        """Handles skip_order_requested signal from packer widget."""
+        if not self.logic:
+            return
+        order_number = self.logic.current_order_number
+        self.logic.skip_order()
+        self.packer_mode_widget.clear_screen()
+        self.packer_mode_widget.show_notification("ORDER SKIPPED", "gray")
+        if order_number:
+            self.update_order_status(order_number, "Skipped")
+        self._update_session_progress()
+
+    def _on_cancel_sku(self, sku: str):
+        """Handles cancel_sku_scan signal — decrements packed count by 1."""
+        if not self.logic:
+            return
+        result, status = self.logic.cancel_sku_scan(sku)
+        if result:
+            self.packer_mode_widget.update_item_row(result['row'], result['packed'], False)
+        elif status == "SKU_ALREADY_ZERO":
+            self.packer_mode_widget.show_notification("ALREADY AT 0", "#b06020")
+            self.flash_border("orange")
+        elif status in ("NO_ACTIVE_ORDER", "SKU_NOT_FOUND"):
+            self.packer_mode_widget.show_notification("CANNOT UNDO", "#c0392b")
+            self.flash_border("red")
+
+    def _on_force_complete_sku(self, sku: str):
+        """Handles force_complete_sku signal — marks a SKU as done without scanning."""
+        if not self.logic:
+            return
+        result, status = self.logic.force_complete_sku(sku)
+        if result:
+            self.packer_mode_widget.update_item_row(result['row'], result['packed'], result['is_complete'])
+            if status == "ORDER_COMPLETE":
+                current_order_num = self.logic.current_order_number
+                self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "#43a047")
+                self.flash_border("green")
+                self.update_order_status(current_order_num, "Completed")
+                self._update_session_progress()
+                self.packer_mode_widget.scanner_input.setEnabled(False)
+                self.logic.clear_current_order()
+                QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+        elif status == "SKU_NOT_FOUND":
+            self.packer_mode_widget.show_notification("SKU NOT FOUND", "#c0392b")
+            self.flash_border("red")
 
     # REMOVED: _process_shopify_packing_data() method (dead code)
     # This method was never called. Functionality replaced by PackerLogic.load_packing_list_json()
