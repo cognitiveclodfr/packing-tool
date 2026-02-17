@@ -580,8 +580,8 @@ class TestCrashRecovery(unittest.TestCase):
         # Create PackerLogic instance - should handle corruption gracefully
         packer = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
 
-        # Verify it starts with fresh state
-        self.assertEqual(packer.session_packing_state, {'in_progress': {}, 'completed_orders': []})
+        # Verify it starts with fresh state (skipped_orders added in v1.3.x)
+        self.assertEqual(packer.session_packing_state, {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []})
         self.assertIsNone(packer.session_id)
 
     def test_state_metadata_complete(self):

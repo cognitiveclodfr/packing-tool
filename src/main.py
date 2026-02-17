@@ -105,7 +105,9 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
         self.setWindowTitle("Packer's Assistant")
-        self.resize(1024, 768)
+        self.resize(1400, 900)
+        self.setMinimumSize(1100, 700)
+        self.showMaximized()
 
         logger.info("Initializing MainWindow")
 
@@ -280,6 +282,8 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget = PackerModeWidget(sim_mode=self._sim_mode)
         self.packer_mode_widget.barcode_scanned.connect(self.on_scanner_input)
         self.packer_mode_widget.exit_packing_mode.connect(self.switch_to_session_view)
+        self.packer_mode_widget.skip_order_requested.connect(self._on_skip_order)
+        self.packer_mode_widget.force_complete_sku.connect(self._on_force_complete_sku)
 
         # Stacked widget to switch between session view and packer mode
         self.stacked_widget = QStackedWidget()
@@ -1823,6 +1827,8 @@ class MainWindow(QMainWindow):
     def switch_to_packer_mode(self):
         """Switches the view to the Packer Mode widget."""
         self.stacked_widget.setCurrentWidget(self.packer_mode_widget)
+        # Initialize session progress bar when entering packer mode
+        self._update_session_progress_display()
         self.packer_mode_widget.set_focus_to_scanner()
 
     def switch_to_session_view(self):
@@ -1875,9 +1881,16 @@ class MainWindow(QMainWindow):
 
             items, status = self.logic.start_order_packing(text)
             if status == "ORDER_LOADED":
-                self.packer_mode_widget.add_order_to_history(order_number_from_scan)
+                # Display metadata in left panel
+                metadata = self.logic.get_order_metadata(order_number_from_scan)
+                courier = items[0].get('Courier', '') if items else ''
+                self.packer_mode_widget.display_order_metadata(metadata, courier)
+                # Populate main table
+                self.packer_mode_widget.add_order_to_history(order_number_from_scan, len(items))
                 self.packer_mode_widget.display_order(items, self.logic.current_order_state)
                 self.update_order_status(order_number_from_scan, "In Progress")
+                # Update session progress bar
+                self._update_session_progress_display()
             else:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "#c0392b")
                 self.flash_border("red")
@@ -1889,17 +1902,31 @@ class MainWindow(QMainWindow):
             elif status == "SKU_NOT_FOUND":
                 self.packer_mode_widget.show_notification("INCORRECT ITEM!", "#c0392b")
                 self.flash_border("red")
+            elif status == "SKU_EXTRA":
+                self.packer_mode_widget.show_notification("ALREADY PACKED!", "#e67e22")
+                self.flash_border("orange")
             elif status == "ORDER_COMPLETE":
                 current_order_num = self.logic.current_order_number
-                # Phase 1.4: No need to record individual order completion - only record at session completion
 
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
                 self.packer_mode_widget.show_notification(f"ORDER {current_order_num} COMPLETE!", "#43a047")
                 self.flash_border("green")
                 self.update_order_status(current_order_num, "Completed")
+
+                # Show items of this order in dimmed history panel for reference
+                completed_items = self.logic.orders_data.get(current_order_num, {}).get('items', [])
+                self.packer_mode_widget.show_previous_order_items(completed_items)
+
                 self.packer_mode_widget.scanner_input.setEnabled(False)
                 self.logic.clear_current_order()
+
+                # Update session progress
+                self._update_session_progress_display()
+
                 QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+
+                # Check if all non-skipped orders are now complete
+                self._check_session_completion()
 
     # REMOVED: _process_shopify_packing_data() method (dead code)
     # This method was never called. Functionality replaced by PackerLogic.load_packing_list_json()
@@ -1934,6 +1961,118 @@ class MainWindow(QMainWindow):
         self._populate_order_tree()
         self._update_statistics()
         logger.debug(f"Order {order_number} status updated to: {status}")
+
+    def _update_session_progress_display(self):
+        """Updates the session progress bar in PackerModeWidget."""
+        if not self.logic:
+            return
+        total = len(self.logic.orders_data)
+        completed = len(self.logic.session_packing_state.get('completed_orders', []))
+        self.packer_mode_widget.update_session_progress(completed, total)
+
+    def _on_skip_order(self):
+        """Slot for skip_order_requested signal. Skips the current order."""
+        if not self.logic or not self.logic.current_order_number:
+            return
+        skipped_num = self.logic.current_order_number
+
+        # Show items in dimmed history before clearing
+        skipped_items = self.logic.orders_data.get(skipped_num, {}).get('items', [])
+        if skipped_items:
+            self.packer_mode_widget.show_previous_order_items(skipped_items)
+
+        self.logic.skip_order()
+        self.packer_mode_widget.add_order_to_history(f"{skipped_num} (skip)", len(skipped_items))
+        self.flash_border("orange")
+        self.update_order_status(skipped_num, "Skipped")
+        self._update_session_progress_display()
+        self.packer_mode_widget.clear_screen()
+
+    def _on_force_complete_sku(self, sku: str):
+        """Slot for force_complete_sku signal. Force-packs all remaining units of a SKU."""
+        if not self.logic or not self.logic.current_order_number:
+            return
+
+        # Find the SKU in current order state and set packed = required
+        normalized_sku = self.logic.normalize_sku(sku)
+        final_sku = self.logic.sku_map.get(normalized_sku, normalized_sku)
+        normalized_final = self.logic.normalize_sku(final_sku)
+
+        all_complete = True
+        for item_state in self.logic.current_order_state:
+            if item_state.get('normalized_sku') == normalized_final:
+                item_state['packed'] = item_state['required']
+            if item_state.get('packed', 0) < item_state.get('required', 1):
+                all_complete = False
+
+        if all_complete:
+            # Force-complete triggers ORDER_COMPLETE path
+            current_order_num = self.logic.current_order_number
+            self.logic.session_packing_state['completed_orders'].append(current_order_num)
+            if current_order_num in self.logic.session_packing_state.get('in_progress', {}):
+                del self.logic.session_packing_state['in_progress'][current_order_num]
+            self.logic._save_session_state()
+
+            # Update all rows in table
+            for state_item in self.logic.current_order_state:
+                self.packer_mode_widget.update_item_row(
+                    state_item['row'], state_item['packed'], True
+                )
+
+            completed_items = self.logic.orders_data.get(current_order_num, {}).get('items', [])
+            self.packer_mode_widget.show_previous_order_items(completed_items)
+            self.packer_mode_widget.show_notification(f"ORDER {current_order_num} FORCE COMPLETE!", "#43a047")
+            self.flash_border("green")
+            self.update_order_status(current_order_num, "Completed")
+            self.packer_mode_widget.scanner_input.setEnabled(False)
+            self.logic.clear_current_order()
+            self._update_session_progress_display()
+            QTimer.singleShot(3000, self.packer_mode_widget.clear_screen)
+            self._check_session_completion()
+        else:
+            # Only this SKU forced — update its row
+            for state_item in self.logic.current_order_state:
+                if state_item.get('normalized_sku') == normalized_final:
+                    self.packer_mode_widget.update_item_row(
+                        state_item['row'], state_item['packed'], True
+                    )
+            self.logic._save_session_state()
+            self.packer_mode_widget.show_notification(f"SKU FORCED: {sku}", "#43a047")
+            self.flash_border("green")
+
+    def _check_session_completion(self):
+        """Checks if all non-skipped orders are complete and offers to end session."""
+        if not self.logic:
+            return
+        total = len(self.logic.orders_data)
+        if total == 0:
+            return
+        skipped = set(self.logic.session_packing_state.get('skipped_orders', []))
+        completed = set(self.logic.session_packing_state.get('completed_orders', []))
+        non_skipped_total = total - len(skipped)
+        if non_skipped_total > 0 and len(completed) >= non_skipped_total:
+            QTimer.singleShot(3500, self._offer_session_end)
+
+    def _offer_session_end(self):
+        """Prompts the user to end the session when all non-skipped orders are complete."""
+        from PySide6.QtWidgets import QMessageBox
+        if not self.logic:
+            return
+        completed = len(set(self.logic.session_packing_state.get('completed_orders', [])))
+        skipped = len(set(self.logic.session_packing_state.get('skipped_orders', [])))
+        msg = f"All {completed} orders are packed!"
+        if skipped:
+            msg += f"\n({skipped} order(s) were skipped)"
+        msg += "\n\nWould you like to end the session now?"
+        reply = QMessageBox.question(
+            self,
+            "Session Complete!",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.end_session()
 
     # REMOVED: open_restore_session_dialog() method (dead code)
     # This method was never called. Functionality replaced by Session Browser's
