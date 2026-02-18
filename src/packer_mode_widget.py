@@ -305,6 +305,14 @@ class PackerModeWidget(QWidget):
         self.meta_courier_label.setVisible(False)
         meta_layout.addWidget(self.meta_courier_label)
 
+        self.meta_destination_label = QLabel()
+        self.meta_destination_label.setVisible(False)
+        meta_layout.addWidget(self.meta_destination_label)
+
+        self.meta_order_type_label = QLabel()
+        self.meta_order_type_label.setVisible(False)
+        meta_layout.addWidget(self.meta_order_type_label)
+
         sep1 = QFrame(); sep1.setFrameShape(QFrame.Shape.VLine)
         sep1.setFrameShadow(QFrame.Shadow.Sunken)
         meta_layout.addWidget(sep1)
@@ -415,6 +423,30 @@ class PackerModeWidget(QWidget):
             self.meta_courier_label.setVisible(True)
         else:
             self.meta_courier_label.setVisible(False)
+
+        # Destination (country)
+        destination = metadata.get('destination', '')
+        if destination:
+            self.meta_destination_label.setText(destination)
+            self.meta_destination_label.setStyleSheet(
+                f"background-color: #37474f; color: #b0bec5; {_BADGE_STYLE}"
+            )
+            self.meta_destination_label.setVisible(True)
+        else:
+            self.meta_destination_label.setVisible(False)
+
+        # Order type (Single/Multi)
+        order_type = metadata.get('order_type', '')
+        if order_type:
+            ot_bg = "#4a148c" if order_type == "Multi" else "#1b5e20"
+            ot_fg = "#ce93d8" if order_type == "Multi" else "#81c784"
+            self.meta_order_type_label.setText(order_type)
+            self.meta_order_type_label.setStyleSheet(
+                f"background-color: {ot_bg}; color: {ot_fg}; {_BADGE_STYLE}"
+            )
+            self.meta_order_type_label.setVisible(True)
+        else:
+            self.meta_order_type_label.setVisible(False)
 
         # Recommended box
         box = metadata.get('recommended_box', '')

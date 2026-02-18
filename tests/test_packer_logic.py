@@ -516,6 +516,8 @@ def _load_json_with_metadata(packer_logic, test_dir):
                 "created_at": "2026-01-10T09:00:00",
                 "recommended_box": "Box_Small",
                 "shipping_method": "express",
+                "destination": "BG",
+                "order_type": "Multi",
                 "items": [
                     {"sku": "SKU-M", "quantity": 1, "product_name": "Meta Widget"}
                 ]
@@ -572,6 +574,18 @@ def test_get_order_metadata_recommended_box(packer_logic, test_dir):
     assert metadata['recommended_box'] == 'Box_Small'
 
 
+def test_get_order_metadata_destination(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['destination'] == 'BG'
+
+
+def test_get_order_metadata_order_type(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['order_type'] == 'Multi'
+
+
 def test_get_order_metadata_created_at(packer_logic, test_dir):
     _load_json_with_metadata(packer_logic, test_dir)
     metadata = packer_logic.get_order_metadata("ORD-META")
@@ -616,6 +630,74 @@ def test_get_order_metadata_missing_optional_fields_default_empty(packer_logic, 
     assert metadata['tags'] == []
     assert metadata['status'] == ''
     assert metadata['recommended_box'] == ''
+    assert metadata['destination'] == ''
+    assert metadata['order_type'] == ''
+
+
+def test_get_order_metadata_nan_tags_filtered(packer_logic, test_dir):
+    """Tags with 'nan' string values should be filtered out."""
+    import json
+    from pathlib import Path
+    data = {
+        "list_name": "NanTags",
+        "total_orders": 1,
+        "orders": [{
+            "order_number": "ORD-NAN",
+            "courier": "DHL",
+            "tags": ["nan", "valid-tag", "NaN", "None"],
+            "items": [{"sku": "SKU-N", "quantity": 1, "product_name": "N Widget"}]
+        }]
+    }
+    json_path = Path(test_dir) / "nan_tags.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-NAN")
+    assert metadata['tags'] == ['valid-tag']
+
+
+def test_get_order_metadata_min_box_fallback(packer_logic, test_dir):
+    """min_box field should map to recommended_box when recommended_box is absent."""
+    import json
+    from pathlib import Path
+    data = {
+        "list_name": "MinBox",
+        "total_orders": 1,
+        "orders": [{
+            "order_number": "ORD-MB",
+            "courier": "DHL",
+            "min_box": "TEST_S",
+            "items": [{"sku": "SKU-MB", "quantity": 1, "product_name": "MB Widget"}]
+        }]
+    }
+    json_path = Path(test_dir) / "min_box.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-MB")
+    assert metadata['recommended_box'] == 'TEST_S'
+
+
+def test_get_order_metadata_fulfillment_status_fallback(packer_logic, test_dir):
+    """fulfillment_status field should map to status when status is absent."""
+    import json
+    from pathlib import Path
+    data = {
+        "list_name": "FStatus",
+        "total_orders": 1,
+        "orders": [{
+            "order_number": "ORD-FS",
+            "courier": "DHL",
+            "fulfillment_status": "Fulfillable",
+            "items": [{"sku": "SKU-FS", "quantity": 1, "product_name": "FS Widget"}]
+        }]
+    }
+    json_path = Path(test_dir) / "fstatus.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-FS")
+    assert metadata['status'] == 'Fulfillable'
 
 
 # ============================================================================

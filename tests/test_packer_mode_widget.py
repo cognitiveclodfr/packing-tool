@@ -58,6 +58,8 @@ SAMPLE_METADATA = {
     'status': 'Fulfillable',
     'recommended_box': 'Box_Large',
     'shipping_method': 'express',
+    'destination': 'BG',
+    'order_type': 'Multi',
 }
 
 
@@ -490,6 +492,26 @@ class TestDisplayOrderMetadata:
         qtbot.addWidget(widget)
         widget.display_order_metadata({'status_note': ''})
         assert widget.meta_status_note_label.isHidden()
+
+    def test_destination_shown(self, qtbot):
+        widget = PackerModeWidget()
+        qtbot.addWidget(widget)
+        widget.display_order_metadata(SAMPLE_METADATA)
+        assert "BG" in widget.meta_destination_label.text()
+        assert not widget.meta_destination_label.isHidden()
+
+    def test_order_type_shown(self, qtbot):
+        widget = PackerModeWidget()
+        qtbot.addWidget(widget)
+        widget.display_order_metadata(SAMPLE_METADATA)
+        assert "Multi" in widget.meta_order_type_label.text()
+        assert not widget.meta_order_type_label.isHidden()
+
+    def test_empty_destination_hidden(self, qtbot):
+        widget = PackerModeWidget()
+        qtbot.addWidget(widget)
+        widget.display_order_metadata({'destination': ''})
+        assert widget.meta_destination_label.isHidden()
 
     def test_empty_metadata_does_not_crash(self, qtbot):
         widget = PackerModeWidget()

@@ -1155,17 +1155,22 @@ class PackerLogic(QObject):
                 continue
 
             # Extract Shopify metadata fields for this order
+            # Handle field name variants between analysis_data.json and packing_lists
             internal_tags_raw = order.get('internal_tags', [])
             tags_raw = order.get('tags', [])
+            tags_list = tags_raw if isinstance(tags_raw, list) else [tags_raw] if tags_raw else []
+            tags_list = [str(t) for t in tags_list if t and str(t).lower() not in ('nan', 'none')]
             order_metadata_map[order_number] = {
                 'system_note': order.get('system_note', ''),
                 'status_note': order.get('status_note', ''),
                 'internal_tags': internal_tags_raw if isinstance(internal_tags_raw, list) else [internal_tags_raw] if internal_tags_raw else [],
-                'tags': tags_raw if isinstance(tags_raw, list) else [tags_raw] if tags_raw else [],
+                'tags': tags_list,
                 'created_at': order.get('created_at', ''),
-                'status': order.get('status', ''),
-                'recommended_box': order.get('recommended_box', ''),
+                'status': order.get('status', '') or order.get('fulfillment_status', ''),
+                'recommended_box': order.get('recommended_box', '') or order.get('min_box', ''),
                 'shipping_method': order.get('shipping_method', ''),
+                'destination': order.get('destination', '') or order.get('shipping_country', ''),
+                'order_type': order.get('order_type', ''),
                 'courier': courier,
             }
 
@@ -1183,7 +1188,9 @@ class PackerLogic(QObject):
                 for key, value in order.items():
                     if key not in ['order_number', 'courier', 'items', 'system_note',
                                    'status_note', 'internal_tags', 'tags', 'created_at',
-                                   'status', 'recommended_box', 'shipping_method']:
+                                   'status', 'fulfillment_status', 'recommended_box',
+                                   'min_box', 'shipping_method', 'destination',
+                                   'shipping_country', 'order_type']:
                         # Capitalize key to match packing list style
                         formatted_key = key.replace('_', ' ').title().replace(' ', '_')
                         row[formatted_key] = str(value)
@@ -1346,17 +1353,22 @@ class PackerLogic(QObject):
             items = order.get('items', [])
 
             # Extract Shopify metadata fields for this order
+            # Handle field name variants between analysis_data.json and packing_lists
             internal_tags_raw = order.get('internal_tags', [])
             tags_raw = order.get('tags', [])
+            tags_list = tags_raw if isinstance(tags_raw, list) else [tags_raw] if tags_raw else []
+            tags_list = [str(t) for t in tags_list if t and str(t).lower() not in ('nan', 'none')]
             order_metadata_map[order_number] = {
                 'system_note': order.get('system_note', ''),
                 'status_note': order.get('status_note', ''),
                 'internal_tags': internal_tags_raw if isinstance(internal_tags_raw, list) else [internal_tags_raw] if internal_tags_raw else [],
-                'tags': tags_raw if isinstance(tags_raw, list) else [tags_raw] if tags_raw else [],
+                'tags': tags_list,
                 'created_at': order.get('created_at', ''),
-                'status': order.get('status', ''),
-                'recommended_box': order.get('recommended_box', ''),
+                'status': order.get('status', '') or order.get('fulfillment_status', ''),
+                'recommended_box': order.get('recommended_box', '') or order.get('min_box', ''),
                 'shipping_method': order.get('shipping_method', ''),
+                'destination': order.get('destination', '') or order.get('shipping_country', ''),
+                'order_type': order.get('order_type', ''),
                 'courier': courier,
             }
 
