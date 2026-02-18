@@ -510,6 +510,7 @@ def _load_json_with_metadata(packer_logic, test_dir):
                 "courier": "Speedy",
                 "status": "Fulfillable",
                 "system_note": "Fragile items inside",
+                "status_note": "VIP — expedite",
                 "internal_tags": ["priority", "vip"],
                 "tags": ["summer-2026"],
                 "created_at": "2026-01-10T09:00:00",
@@ -544,6 +545,12 @@ def test_get_order_metadata_system_note(packer_logic, test_dir):
     _load_json_with_metadata(packer_logic, test_dir)
     metadata = packer_logic.get_order_metadata("ORD-META")
     assert metadata['system_note'] == 'Fragile items inside'
+
+
+def test_get_order_metadata_status_note(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['status_note'] == 'VIP — expedite'
 
 
 def test_get_order_metadata_internal_tags(packer_logic, test_dir):

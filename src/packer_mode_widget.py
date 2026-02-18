@@ -347,6 +347,12 @@ class PackerModeWidget(QWidget):
         self.meta_note_label.setWordWrap(False)
         meta_layout.addWidget(self.meta_note_label)
 
+        self.meta_status_note_label = QLabel()
+        self.meta_status_note_label.setVisible(False)
+        self.meta_status_note_label.setFont(small_font)
+        self.meta_status_note_label.setWordWrap(False)
+        meta_layout.addWidget(self.meta_status_note_label)
+
         meta_layout.addStretch()
 
         root_layout.addWidget(self.metadata_frame)
@@ -463,6 +469,16 @@ class PackerModeWidget(QWidget):
             self.meta_note_label.setVisible(True)
         else:
             self.meta_note_label.setVisible(False)
+
+        # Status note
+        status_note = metadata.get('status_note', '')
+        if status_note:
+            display_sn = status_note[:80] + "…" if len(status_note) > 80 else status_note
+            self.meta_status_note_label.setText(f"📋 {display_sn}")
+            self.meta_status_note_label.setToolTip(status_note)
+            self.meta_status_note_label.setVisible(True)
+        else:
+            self.meta_status_note_label.setVisible(False)
 
         self.metadata_frame.setVisible(True)
 

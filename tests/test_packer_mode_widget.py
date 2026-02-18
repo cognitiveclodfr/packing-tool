@@ -51,6 +51,7 @@ PARTIAL_STATE = [
 
 SAMPLE_METADATA = {
     'system_note': 'Handle with care',
+    'status_note': 'VIP customer — expedite',
     'internal_tags': ['priority', 'fragile'],
     'tags': ['summer-sale'],
     'created_at': '2026-01-15T10:00:00',
@@ -476,6 +477,19 @@ class TestDisplayOrderMetadata:
         qtbot.addWidget(widget)
         widget.display_order_metadata(SAMPLE_METADATA)
         assert "Handle with care" in widget.meta_note_label.text()
+
+    def test_status_note_shown(self, qtbot):
+        widget = PackerModeWidget()
+        qtbot.addWidget(widget)
+        widget.display_order_metadata(SAMPLE_METADATA)
+        assert "VIP customer" in widget.meta_status_note_label.text()
+        assert not widget.meta_status_note_label.isHidden()
+
+    def test_empty_status_note_hidden(self, qtbot):
+        widget = PackerModeWidget()
+        qtbot.addWidget(widget)
+        widget.display_order_metadata({'status_note': ''})
+        assert widget.meta_status_note_label.isHidden()
 
     def test_empty_metadata_does_not_crash(self, qtbot):
         widget = PackerModeWidget()

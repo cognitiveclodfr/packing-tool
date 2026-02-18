@@ -1159,6 +1159,7 @@ class PackerLogic(QObject):
             tags_raw = order.get('tags', [])
             order_metadata_map[order_number] = {
                 'system_note': order.get('system_note', ''),
+                'status_note': order.get('status_note', ''),
                 'internal_tags': internal_tags_raw if isinstance(internal_tags_raw, list) else [internal_tags_raw] if internal_tags_raw else [],
                 'tags': tags_raw if isinstance(tags_raw, list) else [tags_raw] if tags_raw else [],
                 'created_at': order.get('created_at', ''),
@@ -1181,8 +1182,8 @@ class PackerLogic(QObject):
                 # (e.g., customer name, address, tracking number, etc.)
                 for key, value in order.items():
                     if key not in ['order_number', 'courier', 'items', 'system_note',
-                                   'internal_tags', 'tags', 'created_at', 'status',
-                                   'recommended_box', 'shipping_method']:
+                                   'status_note', 'internal_tags', 'tags', 'created_at',
+                                   'status', 'recommended_box', 'shipping_method']:
                         # Capitalize key to match packing list style
                         formatted_key = key.replace('_', ' ').title().replace(' ', '_')
                         row[formatted_key] = str(value)
@@ -1349,6 +1350,7 @@ class PackerLogic(QObject):
             tags_raw = order.get('tags', [])
             order_metadata_map[order_number] = {
                 'system_note': order.get('system_note', ''),
+                'status_note': order.get('status_note', ''),
                 'internal_tags': internal_tags_raw if isinstance(internal_tags_raw, list) else [internal_tags_raw] if internal_tags_raw else [],
                 'tags': tags_raw if isinstance(tags_raw, list) else [tags_raw] if tags_raw else [],
                 'created_at': order.get('created_at', ''),
