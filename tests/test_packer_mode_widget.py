@@ -134,9 +134,13 @@ class TestDisplayOrder:
         widget = PackerModeWidget()
         qtbot.addWidget(widget)
         widget.display_order(SAMPLE_ITEMS, EMPTY_STATE)
-        btn = widget.table.cellWidget(0, 4)
-        assert btn is not None
-        assert btn.text() == "Confirm Manually"
+        cell_widget = widget.table.cellWidget(0, 4)
+        assert cell_widget is not None
+        # Actions column is now a container widget with multiple buttons
+        from PySide6.QtWidgets import QPushButton
+        buttons = cell_widget.findChildren(QPushButton)
+        tooltips = [b.toolTip() for b in buttons]
+        assert "Confirm Manually" in tooltips
 
 
 # ============================================================================
@@ -163,8 +167,14 @@ class TestUpdateItemRow:
         qtbot.addWidget(widget)
         widget.display_order(SAMPLE_ITEMS, EMPTY_STATE)
         widget.update_item_row(0, 2, True)
-        btn = widget.table.cellWidget(0, 4)
-        assert not btn.isEnabled()
+        cell_widget = widget.table.cellWidget(0, 4)
+        assert cell_widget is not None
+        from PySide6.QtWidgets import QPushButton
+        buttons = cell_widget.findChildren(QPushButton)
+        # Confirm Manually button must be disabled after item is complete
+        confirm_btns = [b for b in buttons if b.toolTip() == "Confirm Manually"]
+        assert confirm_btns, "Confirm button not found"
+        assert not confirm_btns[0].isEnabled()
 
     def test_invalid_row_does_not_raise(self, qtbot):
         """Calling update_item_row for a row that doesn't exist should not crash."""
@@ -306,7 +316,14 @@ class TestBarcodeScanSignal:
         received = []
         widget.barcode_scanned.connect(received.append)
 
-        btn = widget.table.cellWidget(0, 4)
-        btn.click()
+        # Actions column is now a container; find the Confirm Manually button inside
+        from PySide6.QtWidgets import QPushButton
+        cell_widget = widget.table.cellWidget(0, 4)
+        confirm_btn = next(
+            (b for b in cell_widget.findChildren(QPushButton) if b.toolTip() == "Confirm Manually"),
+            None,
+        )
+        assert confirm_btn is not None
+        confirm_btn.click()
 
         assert received == ["SKU-A"]
