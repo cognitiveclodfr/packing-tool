@@ -1024,8 +1024,8 @@ class PackerLogic(QObject):
         """
         Returns the Shopify metadata dict for the given order.
 
-        Contains: system_note, internal_tags, tags, created_at, status,
-                  recommended_box, shipping_method, courier.
+        Contains: system_note, status_note, internal_tags, tags, created_at,
+                  status, shopify_status, recommended_box, destination, courier.
 
         Returns an empty dict if the order is not found or has no metadata.
         """
@@ -1167,10 +1167,9 @@ class PackerLogic(QObject):
                 'tags': tags_list,
                 'created_at': order.get('created_at', ''),
                 'status': order.get('status', '') or order.get('fulfillment_status', ''),
+                'shopify_status': order.get('shopify_status', ''),
                 'recommended_box': order.get('recommended_box', '') or order.get('min_box', ''),
-                'shipping_method': order.get('shipping_method', ''),
                 'destination': order.get('destination', '') or order.get('shipping_country', ''),
-                'order_type': order.get('order_type', ''),
                 'courier': courier,
             }
 
@@ -1188,9 +1187,9 @@ class PackerLogic(QObject):
                 for key, value in order.items():
                     if key not in ['order_number', 'courier', 'items', 'system_note',
                                    'status_note', 'internal_tags', 'tags', 'created_at',
-                                   'status', 'fulfillment_status', 'recommended_box',
-                                   'min_box', 'shipping_method', 'destination',
-                                   'shipping_country', 'order_type']:
+                                   'status', 'fulfillment_status', 'shopify_status',
+                                   'recommended_box', 'min_box', 'destination',
+                                   'shipping_country']:
                         # Capitalize key to match packing list style
                         formatted_key = key.replace('_', ' ').title().replace(' ', '_')
                         row[formatted_key] = str(value)
@@ -1365,10 +1364,9 @@ class PackerLogic(QObject):
                 'tags': tags_list,
                 'created_at': order.get('created_at', ''),
                 'status': order.get('status', '') or order.get('fulfillment_status', ''),
+                'shopify_status': order.get('shopify_status', ''),
                 'recommended_box': order.get('recommended_box', '') or order.get('min_box', ''),
-                'shipping_method': order.get('shipping_method', ''),
                 'destination': order.get('destination', '') or order.get('shipping_country', ''),
-                'order_type': order.get('order_type', ''),
                 'courier': courier,
             }
 
@@ -1385,8 +1383,9 @@ class PackerLogic(QObject):
                 # (e.g., customer name, address, etc.)
                 for key, value in order.items():
                     if key not in ['order_number', 'courier', 'items', 'status',
-                                   'system_note', 'internal_tags', 'tags', 'created_at',
-                                   'recommended_box', 'shipping_method']:
+                                   'system_note', 'status_note', 'internal_tags',
+                                   'tags', 'created_at', 'shopify_status',
+                                   'recommended_box', 'destination', 'shipping_country']:
                         # Capitalize key to match packing list style
                         formatted_key = key.replace('_', ' ').title().replace(' ', '_')
                         row[formatted_key] = str(value)

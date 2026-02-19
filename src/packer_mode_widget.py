@@ -21,13 +21,14 @@ COURIER_COLORS = {
 }
 DEFAULT_COURIER_COLOR = ('#555555', '#ffffff')
 
-# Fulfillment status -> badge color
-STATUS_COLORS = {
-    'Fulfillable':   ('#1b5e20', '#a5d6a7'),
-    'Unfulfillable': ('#b71c1c', '#ef9a9a'),
-    'Fulfilled':     ('#0d47a1', '#90caf9'),
+# Shopify fulfillment status -> badge color
+SHOPIFY_STATUS_COLORS = {
+    'fulfilled':           ('#0d47a1', '#90caf9'),
+    'unfulfilled':         ('#b71c1c', '#ef9a9a'),
+    'partially_fulfilled': ('#e65100', '#ffcc80'),
+    'partial':             ('#e65100', '#ffcc80'),
 }
-DEFAULT_STATUS_COLOR = ('#424242', '#bdbdbd')
+DEFAULT_SHOPIFY_STATUS_COLOR = ('#424242', '#bdbdbd')
 
 _BADGE_STYLE = (
     "border-radius: 4px; padding: 2px 8px; font-weight: bold; font-size: 11px;"
@@ -297,9 +298,9 @@ class PackerModeWidget(QWidget):
         meta_layout.setContentsMargins(8, 4, 8, 4)
         meta_layout.setSpacing(8)
 
-        self.meta_status_label = QLabel()
-        self.meta_status_label.setVisible(False)
-        meta_layout.addWidget(self.meta_status_label)
+        self.meta_shopify_status_label = QLabel()
+        self.meta_shopify_status_label.setVisible(False)
+        meta_layout.addWidget(self.meta_shopify_status_label)
 
         self.meta_courier_label = QLabel()
         self.meta_courier_label.setVisible(False)
@@ -309,10 +310,6 @@ class PackerModeWidget(QWidget):
         self.meta_destination_label.setVisible(False)
         meta_layout.addWidget(self.meta_destination_label)
 
-        self.meta_order_type_label = QLabel()
-        self.meta_order_type_label.setVisible(False)
-        meta_layout.addWidget(self.meta_order_type_label)
-
         sep1 = QFrame(); sep1.setFrameShape(QFrame.Shape.VLine)
         sep1.setFrameShadow(QFrame.Shadow.Sunken)
         meta_layout.addWidget(sep1)
@@ -320,10 +317,6 @@ class PackerModeWidget(QWidget):
         self.meta_box_label = QLabel()
         self.meta_box_label.setVisible(False)
         meta_layout.addWidget(self.meta_box_label)
-
-        self.meta_method_label = QLabel()
-        self.meta_method_label.setVisible(False)
-        meta_layout.addWidget(self.meta_method_label)
 
         self.meta_created_label = QLabel()
         self.meta_created_label.setVisible(False)
@@ -400,17 +393,18 @@ class PackerModeWidget(QWidget):
 
     def display_order_metadata(self, metadata: dict, courier: str = ''):
         """Populates and shows the order metadata strip at the bottom."""
-        # Status badge
-        status = metadata.get('status', '')
-        if status:
-            bg, fg = STATUS_COLORS.get(status, DEFAULT_STATUS_COLOR)
-            self.meta_status_label.setText(status)
-            self.meta_status_label.setStyleSheet(
+        # Shopify fulfillment status badge
+        shopify_status = metadata.get('shopify_status', '')
+        if shopify_status:
+            key = shopify_status.lower().replace(' ', '_')
+            bg, fg = SHOPIFY_STATUS_COLORS.get(key, DEFAULT_SHOPIFY_STATUS_COLOR)
+            self.meta_shopify_status_label.setText(shopify_status)
+            self.meta_shopify_status_label.setStyleSheet(
                 f"background-color: {bg}; color: {fg}; {_BADGE_STYLE}"
             )
-            self.meta_status_label.setVisible(True)
+            self.meta_shopify_status_label.setVisible(True)
         else:
-            self.meta_status_label.setVisible(False)
+            self.meta_shopify_status_label.setVisible(False)
 
         # Courier badge
         courier_name = courier or metadata.get('courier', '')
@@ -435,19 +429,6 @@ class PackerModeWidget(QWidget):
         else:
             self.meta_destination_label.setVisible(False)
 
-        # Order type (Single/Multi)
-        order_type = metadata.get('order_type', '')
-        if order_type:
-            ot_bg = "#4a148c" if order_type == "Multi" else "#1b5e20"
-            ot_fg = "#ce93d8" if order_type == "Multi" else "#81c784"
-            self.meta_order_type_label.setText(order_type)
-            self.meta_order_type_label.setStyleSheet(
-                f"background-color: {ot_bg}; color: {ot_fg}; {_BADGE_STYLE}"
-            )
-            self.meta_order_type_label.setVisible(True)
-        else:
-            self.meta_order_type_label.setVisible(False)
-
         # Recommended box
         box = metadata.get('recommended_box', '')
         if box:
@@ -455,14 +436,6 @@ class PackerModeWidget(QWidget):
             self.meta_box_label.setVisible(True)
         else:
             self.meta_box_label.setVisible(False)
-
-        # Shipping method
-        method = metadata.get('shipping_method', '')
-        if method:
-            self.meta_method_label.setText(f"🚚 {method}")
-            self.meta_method_label.setVisible(True)
-        else:
-            self.meta_method_label.setVisible(False)
 
         # Created at (date only)
         created = metadata.get('created_at', '')

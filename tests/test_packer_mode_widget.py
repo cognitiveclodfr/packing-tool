@@ -56,10 +56,9 @@ SAMPLE_METADATA = {
     'tags': ['summer-sale'],
     'created_at': '2026-01-15T10:00:00',
     'status': 'Fulfillable',
+    'shopify_status': 'unfulfilled',
     'recommended_box': 'Box_Large',
-    'shipping_method': 'express',
     'destination': 'BG',
-    'order_type': 'Multi',
 }
 
 
@@ -437,11 +436,12 @@ class TestDisplayOrderMetadata:
         widget.display_order_metadata(SAMPLE_METADATA)
         assert not widget.metadata_frame.isHidden()
 
-    def test_status_label_populated(self, qtbot):
+    def test_shopify_status_label_populated(self, qtbot):
         widget = PackerModeWidget()
         qtbot.addWidget(widget)
         widget.display_order_metadata(SAMPLE_METADATA)
-        assert "Fulfillable" in widget.meta_status_label.text()
+        assert "unfulfilled" in widget.meta_shopify_status_label.text()
+        assert not widget.meta_shopify_status_label.isHidden()
 
     def test_courier_badge_populated(self, qtbot):
         widget = PackerModeWidget()
@@ -500,12 +500,11 @@ class TestDisplayOrderMetadata:
         assert "BG" in widget.meta_destination_label.text()
         assert not widget.meta_destination_label.isHidden()
 
-    def test_order_type_shown(self, qtbot):
+    def test_empty_shopify_status_hidden(self, qtbot):
         widget = PackerModeWidget()
         qtbot.addWidget(widget)
-        widget.display_order_metadata(SAMPLE_METADATA)
-        assert "Multi" in widget.meta_order_type_label.text()
-        assert not widget.meta_order_type_label.isHidden()
+        widget.display_order_metadata({'shopify_status': ''})
+        assert widget.meta_shopify_status_label.isHidden()
 
     def test_empty_destination_hidden(self, qtbot):
         widget = PackerModeWidget()
@@ -518,11 +517,11 @@ class TestDisplayOrderMetadata:
         qtbot.addWidget(widget)
         widget.display_order_metadata({})  # Should not raise
 
-    def test_missing_status_hides_status_label(self, qtbot):
+    def test_missing_shopify_status_hides_label(self, qtbot):
         widget = PackerModeWidget()
         qtbot.addWidget(widget)
         widget.display_order_metadata({'system_note': 'hi'})
-        assert widget.meta_status_label.isHidden()
+        assert widget.meta_shopify_status_label.isHidden()
 
 
 # ============================================================================

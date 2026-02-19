@@ -515,9 +515,8 @@ def _load_json_with_metadata(packer_logic, test_dir):
                 "tags": ["summer-2026"],
                 "created_at": "2026-01-10T09:00:00",
                 "recommended_box": "Box_Small",
-                "shipping_method": "express",
+                "shopify_status": "unfulfilled",
                 "destination": "BG",
-                "order_type": "Multi",
                 "items": [
                     {"sku": "SKU-M", "quantity": 1, "product_name": "Meta Widget"}
                 ]
@@ -580,10 +579,10 @@ def test_get_order_metadata_destination(packer_logic, test_dir):
     assert metadata['destination'] == 'BG'
 
 
-def test_get_order_metadata_order_type(packer_logic, test_dir):
+def test_get_order_metadata_shopify_status(packer_logic, test_dir):
     _load_json_with_metadata(packer_logic, test_dir)
     metadata = packer_logic.get_order_metadata("ORD-META")
-    assert metadata['order_type'] == 'Multi'
+    assert metadata['shopify_status'] == 'unfulfilled'
 
 
 def test_get_order_metadata_created_at(packer_logic, test_dir):
@@ -629,9 +628,9 @@ def test_get_order_metadata_missing_optional_fields_default_empty(packer_logic, 
     assert metadata['internal_tags'] == []
     assert metadata['tags'] == []
     assert metadata['status'] == ''
+    assert metadata['shopify_status'] == ''
     assert metadata['recommended_box'] == ''
     assert metadata['destination'] == ''
-    assert metadata['order_type'] == ''
 
 
 def test_get_order_metadata_nan_tags_filtered(packer_logic, test_dir):
