@@ -2097,7 +2097,17 @@ class MainWindow(QMainWindow):
         self.packer_mode_widget.set_focus_to_scanner()
 
     def _on_all_orders_complete(self):
-        """Handle the all_orders_complete signal — offer to end session."""
+        """Handle the all_orders_complete signal — defer dialog to next event loop tick.
+
+        Deferring prevents an AttributeError that occurs when the signal is emitted
+        synchronously inside process_sku_scan(), because showing a QMessageBox here
+        (and the user clicking Yes → end_session() → self.logic = None) would corrupt
+        the caller's stack frame that still holds references to self.logic.
+        """
+        QTimer.singleShot(0, self._show_all_complete_dialog)
+
+    def _show_all_complete_dialog(self):
+        """Show the 'all orders packed' prompt after the current event loop cycle."""
         reply = QMessageBox.question(
             self,
             "All Orders Packed",

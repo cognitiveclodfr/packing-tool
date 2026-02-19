@@ -284,6 +284,12 @@ QHeaderView::section:hover {
     background-color: #d8e8f8;
 }
 
+/* Table corner button (top-left cell at row-header / column-header intersection) */
+QTableView QTableCornerButton::section {
+    background-color: #eeeeee;
+    border: 1px solid #cccccc;
+}
+
 /* ----------------------------------------------------------------
    Table / Tree Views
    ---------------------------------------------------------------- */

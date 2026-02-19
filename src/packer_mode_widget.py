@@ -138,12 +138,21 @@ class PackerModeWidget(QWidget):
         frame_layout.addWidget(self.table)
         left_layout.addWidget(self.table_frame)
 
-        # Scanned Orders History — compact panel below the items table (left panel)
+        # Bottom row: history table (left half) + extras panel (right half, hidden until needed)
+        _bottom_row = QWidget()
+        _bottom_row.setMaximumHeight(160)
+        _brl = QHBoxLayout(_bottom_row)
+        _brl.setContentsMargins(0, 0, 0, 0)
+        _brl.setSpacing(4)
+
+        _hist_container = QWidget()
+        _hist_vl = QVBoxLayout(_hist_container)
+        _hist_vl.setContentsMargins(0, 0, 0, 0)
+        _hist_vl.setSpacing(2)
         _hist_title = QLabel("Scanned Orders History:")
         _hist_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         _hf = _hist_title.font(); _hf.setPointSize(9); _hist_title.setFont(_hf)
-        left_layout.addWidget(_hist_title)
-
+        _hist_vl.addWidget(_hist_title)
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(1)
         self.history_table.setHorizontalHeaderLabels(["Order #"])
@@ -151,76 +160,21 @@ class PackerModeWidget(QWidget):
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.history_table.setFocusPolicy(Qt.NoFocus)
-        self.history_table.setMaximumHeight(90)
-        left_layout.addWidget(self.history_table)
+        _hist_vl.addWidget(self.history_table)
+        _brl.addWidget(_hist_container, stretch=1)
 
-        # [D] Summary panel — deduped SKUs with summed quantities (hidden until order loaded)
-        self.summary_frame = QFrame()
-        self.summary_frame.setObjectName("SummaryFrame")
-        self.summary_frame.setStyleSheet(
-            "QFrame#SummaryFrame { border: 1px solid palette(mid); border-radius: 3px; }"
-        )
-        self.summary_frame.setVisible(False)
-        _sfl = QVBoxLayout(self.summary_frame)
-        _sfl.setContentsMargins(4, 2, 4, 2)
-        _sfl.setSpacing(2)
-        _sh = QLabel("Summary (unique SKUs):")
-        _shf = _sh.font(); _shf.setPointSize(9); _sh.setFont(_shf)
-        _sfl.addWidget(_sh)
-        self.summary_table = QTableWidget()
-        self.summary_table.setColumnCount(3)
-        self.summary_table.setHorizontalHeaderLabels(["SKU", "Packed/Total", "Status"])
-        self.summary_table.horizontalHeader().setStretchLastSection(True)
-        self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.summary_table.setSelectionMode(QAbstractItemView.NoSelection)
-        self.summary_table.setFocusPolicy(Qt.NoFocus)
-        _sfl.addWidget(self.summary_table)
-        # summary_frame lives in the right panel (added there below)
+        # [J] Extra items panel — right half of the bottom row (hidden by default)
+        # Wrapped in a container with a same-height spacer as the history title so
+        # that the top edges of the history table and extras panel are aligned.
+        _extras_container = QWidget()
+        _ecvl = QVBoxLayout(_extras_container)
+        _ecvl.setContentsMargins(0, 0, 0, 0)
+        _ecvl.setSpacing(2)
+        _extras_title_spacer = QLabel()  # invisible, matches history title height
+        _etsf = _extras_title_spacer.font(); _etsf.setPointSize(9)
+        _extras_title_spacer.setFont(_etsf)
+        _ecvl.addWidget(_extras_title_spacer)
 
-        # ─── RIGHT PANEL ─────────────────────────────────────────────────────
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setAlignment(Qt.AlignCenter)
-
-        # Dev mode: visible scan simulator panel (replaces physical barcode scanner)
-        if self._sim_mode:
-            sim_group = QGroupBox("Scan Simulator (Dev Mode)")
-            sim_group.setStyleSheet(
-                "QGroupBox { border: 2px dashed #e67e22; border-radius: 6px; "
-                "margin-top: 6px; padding: 4px; color: #e67e22; font-weight: bold; }"
-                "QGroupBox::title { subcontrol-origin: margin; left: 8px; }"
-            )
-            sim_layout = QHBoxLayout(sim_group)
-            self.sim_input = QLineEdit()
-            self.sim_input.setPlaceholderText("Type order number or SKU, press Enter to scan...")
-            self.sim_input.returnPressed.connect(self._on_sim_scan)
-            sim_btn = QPushButton("Scan")
-            sim_btn.setFixedWidth(70)
-            sim_btn.clicked.connect(self._on_sim_scan)
-            sim_layout.addWidget(self.sim_input)
-            sim_layout.addWidget(sim_btn)
-            right_layout.addWidget(sim_group)
-
-        self.status_label = QLabel("Scan an order barcode")
-        font = QFont(); font.setPointSize(20)
-        self.status_label.setFont(font)
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setWordWrap(True)
-
-        self.notification_label = QLabel("")
-        notif_font = QFont(); notif_font.setPointSize(32); notif_font.setBold(True)
-        self.notification_label.setFont(notif_font)
-        self.notification_label.setAlignment(Qt.AlignCenter)
-        self.notification_label.setWordWrap(True)
-
-        right_layout.addWidget(self.status_label)
-        right_layout.addWidget(self.notification_label)
-        right_layout.addStretch()
-
-        # [D] Summary panel — inserted here in the right panel
-        right_layout.addWidget(self.summary_frame)
-
-        # [J] Extra items panel (hidden by default, shown when extras detected)
         self.extras_panel = QFrame()
         self.extras_panel.setObjectName("ExtrasPanel")
         self.extras_panel.setStyleSheet(
@@ -241,27 +195,124 @@ class PackerModeWidget(QWidget):
         self.extras_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.extras_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.extras_table.setFocusPolicy(Qt.NoFocus)
-        self.extras_table.setMaximumHeight(130)
         _epl.addWidget(self.extras_table)
-        right_layout.addWidget(self.extras_panel)
+        _ecvl.addWidget(self.extras_panel)
+        _brl.addWidget(_extras_container, stretch=1)
 
+        left_layout.addWidget(_bottom_row)
+
+        # [D] Summary panel — deduped SKUs with summed quantities (hidden until order loaded)
+        self.summary_frame = QFrame()
+        self.summary_frame.setObjectName("SummaryFrame")
+        self.summary_frame.setStyleSheet(
+            "QFrame#SummaryFrame { border: 1px solid palette(mid); border-radius: 3px; }"
+        )
+        self.summary_frame.setVisible(False)
+        _sfl = QVBoxLayout(self.summary_frame)
+        _sfl.setContentsMargins(4, 2, 4, 2)
+        _sfl.setSpacing(2)
+        _sh = QLabel("Summary (unique SKUs):")
+        _shf = _sh.font(); _shf.setPointSize(9); _sh.setFont(_shf)
+        _sfl.addWidget(_sh)
+        self.summary_table = QTableWidget()
+        self.summary_table.setColumnCount(4)
+        self.summary_table.setHorizontalHeaderLabels(["SKU", "Product", "Packed/Total", "Status"])
+        _shdr = self.summary_table.horizontalHeader()
+        _shdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        _shdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        _shdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        _shdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        _shdr.setStretchLastSection(False)
+        self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.summary_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.summary_table.setFocusPolicy(Qt.NoFocus)
+        _sfl.addWidget(self.summary_table)
+        # summary_frame lives in the right panel (added there below)
+
+        # ─── RIGHT PANEL ─────────────────────────────────────────────────────
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+
+        # Dev mode: visible scan simulator panel (replaces physical barcode scanner)
+        if self._sim_mode:
+            sim_group = QGroupBox("Scan Simulator (Dev Mode)")
+            sim_group.setStyleSheet(
+                "QGroupBox { border: 2px dashed #e67e22; border-radius: 6px; "
+                "margin-top: 6px; padding: 4px; color: #e67e22; font-weight: bold; }"
+                "QGroupBox::title { subcontrol-origin: margin; left: 8px; }"
+            )
+            sim_layout = QHBoxLayout(sim_group)
+            self.sim_input = QLineEdit()
+            self.sim_input.setPlaceholderText("Type order number or SKU, press Enter to scan...")
+            self.sim_input.returnPressed.connect(self._on_sim_scan)
+            sim_btn = QPushButton("Scan")
+            sim_btn.setFixedWidth(70)
+            sim_btn.clicked.connect(self._on_sim_scan)
+            sim_layout.addWidget(self.sim_input)
+            sim_layout.addWidget(sim_btn)
+            right_layout.addWidget(sim_group)
+
+        # Consolidated scan-info card: two bordered sections, no background fill
+        self.scan_info_frame = QFrame()
+        self.scan_info_frame.setObjectName("ScanInfoFrame")
+        self.scan_info_frame.setStyleSheet(
+            "QFrame#ScanInfoFrame { border: none; }"
+        )
+        _sif = QVBoxLayout(self.scan_info_frame)
+        _sif.setContentsMargins(0, 0, 0, 0)
+        _sif.setSpacing(4)
+
+        # ── Order status section — own border, transparent bg ─────────────────
+        _order_section = QFrame()
+        _order_section.setObjectName("OrderStatusSection")
+        _order_section.setStyleSheet(
+            "QFrame#OrderStatusSection { "
+            "border: 1px solid #666666; "
+            "border-radius: 4px; "
+            "}"
+        )
+        _osl = QVBoxLayout(_order_section)
+        _osl.setContentsMargins(10, 8, 10, 8)
+        self.status_label = QLabel("Scan an order barcode")
+        font = QFont(); font.setPointSize(13); font.setBold(True)
+        self.status_label.setFont(font)
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setWordWrap(True)
+        _osl.addWidget(self.status_label)
+        _sif.addWidget(_order_section)
+
+        # ── Scan feedback section — own border, transparent bg ────────────────
+        _feed_section = QFrame()
+        _feed_section.setObjectName("ScanFeedbackSection")
+        _feed_section.setStyleSheet(
+            "QFrame#ScanFeedbackSection { "
+            "border: 1px solid #666666; "
+            "border-radius: 4px; "
+            "}"
+        )
+        _fsl = QVBoxLayout(_feed_section)
+        _fsl.setContentsMargins(10, 6, 10, 8)
+        _fsl.setSpacing(3)
+        self.notification_label = QLabel("")
+        notif_font = QFont(); notif_font.setPointSize(22); notif_font.setBold(True)
+        self.notification_label.setFont(notif_font)
+        self.notification_label.setAlignment(Qt.AlignCenter)
+        self.notification_label.setWordWrap(True)
         raw_scan_title = QLabel("Last Scan:")
         raw_scan_title.setAlignment(Qt.AlignCenter)
+        _rsf = raw_scan_title.font(); _rsf.setPointSize(9); raw_scan_title.setFont(_rsf)
         self.raw_scan_label = QLabel("-")
         self.raw_scan_label.setAlignment(Qt.AlignCenter)
         self.raw_scan_label.setObjectName("RawScanLabel")
         self.raw_scan_label.setWordWrap(True)
+        _fsl.addWidget(self.notification_label)
+        _fsl.addWidget(raw_scan_title)
+        _fsl.addWidget(self.raw_scan_label)
+        _sif.addWidget(_feed_section)
 
-        right_layout.addWidget(raw_scan_title)
-        right_layout.addWidget(self.raw_scan_label)
-        right_layout.addStretch()
+        right_layout.addWidget(self.scan_info_frame)
 
-        self.scanner_input = QLineEdit()
-        self.scanner_input.setFixedSize(1, 1)
-        self.scanner_input.returnPressed.connect(self._on_scan)
-        right_layout.addWidget(self.scanner_input)
-
-        # [E] Skip Order button (disabled until an order is loaded)
+        # [E] Skip Order button — placed directly under the scan-info card
         self.skip_order_button = QPushButton("Skip Order →")
         self.skip_order_button.setFocusPolicy(Qt.NoFocus)
         self.skip_order_button.setEnabled(False)
@@ -269,13 +320,24 @@ class PackerModeWidget(QWidget):
         right_layout.addWidget(self.skip_order_button)
 
         right_layout.addStretch()
+
+        # [D] Summary panel
+        right_layout.addWidget(self.summary_frame)
+
+        right_layout.addStretch()
+
+        self.scanner_input = QLineEdit()
+        self.scanner_input.setFixedSize(1, 1)
+        self.scanner_input.returnPressed.connect(self._on_scan)
+        right_layout.addWidget(self.scanner_input)
+
         self.exit_button = QPushButton("<< Back to Menu")
         font = self.exit_button.font(); font.setPointSize(14)
         self.exit_button.setFont(font)
         self.exit_button.clicked.connect(self.exit_packing_mode.emit)
         right_layout.addWidget(self.exit_button)
 
-        main_layout.addWidget(left_widget, stretch=2)
+        main_layout.addWidget(left_widget, stretch=3)
         main_layout.addWidget(right_widget, stretch=1)
 
     # ─── Scanner input handlers ───────────────────────────────────────────────
@@ -572,12 +634,12 @@ class PackerModeWidget(QWidget):
             btn_layout.setSpacing(3)
 
             keep_btn = QPushButton("Keep")
-            keep_btn.setFixedWidth(50)
+            keep_btn.setFixedWidth(70)
             keep_btn.setFocusPolicy(Qt.NoFocus)
             keep_btn.clicked.connect(partial(self._on_extra_confirmed, norm_sku))
 
             remove_btn = QPushButton("Remove")
-            remove_btn.setFixedWidth(60)
+            remove_btn.setFixedWidth(80)
             remove_btn.setFocusPolicy(Qt.NoFocus)
             remove_btn.clicked.connect(partial(self._on_extra_removed, norm_sku))
 
@@ -671,6 +733,11 @@ class PackerModeWidget(QWidget):
             self.metadata_banner.setVisible(False)
             return
 
+        def _clean(val) -> str:
+            """Return empty string for None, empty, or pandas 'nan' string values."""
+            s = str(val).strip() if val is not None else ''
+            return '' if s.lower() == 'nan' else s
+
         def _show_chip(lbl: QLabel, text: str):
             if text:
                 lbl.setText(text)
@@ -679,24 +746,27 @@ class PackerModeWidget(QWidget):
                 lbl.setText("")
                 lbl.setVisible(False)
 
-        order_type = metadata.get('order_type', '')
+        order_type = _clean(metadata.get('order_type', ''))
         _show_chip(self._meta_type_lbl, f"Type: {order_type}" if order_type else "")
 
-        courier = metadata.get('shipping_provider', '')
+        courier = _clean(metadata.get('shipping_provider', ''))
         _show_chip(self._meta_courier_lbl, f"Courier: {courier}" if courier else "")
 
-        country = metadata.get('destination_country', '')
+        country = _clean(metadata.get('destination_country', ''))
         _show_chip(self._meta_country_lbl, f"Dest: {country}" if country else "")
 
-        box = metadata.get('order_min_box', '')
+        box = _clean(metadata.get('order_min_box', ''))
         _show_chip(self._meta_box_lbl, f"Box: {box}" if box else "")
 
         all_tags = list(metadata.get('tags') or []) + list(metadata.get('internal_tags') or [])
-        tags_str = ", ".join(str(t) for t in all_tags if t is not None) if all_tags else ""
+        tags_str = ", ".join(
+            str(t) for t in all_tags
+            if t is not None and str(t).strip().lower() != 'nan'
+        )
         _show_chip(self._meta_tags_lbl, f"Tags: {tags_str}" if tags_str else "")
 
-        notes = metadata.get('notes') or metadata.get('system_note') or ''
-        _show_chip(self._meta_notes_lbl, str(notes) if notes else "")
+        notes = _clean(metadata.get('notes') or metadata.get('system_note') or '')
+        _show_chip(self._meta_notes_lbl, notes if notes else "")
 
         has_anything = any([order_type, courier, country, box, tags_str, notes])
         self.metadata_banner.setVisible(has_anything)
@@ -709,9 +779,11 @@ class PackerModeWidget(QWidget):
         """
         Deduplicates items by SKU and updates the summary table with summed quantities.
         This handles duplicate SKU rows that can appear in Shopify exports.
+        Columns: SKU | Product | Packed/Total | Status
         """
         sku_totals: Dict[str, int] = defaultdict(int)
         sku_packed: Dict[str, int] = defaultdict(int)
+        sku_name: Dict[str, str] = {}
 
         for item in items:
             sku = item.get('SKU', item.get('sku', ''))
@@ -720,6 +792,8 @@ class PackerModeWidget(QWidget):
             except (ValueError, TypeError):
                 qty = 1
             sku_totals[sku] += qty
+            if sku not in sku_name:
+                sku_name[sku] = item.get('Product_Name', item.get('product_name', ''))
 
         for state in order_state:
             orig = state.get('original_sku', '')
@@ -732,12 +806,13 @@ class PackerModeWidget(QWidget):
             total = sku_totals[sku]
             packed = sku_packed.get(sku, 0)
             self.summary_table.setItem(i, 0, QTableWidgetItem(sku))
-            self.summary_table.setItem(i, 1, QTableWidgetItem(f"{packed} / {total}"))
+            self.summary_table.setItem(i, 1, QTableWidgetItem(sku_name.get(sku, '')))
+            self.summary_table.setItem(i, 2, QTableWidgetItem(f"{packed} / {total}"))
             status_text = "Done" if packed >= total else "Pending"
             status_item = QTableWidgetItem(status_text)
             if packed >= total:
                 status_item.setForeground(QColor("#43a047"))
-            self.summary_table.setItem(i, 2, status_item)
+            self.summary_table.setItem(i, 3, status_item)
 
         self.summary_frame.setVisible(len(unique_skus) > 0)
 
@@ -745,20 +820,25 @@ class PackerModeWidget(QWidget):
         """
         Rebuild the summary table by reading current row data directly from the
         items table. Called from update_item_row() so the summary stays live.
-        Each table row has: col 1 = SKU, col 2 = "packed / total" text.
+        Main table columns: 0=Product Name, 1=SKU, 2="packed / total", 3=Status, 4=Actions.
+        Summary columns: 0=SKU, 1=Product, 2=Packed/Total, 3=Status.
         """
         if not self.summary_frame.isVisible():
             return
 
         sku_packed: Dict[str, int] = defaultdict(int)
         sku_totals: Dict[str, int] = defaultdict(int)
+        sku_name: Dict[str, str] = {}
 
         for r in range(self.table.rowCount()):
-            sku_item = self.table.item(r, 1)
+            name_item = self.table.item(r, 0)
+            sku_item  = self.table.item(r, 1)
             qty_item  = self.table.item(r, 2)
             if sku_item is None or qty_item is None:
                 continue
             sku = sku_item.text()
+            if sku not in sku_name:
+                sku_name[sku] = name_item.text() if name_item else ''
             parts = qty_item.text().split(' / ')
             try:
                 packed = int(parts[0])
@@ -774,12 +854,13 @@ class PackerModeWidget(QWidget):
             total  = sku_totals[sku]
             packed = sku_packed.get(sku, 0)
             self.summary_table.setItem(i, 0, QTableWidgetItem(sku))
-            self.summary_table.setItem(i, 1, QTableWidgetItem(f"{packed} / {total}"))
+            self.summary_table.setItem(i, 1, QTableWidgetItem(sku_name.get(sku, '')))
+            self.summary_table.setItem(i, 2, QTableWidgetItem(f"{packed} / {total}"))
             status_text = "Done" if packed >= total else "Pending"
             status_item = QTableWidgetItem(status_text)
             if packed >= total:
                 status_item.setForeground(QColor("#43a047"))
-            self.summary_table.setItem(i, 2, status_item)
+            self.summary_table.setItem(i, 3, status_item)
 
     @staticmethod
     def _normalize_sku(sku: str) -> str:
