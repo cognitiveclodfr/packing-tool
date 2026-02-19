@@ -1743,11 +1743,13 @@ class MainWindow(QMainWindow):
                 _cur_sess_path = getattr(self, 'current_session_path', None)
                 _cur_pack_list = getattr(self, 'current_packing_list', None)
 
-                def _do_slow_writes():
-                    # 1. Flush async state write
-                    _logic_ref._state_writer.flush()
+                # Flush any pending state write on the main thread *before*
+                # handing off to the background worker.  AsyncStateWriter's
+                # flush() must only be called from the main/UI thread.
+                _logic_ref._state_writer.flush()
 
-                    # 2. Save session summary
+                def _do_slow_writes():
+                    # 1. Save session summary
                     try:
                         _logic_ref.save_session_summary(
                             summary_path=_summary_path,
@@ -1776,7 +1778,7 @@ class MainWindow(QMainWindow):
                         except Exception:
                             pass
 
-                    # 3. Record to stats
+                    # 2. Record to stats
                     try:
                         _stats_mgr.record_packing(
                             client_id=_client_id,
@@ -1801,7 +1803,7 @@ class MainWindow(QMainWindow):
                     except Exception as exc:
                         logger.error(f"record_packing failed: {exc}", exc_info=True)
 
-                    # 4. Update worker stats
+                    # 3. Update worker stats
                     try:
                         if _worker_id:
                             _worker_mgr.update_worker_stats(
@@ -1816,7 +1818,7 @@ class MainWindow(QMainWindow):
                     except Exception as exc:
                         logger.error(f"update_worker_stats failed: {exc}", exc_info=True)
 
-                    # 5. Update session metadata
+                    # 4. Update session metadata
                     try:
                         if _cur_sess_path and _cur_pack_list:
                             _sess_mgr.update_session_metadata(

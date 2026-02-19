@@ -5,6 +5,7 @@ Eliminates UI freezes caused by synchronous writes to a slow network share.
 The latest state is always kept in a single pending slot — never accumulates stale writes.
 """
 
+import copy
 import threading
 from typing import Callable, Dict, Any, Optional
 
@@ -19,13 +20,14 @@ class AsyncStateWriter:
 
     Behaviour:
     - schedule(state_dict): non-blocking, replaces any pending write
-    - flush(): blocking, waits until no pending write remains
+    - flush(): blocking, waits until the background thread has finished writing
     - shutdown(): flush then stop daemon thread
 
     Concurrency model:
-    - Only the caller (main/UI thread) calls schedule() and flush()
+    - schedule() and flush() must only be called from the main/UI thread
     - Background daemon thread calls the write_fn
-    - state_dict must be a plain serialisable dict (snapshot, no shared objects)
+    - Incoming state_dict is deep-copied on schedule() so the caller can freely
+      mutate its in-memory state immediately after scheduling
 
     sync_mode=True skips the background thread and writes synchronously;
     useful for unit tests that assert file content after each call.
@@ -44,6 +46,7 @@ class AsyncStateWriter:
 
         self._condition = threading.Condition()
         self._pending: Optional[Dict[str, Any]] = None
+        self._is_writing: bool = False  # True while write_fn is executing
         self._stop = False
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="state-writer"
@@ -60,27 +63,33 @@ class AsyncStateWriter:
 
         If a previous write is still pending (not yet started), it is replaced
         by this newer state — only the latest state ever reaches disk.
+
+        A deep copy of state_dict is made immediately so the caller is free to
+        continue mutating its in-memory state without risking torn writes.
         """
         if self._sync_mode:
             self._write_fn(state_dict)
             return
 
+        snapshot = copy.deepcopy(state_dict)
         with self._condition:
-            self._pending = state_dict
+            self._pending = snapshot
             self._condition.notify()
 
     def flush(self) -> None:
         """
-        Blocking: wait until no pending write remains.
+        Blocking: wait until no pending write remains AND the current write (if
+        any) has completed.
 
         Call before checkpoints (order complete, session end) to guarantee
         the latest state is on disk before proceeding.
+        Must be called from the main/UI thread only.
         """
         if self._sync_mode:
             return  # Already written synchronously
 
         with self._condition:
-            while self._pending is not None:
+            while self._pending is not None or self._is_writing:
                 self._condition.wait()
 
     def shutdown(self) -> None:
@@ -113,7 +122,8 @@ class AsyncStateWriter:
                     break
 
                 state = self._pending
-                self._pending = None  # Claim the work
+                self._pending = None      # Claim the work
+                self._is_writing = True   # Signal that a write is in progress
 
             # Perform the write outside the lock so schedule() is never blocked
             try:
@@ -122,4 +132,5 @@ class AsyncStateWriter:
                 logger.exception("AsyncStateWriter: write failed")
             finally:
                 with self._condition:
+                    self._is_writing = False
                     self._condition.notify_all()  # Wake flush() waiters
