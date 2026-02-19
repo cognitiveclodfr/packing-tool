@@ -34,10 +34,11 @@ if str(project_root) not in sys.path:
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog, QStackedWidget,
     QHBoxLayout, QMessageBox, QLineEdit, QComboBox, QDialog, QFormLayout, QDialogButtonBox, QTabWidget,
-    QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QGroupBox, QScrollArea, QInputDialog
+    QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem, QGroupBox, QScrollArea, QInputDialog,
+    QProgressDialog
 )
 from PySide6.QtGui import QAction, QFont, QCloseEvent, QKeySequence
-from PySide6.QtCore import QTimer, QSettings, QSize, Qt
+from PySide6.QtCore import QTimer, QSettings, QSize, Qt, QThread, Signal
 from datetime import datetime
 from openpyxl.styles import PatternFill
 import pandas as pd
@@ -97,6 +98,86 @@ def find_latest_session_dir(base_dir: str = ".") -> str | None:
     # Return the one that was most recently modified
     latest_session_dir = max(valid_sessions, key=os.path.getmtime)
     return latest_session_dir
+
+
+class SessionStartWorker(QThread):
+    """
+    Background worker for the slow I/O steps when starting a session.
+
+    Performs PackerLogic construction (reads packer_config + packing_state from server)
+    and load_packing_list_json (reads + parses the packing list JSON) off the UI thread.
+
+    Lock acquisition and heartbeat setup remain on the main thread because stale-lock
+    handling requires a QMessageBox interaction.
+
+    Usage (blocking-with-progress pattern):
+        worker = SessionStartWorker(client_id, profile_manager, work_dir, packing_list_path)
+        worker.start()
+        while not worker.wait(50):
+            QApplication.processEvents()
+        if worker.error:
+            raise worker.error
+        self.logic = worker.logic
+    """
+
+    def __init__(self, client_id, profile_manager, work_dir, packing_list_path, parent=None):
+        super().__init__(parent)
+        self._client_id = client_id
+        self._profile_manager = profile_manager
+        self._work_dir = work_dir
+        self._packing_list_path = packing_list_path
+        # Results (read by main thread after wait())
+        self.logic = None
+        self.order_count = 0
+        self.list_name = ""
+        self.error = None  # Exception instance if failed
+
+    def run(self) -> None:
+        try:
+            from packer_logic import PackerLogic
+            logic = PackerLogic(
+                client_id=self._client_id,
+                profile_manager=self._profile_manager,
+                work_dir=str(self._work_dir),
+            )
+            order_count, list_name = logic.load_packing_list_json(str(self._packing_list_path))
+            # Move Qt object ownership back to the main thread
+            logic.moveToThread(QApplication.instance().thread())
+            self.logic = logic
+            self.order_count = order_count
+            self.list_name = list_name
+        except Exception as exc:
+            self.error = exc
+
+
+class SessionEndWorker(QThread):
+    """
+    Background worker for the slow server-write operations at session end.
+
+    Accepts a single callable (write_fn) that captures all necessary context
+    via closure, keeping this class generic and the caller readable.
+
+    Usage (blocking-with-progress pattern):
+        worker = SessionEndWorker(lambda: _do_all_slow_writes())
+        worker.start()
+        while not worker.wait(50):
+            QApplication.processEvents()
+        if worker.error:
+            logger.error(...)
+        # Proceed with lock release / UI reset
+    """
+
+    def __init__(self, write_fn, parent=None):
+        super().__init__(parent)
+        self._write_fn = write_fn
+        self.error = None
+
+    def run(self) -> None:
+        try:
+            self._write_fn()
+        except Exception as exc:
+            logger.error(f"SessionEndWorker: unexpected error: {exc}", exc_info=True)
+            self.error = exc
 
 
 class MainWindow(QMainWindow):
@@ -1394,19 +1475,39 @@ class MainWindow(QMainWindow):
             self._start_heartbeat_timer()
             logger.info("Heartbeat timer started")
 
-            # 5. Initialize PackerLogic
-            self.logic = PackerLogic(
+            # 5 & 7. Initialize PackerLogic + load packing list in background thread
+            # so the UI remains responsive (progress dialog animates while server is slow).
+            progress = QProgressDialog("Loading packing list…", None, 0, 0, self)
+            progress.setWindowTitle("Please Wait")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setCancelButton(None)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            progress.show()
+            QApplication.processEvents()
+
+            start_worker = SessionStartWorker(
                 client_id=client_id,
                 profile_manager=self.profile_manager,
-                work_dir=str(work_dir)
+                work_dir=work_dir,
+                packing_list_path=packing_list_path,
+                parent=self,
             )
+            start_worker.start()
+            while not start_worker.wait(50):
+                QApplication.processEvents()
+            progress.close()
 
-            # 6. Connect signals
+            if start_worker.error is not None:
+                raise start_worker.error
+
+            self.logic = start_worker.logic
+            order_count = start_worker.order_count
+            list_name = start_worker.list_name
+
+            # 6. Connect signals (must happen on main thread after moveToThread)
             self.logic.item_packed.connect(self._on_item_packed)
             self.logic.all_orders_complete.connect(self._on_all_orders_complete)
-
-            # 7. Load packing data into PackerLogic
-            order_count, list_name = self.logic.load_packing_list_json(str(packing_list_path))
 
             logger.info(f"Loaded {order_count} orders from packing list")
 
@@ -1563,192 +1664,186 @@ class MainWindow(QMainWindow):
 
             self.status_label.setText(f"Session ended. Report saved to {output_path}")
 
-            # REDESIGNED STATE MANAGEMENT: Generate session summary from PackerLogic
-            # PackerLogic now maintains full session state with metadata and generates summary
-            # This generates a unified v1.3.0 format summary
+            # Generate session summary + record stats in background thread so the
+            # UI stays responsive while writing to the (potentially slow) file server.
             if self.logic:
-                # Determine summary output path based on session type
-                is_shopify_session = hasattr(self, 'current_work_dir') and self.current_work_dir
+                _is_shopify = hasattr(self, 'current_work_dir') and self.current_work_dir
 
-                if is_shopify_session:
-                    # Shopify session - save to work directory
-                    summary_output_path = os.path.join(self.current_work_dir, "session_summary.json")
-                    session_type = "shopify"
+                if _is_shopify:
+                    _summary_path = os.path.join(self.current_work_dir, "session_summary.json")
+                    _session_type = "shopify"
                 else:
-                    # Excel session - save to barcodes directory
-                    barcodes_dir = self.session_manager.get_barcodes_dir()
-                    summary_output_path = os.path.join(barcodes_dir, "session_summary.json")
-                    session_type = "excel"
+                    _barcodes_dir = self.session_manager.get_barcodes_dir()
+                    _summary_path = os.path.join(_barcodes_dir, "session_summary.json")
+                    _session_type = "excel"
 
-                # Generate and save unified v1.3.0 summary via PackerLogic
+                # --- Gather all stats data on the main thread (fast, no server I/O) ---
                 try:
-                    self.logic.save_session_summary(
-                        summary_path=summary_output_path,
-                        worker_id=self.current_worker_id,
-                        worker_name=self.current_worker_name,
-                        session_type=session_type
-                    )
-                    logger.info(f"Session summary (v1.3.0) saved to: {summary_output_path}")
-
+                    _session_info = self.session_manager.get_session_info()
+                    _start_time = None
+                    if _session_info and 'started_at' in _session_info:
+                        try:
+                            _start_time = datetime.fromisoformat(_session_info['started_at'])
+                        except (ValueError, TypeError):
+                            logger.warning("Could not parse started_at from session_info")
                 except Exception as e:
-                    logger.error(f"Failed to save PackerLogic session summary: {e}", exc_info=True)
-                    # This is critical - we need the summary for history
-                    # Try to save minimal summary as fallback
-                    try:
-                        from shared.metadata_utils import get_current_timestamp
-                        minimal_summary = {
-                            "version": "1.3.0",
-                            "session_id": self.logic.session_id if self.logic else "unknown",
-                            "session_type": session_type,
-                            "client_id": self.current_client_id,
-                            "worker_id": self.current_worker_id,
-                            "worker_name": self.current_worker_name,
-                            "completed_at": get_current_timestamp(),
-                            "error": str(e)
-                        }
-                        with open(summary_output_path, 'w', encoding='utf-8') as f:
-                            json.dump(minimal_summary, f, indent=2, ensure_ascii=False)
-                        logger.warning("Saved minimal session summary due to errors")
-                    except Exception as e2:
-                        logger.error(f"Could not save even minimal summary: {e2}", exc_info=True)
+                    logger.warning(f"Could not get session_info: {e}")
+                    _session_info = None
+                    _start_time = None
 
-            # Phase 1.3: Record session completion metrics
-            # Record session to stats and update worker stats
-            try:
-                session_info = self.session_manager.get_session_info()
+                _end_time = datetime.now()
+                _completed_orders_list = self.logic.session_packing_state.get('completed_orders', [])
+                _completed_orders = len(_completed_orders_list)
+                _in_progress_orders_dict = self.logic.session_packing_state.get('in_progress', {})
+                _in_progress_orders = len(_in_progress_orders_dict)
 
-                # Get timestamps
-                start_time = None
-                if session_info and 'started_at' in session_info:
-                    try:
-                        start_time = datetime.fromisoformat(session_info['started_at'])
-                    except (ValueError, TypeError):
-                        logger.warning("Could not parse started_at from session_info")
-
-                end_time = datetime.now()
-
-                # Count completed orders and items
-                completed_orders_list = self.logic.session_packing_state.get('completed_orders', [])
-                completed_orders = len(completed_orders_list)
-
-                in_progress_orders_dict = self.logic.session_packing_state.get('in_progress', {})
-                in_progress_orders = len(in_progress_orders_dict)
-
-                # Calculate items_packed correctly:
-                # CRITICAL: Use pd.to_numeric() to avoid string concatenation
-                # 1. For completed orders: all items are packed
-                # 2. For in-progress orders: sum 'packed' values
-                items_packed = 0
-
+                _items_packed = 0
                 try:
-                    # Items from completed orders (all items packed)
-                    if self.logic.processed_df is not None and completed_orders_list:
-                        completed_items = pd.to_numeric(
+                    if self.logic.processed_df is not None and _completed_orders_list:
+                        _ci = pd.to_numeric(
                             self.logic.processed_df[
-                                self.logic.processed_df['Order_Number'].isin(completed_orders_list)
+                                self.logic.processed_df['Order_Number'].isin(_completed_orders_list)
                             ]['Quantity'],
                             errors='coerce'
                         ).sum()
-                        items_packed += int(completed_items)
-                        logger.debug(f"Completed orders items: {int(completed_items)}")
-
-                    # Items from in-progress orders (partial packing)
-                    in_progress_items = 0
-                    for order_state_list in in_progress_orders_dict.values():
-                        # order_state_list is a list of SKU state objects
-                        if isinstance(order_state_list, list):
-                            for sku_data in order_state_list:
-                                if isinstance(sku_data, dict):
-                                    in_progress_items += sku_data.get('packed', 0)
-
-                    items_packed += in_progress_items
-                    logger.debug(f"In-progress items: {in_progress_items}")
-                    logger.info(f"Total items_packed: {items_packed} (completed: {int(completed_items) if completed_orders_list else 0}, in-progress: {in_progress_items})")
-
+                        _items_packed += int(_ci)
+                    for _osl in _in_progress_orders_dict.values():
+                        if isinstance(_osl, list):
+                            for _sd in _osl:
+                                if isinstance(_sd, dict):
+                                    _items_packed += _sd.get('packed', 0)
                 except Exception as e:
                     logger.error(f"Error calculating items_packed: {e}", exc_info=True)
-                    items_packed = 0
 
-                # Count total orders and items from processed_df
+                _total_orders, _total_items = 0, 0
                 try:
-                    total_orders = len(self.logic.processed_df['Order_Number'].unique()) if self.logic.processed_df is not None else 0
-                    # CRITICAL: Use pd.to_numeric() to avoid string concatenation
-                    total_items = int(pd.to_numeric(self.logic.processed_df['Quantity'], errors='coerce').sum()) if self.logic.processed_df is not None else 0
+                    if self.logic.processed_df is not None:
+                        _total_orders = len(self.logic.processed_df['Order_Number'].unique())
+                        _total_items = int(pd.to_numeric(self.logic.processed_df['Quantity'], errors='coerce').sum())
                 except Exception as e:
                     logger.error(f"Error calculating totals: {e}", exc_info=True)
-                    total_orders = 0
-                    total_items = 0
 
-                # Get session identifier and packing list path based on session type
-                if is_shopify_session:
-                    # Shopify session - use current_packing_list as identifier
-                    session_id = f"{self.current_session_path}_{self.current_packing_list}" if hasattr(self, 'current_session_path') else "shopify_session"
-                    packing_list_path = self.current_packing_list if hasattr(self, 'current_packing_list') else "Unknown"
-                    summary_output_dir = self.current_work_dir
+                if _is_shopify:
+                    _session_id = f"{getattr(self, 'current_session_path', '')}_{getattr(self, 'current_packing_list', '')}"
+                    _pl_path_str = getattr(self, 'current_packing_list', 'Unknown') or 'Unknown'
                 else:
-                    # Excel session - use session_manager data
-                    session_id = self.session_manager.session_id
-                    packing_list_path = self.session_manager.packing_list_path
-                    summary_output_dir = output_dir
+                    _session_id = self.session_manager.session_id
+                    _pl_path_str = str(self.session_manager.packing_list_path or 'Unknown')
 
-                # Phase 1.4: Record packing session to unified statistics
-                try:
-                    # Calculate duration (if we have start_time)
-                    duration_seconds = int((end_time - start_time).total_seconds()) if start_time else None
+                _duration_seconds = int((_end_time - _start_time).total_seconds()) if _start_time else None
 
-                    # Record to unified stats (always, even if start_time is None)
-                    self.stats_manager.record_packing(
-                        client_id=self.current_client_id,
-                        session_id=session_id,
-                        worker_id=self.current_worker_id,
-                        orders_count=completed_orders,
-                        items_count=items_packed,
-                        metadata={
-                            "duration_seconds": duration_seconds,
-                            "packing_list_name": os.path.basename(packing_list_path) if packing_list_path else "Unknown",
-                            "started_at": start_time.isoformat() if start_time else None,
-                            "completed_at": end_time.isoformat(),
-                            "total_orders": total_orders,
-                            "in_progress_orders": in_progress_orders,
-                            "session_type": "shopify" if is_shopify_session else "excel",
-                            "user_name": os.environ.get('USERNAME', 'Unknown'),
-                            "worker_name": self.current_worker_name,
-                            "pc_name": os.environ.get('COMPUTERNAME', 'Unknown')
-                        }
-                    )
-                    logger.info(f"Recorded packing session to unified stats: {completed_orders} orders, {items_packed} items (Worker: {self.current_worker_name})")
+                # Capture non-Qt references for the closure
+                _logic_ref = self.logic
+                _client_id = self.current_client_id
+                _worker_id = self.current_worker_id
+                _worker_name = self.current_worker_name
+                _stats_mgr = self.stats_manager
+                _worker_mgr = self.worker_manager
+                _sess_mgr = self.session_manager
+                _cur_sess_path = getattr(self, 'current_session_path', None)
+                _cur_pack_list = getattr(self, 'current_packing_list', None)
 
-                    # Phase 1.3: Update worker statistics (ALWAYS, regardless of start_time)
-                    if self.current_worker_id:
-                        self.worker_manager.update_worker_stats(
-                            worker_id=self.current_worker_id,
-                            sessions=1,
-                            orders=completed_orders,
-                            items=items_packed,
-                            duration_seconds=duration_seconds if duration_seconds else 0,
-                            session_id=session_id if session_id else None
+                def _do_slow_writes():
+                    # 1. Flush async state write
+                    _logic_ref._state_writer.flush()
+
+                    # 2. Save session summary
+                    try:
+                        _logic_ref.save_session_summary(
+                            summary_path=_summary_path,
+                            worker_id=_worker_id,
+                            worker_name=_worker_name,
+                            session_type=_session_type,
                         )
-                        logger.info(f"Updated worker stats for {self.current_worker_name}")
-                    else:
-                        logger.warning("Worker ID is None, skipping worker stats update")
-                except Exception as e:
-                    logger.error(f"Error recording packing session to unified stats: {e}", exc_info=True)
+                        logger.info(f"Session summary saved to: {_summary_path}")
+                    except Exception as exc:
+                        logger.error(f"save_session_summary failed: {exc}", exc_info=True)
+                        try:
+                            from shared.metadata_utils import get_current_timestamp
+                            _minimal = {
+                                "version": "1.3.0",
+                                "session_id": _logic_ref.session_id if _logic_ref else "unknown",
+                                "session_type": _session_type,
+                                "client_id": _client_id,
+                                "worker_id": _worker_id,
+                                "worker_name": _worker_name,
+                                "completed_at": get_current_timestamp(),
+                                "error": str(exc),
+                            }
+                            with open(_summary_path, 'w', encoding='utf-8') as _f:
+                                import json as _json
+                                _json.dump(_minimal, _f, indent=2, ensure_ascii=False)
+                        except Exception:
+                            pass
 
-                # Update session metadata with completion status
-                try:
-                    if hasattr(self, 'current_session_path') and hasattr(self, 'current_packing_list'):
-                        if self.current_session_path and self.current_packing_list:
-                            self.session_manager.update_session_metadata(
-                                self.current_session_path,
-                                self.current_packing_list,
-                                'completed'
+                    # 3. Record to stats
+                    try:
+                        _stats_mgr.record_packing(
+                            client_id=_client_id,
+                            session_id=_session_id,
+                            worker_id=_worker_id,
+                            orders_count=_completed_orders,
+                            items_count=_items_packed,
+                            metadata={
+                                "duration_seconds": _duration_seconds,
+                                "packing_list_name": os.path.basename(_pl_path_str),
+                                "started_at": _start_time.isoformat() if _start_time else None,
+                                "completed_at": _end_time.isoformat(),
+                                "total_orders": _total_orders,
+                                "in_progress_orders": _in_progress_orders,
+                                "session_type": _session_type,
+                                "user_name": os.environ.get('USERNAME', 'Unknown'),
+                                "worker_name": _worker_name,
+                                "pc_name": os.environ.get('COMPUTERNAME', 'Unknown'),
+                            },
+                        )
+                        logger.info(f"Recorded {_completed_orders} orders, {_items_packed} items to stats")
+                    except Exception as exc:
+                        logger.error(f"record_packing failed: {exc}", exc_info=True)
+
+                    # 4. Update worker stats
+                    try:
+                        if _worker_id:
+                            _worker_mgr.update_worker_stats(
+                                worker_id=_worker_id,
+                                sessions=1,
+                                orders=_completed_orders,
+                                items=_items_packed,
+                                duration_seconds=_duration_seconds or 0,
+                                session_id=_session_id,
                             )
-                            logger.info("Updated session metadata to 'completed' status")
-                except Exception as e:
-                    logger.warning(f"Could not update session metadata: {e}")
+                            logger.info(f"Updated worker stats for {_worker_name}")
+                    except Exception as exc:
+                        logger.error(f"update_worker_stats failed: {exc}", exc_info=True)
 
-            except Exception as e:
-                logger.error(f"CRITICAL: Exception in session completion block: {e}", exc_info=True)
+                    # 5. Update session metadata
+                    try:
+                        if _cur_sess_path and _cur_pack_list:
+                            _sess_mgr.update_session_metadata(
+                                _cur_sess_path, _cur_pack_list, 'completed'
+                            )
+                            logger.info("Updated session metadata to 'completed'")
+                    except Exception as exc:
+                        logger.warning(f"update_session_metadata failed: {exc}")
+
+                # Show progress dialog while writes happen in background
+                _end_progress = QProgressDialog("Saving session…", None, 0, 0, self)
+                _end_progress.setWindowTitle("Please Wait")
+                _end_progress.setWindowModality(Qt.WindowModal)
+                _end_progress.setCancelButton(None)
+                _end_progress.setMinimumDuration(0)
+                _end_progress.setValue(0)
+                _end_progress.show()
+                QApplication.processEvents()
+
+                _end_worker = SessionEndWorker(_do_slow_writes, self)
+                _end_worker.start()
+                while not _end_worker.wait(50):
+                    QApplication.processEvents()
+                _end_progress.close()
+
+                if _end_worker.error:
+                    logger.error(f"Session end writes had an error: {_end_worker.error}")
 
         except Exception as e:
             self.status_label.setText(f"Could not save the report. Error: {e}")

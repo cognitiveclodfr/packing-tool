@@ -20,6 +20,7 @@ from typing import List, Dict, Any, Tuple
 # Local imports
 from logger import get_logger
 from json_cache import get_cached_json, invalidate_json_cache
+from async_state_writer import AsyncStateWriter
 
 # Initialize module-level logger
 logger = get_logger(__name__)
@@ -138,6 +139,10 @@ class PackerLogic(QObject):
         self.current_order_start_time = None  # ISO timestamp when order scanning started
         self.current_order_items_scanned = []  # List of items with scan timestamps
         self.completed_orders_metadata = []  # List of completed orders with timing data
+
+        # Write-behind queue: state writes happen in background to avoid UI freezes.
+        # sync_mode=True is used in tests to keep writes synchronous.
+        self._state_writer = AsyncStateWriter(self._do_atomic_write)
 
         logger.info(f"PackerLogic initialized for client {client_id}")
         logger.debug(f"Work directory: {self.work_dir}")
@@ -425,53 +430,28 @@ class PackerLogic(QObject):
             logger.error(f"Error loading session state: {e}, starting fresh")
             self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
 
-    def _save_session_state(self):
+    def _build_state_dict(self) -> Dict[str, Any]:
         """
-        Save the current session's packing state to JSON file with atomic write.
+        Build the complete state dictionary from current in-memory data.
 
-        New behavior (redesigned state management):
-        - Saves complete state with metadata (session_id, timestamps, progress)
-        - Does NOT create .backup files (deprecated)
-        - State file is kept as permanent history after session completion
-        - Uses atomic write pattern to prevent corruption during crashes
-
-        State structure:
-        {
-            "session_id": "2025-11-10_1",
-            "client_id": "M",
-            "packing_list_name": "DHL_Orders",
-            "started_at": "2025-11-10T14:30:00",
-            "last_updated": "2025-11-10T15:45:23",
-            "status": "in_progress",
-            "pc_name": "WAREHOUSE-PC-01",
-            "progress": {...},
-            "in_progress": {...},
-            "completed": [...]
-        }
+        Must be called on the main thread (reads self.processed_df and
+        self.session_packing_state which are mutated by packing logic).
+        Returns a plain serialisable dict — safe to hand off to a background thread.
         """
-        state_file = self._get_state_file_path()
-
-        # Calculate progress metrics
         total_orders = len(self.orders_data) if self.orders_data else 0
         completed_orders_count = len(self.session_packing_state.get('completed_orders', []))
-        in_progress_count = len(self.session_packing_state.get('in_progress', {}))
 
-        # Calculate total and packed items
         total_items = 0
         packed_items = 0
 
-        # Count items from processed_df if available
         if self.processed_df is not None:
             try:
-                import pandas as pd
                 total_items = int(pd.to_numeric(self.processed_df['Quantity'], errors='coerce').sum())
             except Exception as e:
                 logger.warning(f"Could not calculate total_items: {e}")
 
-        # Count packed items from completed orders
         if self.processed_df is not None and self.session_packing_state.get('completed_orders'):
             try:
-                import pandas as pd
                 completed_items = pd.to_numeric(
                     self.processed_df[
                         self.processed_df['Order_Number'].isin(self.session_packing_state['completed_orders'])
@@ -482,22 +462,16 @@ class PackerLogic(QObject):
             except Exception as e:
                 logger.warning(f"Could not calculate packed items from completed orders: {e}")
 
-        # Count packed items from in-progress orders
         for order_state in self.session_packing_state.get('in_progress', {}).values():
             if isinstance(order_state, list):
-                # New format: list of item states
                 for item in order_state:
                     if isinstance(item, dict):
                         packed_items += item.get('packed', 0)
 
-        # Build complete state structure with metadata
         from shared.metadata_utils import get_current_timestamp
 
-        state_data = {
-            # Version
+        return {
             "version": "1.3.0",
-
-            # Metadata
             "session_id": self.session_id,
             "client_id": self.client_id,
             "packing_list_name": self.packing_list_name,
@@ -505,8 +479,6 @@ class PackerLogic(QObject):
             "last_updated": get_current_timestamp(),
             "status": "completed" if completed_orders_count == total_orders and total_orders > 0 else "in_progress",
             "pc_name": self.worker_pc,
-
-            # Progress summary
             "progress": {
                 "total_orders": total_orders,
                 "completed_orders": completed_orders_count,
@@ -514,12 +486,8 @@ class PackerLogic(QObject):
                 "total_items": total_items,
                 "packed_items": packed_items
             },
-
-            # Detailed packing state
-            # Phase 2b: Add timing metadata for in-progress order
             "in_progress": {
                 **self.session_packing_state.get('in_progress', {}),
-                # Add timing data if there's a current order with timing info
                 **({
                     "_timing": {
                         "current_order_start_time": self.current_order_start_time,
@@ -527,17 +495,31 @@ class PackerLogic(QObject):
                     }
                 } if self.current_order_number and self.current_order_start_time else {})
             },
-            # Persist any extra items scanned beyond required quantities
             "_current_extras": self.current_extra_items if self.current_extra_items else {},
-            # Phase 2b: Use completed_orders_metadata if available
-            "completed": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata else self._build_completed_list()
+            "completed": (
+                self.completed_orders_metadata
+                if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata
+                else self._build_completed_list()
+            ),
         }
+
+    def _do_atomic_write(self, state_data: Dict[str, Any]) -> None:
+        """
+        Write state_data to disk using an atomic temp-file → rename pattern.
+
+        Called by AsyncStateWriter from a background thread.
+        state_data must be a plain serialisable dict (no shared mutable objects).
+        """
+        state_file = self._get_state_file_path()
+        total_orders = state_data.get("progress", {}).get("total_orders", 0)
+        completed_orders_count = state_data.get("progress", {}).get("completed_orders", 0)
+        packed_items = state_data.get("progress", {}).get("packed_items", 0)
+        total_items = state_data.get("progress", {}).get("total_items", 0)
 
         try:
             state_path = Path(state_file)
             state_dir = state_path.parent
 
-            # Atomic write: write to temp file first
             with tempfile.NamedTemporaryFile(
                 mode='w',
                 dir=state_dir,
@@ -549,17 +531,53 @@ class PackerLogic(QObject):
                 json.dump(state_data, tmp_file, indent=2, ensure_ascii=False)
                 tmp_path = tmp_file.name
 
-            # Atomic replace (works on Windows too)
             shutil.move(tmp_path, state_file)
-
-            # OPTIMIZED: Invalidate JSON cache after write to ensure fresh data on next read
-            # This prevents serving stale cached data after state changes
             invalidate_json_cache(state_file)
 
             logger.debug(f"Session state saved: {completed_orders_count}/{total_orders} orders, {packed_items}/{total_items} items")
 
         except Exception as e:
             logger.error(f"CRITICAL: Failed to save session state: {e}", exc_info=True)
+
+    def _save_session_state(self) -> None:
+        """
+        Flush any pending async write, then write the current state synchronously.
+
+        Backward-compatible synchronous write — callers (including tests) that
+        call this method can rely on the file being present immediately after return.
+        """
+        self._state_writer.flush()
+        self._state_writer.schedule(self._build_state_dict())
+        # Flush again so the just-scheduled write completes before we return
+        self._state_writer.flush()
+
+    def _save_session_state_async(self) -> None:
+        """
+        Schedule an async write of the current state (non-blocking).
+
+        Use on the hot path (every SKU scan, cancel, extra) where a small
+        write delay is acceptable and UI responsiveness matters most.
+        """
+        self._state_writer.schedule(self._build_state_dict())
+
+    def _save_session_state_sync(self) -> None:
+        """
+        Flush any pending async write, write the current state, and wait for it to land.
+
+        Use at order-complete and session-end checkpoints to guarantee the
+        file on disk is up-to-date before the next significant action.
+        """
+        self._state_writer.flush()
+        self._state_writer.schedule(self._build_state_dict())
+        self._state_writer.flush()  # Wait for the just-scheduled write to complete
+
+    def close(self) -> None:
+        """
+        Flush any pending state write and shut down the background writer thread.
+
+        Call this when the session ends or the PackerLogic instance is discarded.
+        """
+        self._state_writer.shutdown()
 
     def _build_completed_list(self) -> List[Dict[str, Any]]:
         """
@@ -810,7 +828,7 @@ class PackerLogic(QObject):
                     'row': i
                 })
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
-            self._save_session_state()
+            self._save_session_state_async()
 
         # Phase 2b: Record order start time
         from shared.metadata_utils import get_current_timestamp
@@ -961,7 +979,7 @@ class PackerLogic(QObject):
                 if self.current_extra_items:
                     # Extra items detected — wait for worker to resolve them before completing
                     status = "ORDER_COMPLETE_WITH_EXTRAS"
-                    self._save_session_state()
+                    self._save_session_state_sync()
                     return {
                         "row": found_item['row'],
                         "packed": found_item['packed'],
@@ -996,12 +1014,14 @@ class PackerLogic(QObject):
                 # This allows the UI to show "5/8 items packed" in real-time
                 self.item_packed.emit(self.current_order_number, total_packed, total_required)
 
-            # === CRITICAL: Save state to disk ===
-            # This is called after EVERY successful scan to ensure:
-            # - No data loss if application crashes
-            # - Session can be restored exactly where we left off
-            # - Multi-PC environments see consistent state
-            self._save_session_state()
+            # === Save state to disk ===
+            # ORDER_COMPLETE: flush first (checkpoint) so the completed order is persisted
+            # before the UI transitions away.
+            # SKU_OK / other: async write — UI returns immediately, write happens in background.
+            if status == "ORDER_COMPLETE":
+                self._save_session_state_sync()
+            else:
+                self._save_session_state_async()
 
             # Return success with detailed information
             return {"row": found_item['row'], "packed": found_item['packed'], "is_complete": is_complete}, status
@@ -1017,7 +1037,7 @@ class PackerLogic(QObject):
             self.current_extra_items[normalized_final_sku] = (
                 self.current_extra_items.get(normalized_final_sku, 0) + 1
             )
-            self._save_session_state()
+            self._save_session_state_async()
             return None, "SKU_EXTRA"
         else:
             # SKU is not in this order at all
@@ -1052,7 +1072,7 @@ class PackerLogic(QObject):
             return {"row": row, "packed": 0}, "ITEM_ALREADY_ZERO"
         item['packed'] -= 1
         self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
-        self._save_session_state()
+        self._save_session_state_async()
         return {"row": row, "packed": item['packed']}, "ITEM_DECREMENTED"
 
     def force_confirm_item(self, row: int) -> Tuple[Dict, str]:
@@ -1081,7 +1101,9 @@ class PackerLogic(QObject):
             if self.current_order_number not in self.session_packing_state['completed_orders']:
                 self.session_packing_state['completed_orders'].append(self.current_order_number)
             self._check_all_complete()
-        self._save_session_state()
+            self._save_session_state_sync()  # Checkpoint: order now complete
+        else:
+            self._save_session_state_async()
         return {
             "row": row,
             "packed": item['required'],
@@ -1126,14 +1148,14 @@ class PackerLogic(QObject):
         and complete the order if so.
         """
         if self.current_extra_items:
-            self._save_session_state()
+            self._save_session_state_async()
             return {}, "EXTRA_PENDING"
         # Extras cleared — verify all required items are actually packed
         all_items_done = all(
             s['packed'] >= s['required'] for s in self.current_order_state
         )
         if not all_items_done:
-            self._save_session_state()
+            self._save_session_state_async()
             return {}, "EXTRA_CLEARED"
         # All items packed AND all extras resolved — finalize the order
         self._complete_current_order()
@@ -1141,7 +1163,7 @@ class PackerLogic(QObject):
         if self.current_order_number not in self.session_packing_state['completed_orders']:
             self.session_packing_state['completed_orders'].append(self.current_order_number)
         self._check_all_complete()
-        self._save_session_state()
+        self._save_session_state_sync()  # Checkpoint: order now complete
         return {}, "ORDER_NOW_COMPLETE"
 
     def load_packing_list_json(self, packing_list_path: Path) -> Tuple[int, str]:
@@ -1775,9 +1797,7 @@ class PackerLogic(QObject):
         - State files are permanent historical records
         - session_summary.json should be created separately via save_session_summary()
 
-        This method is now essentially a no-op, kept for backward compatibility.
-        In the new design, state files are NEVER deleted - they form the historical record.
+        Shuts down the async state writer (flushes any pending write).
         """
         logger.info("Session cleanup called (state files preserved as history)")
-        # No longer removing state files - they are permanent history
-        # This method kept for backward compatibility but does nothing
+        self.close()

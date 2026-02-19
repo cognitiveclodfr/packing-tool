@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, QTimer, QThread, Qt
 
 from pathlib import Path
+import os
 import time
 
 from logger import get_logger
@@ -74,6 +75,31 @@ class RefreshWorker(QThread):
         """Request worker to abort current operation."""
         self._abort = True
 
+    @staticmethod
+    def _collect_session_dir_mtimes(sessions_root: Path) -> dict:
+        """
+        Fast scan: collect {client/session: mtime} for all session dirs.
+
+        Uses os.scandir() which is much cheaper than iterdir() + stat().
+        A single level of directory entries is enough because each session
+        dir's mtime changes when any file inside it is modified.
+        """
+        mtimes = {}
+        try:
+            for client_entry in os.scandir(sessions_root):
+                if not client_entry.is_dir(follow_symlinks=False):
+                    continue
+                try:
+                    for session_entry in os.scandir(client_entry.path):
+                        if session_entry.is_dir(follow_symlinks=False):
+                            key = f"{client_entry.name}/{session_entry.name}"
+                            mtimes[key] = session_entry.stat().st_mtime
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        return mtimes
+
     def run(self):
         """
         Execute background scan of all sessions.
@@ -81,11 +107,42 @@ class RefreshWorker(QThread):
         This method runs in a background thread. All file I/O happens here.
         Results are emitted via signals to update UI on main thread.
         After successful scan, results are saved to persistent cache.
+
+        Incremental fast-path: if no session directories have changed mtime
+        since the last scan AND the cache is not stale, the cached data is
+        emitted immediately without re-reading any session files.
         """
         try:
             logger.info("Background refresh started")
             start_time = time.time()
             self.refresh_started.emit()
+
+            # --- Incremental fast-path ---
+            # Collect current session-dir mtimes with a cheap scandir call.
+            try:
+                sessions_root = self.active_tab.profile_manager.get_sessions_root()
+                current_mtimes = self._collect_session_dir_mtimes(sessions_root)
+                cached_mtimes = self.cache_manager.get_session_dir_mtimes()
+                cached_data = self.cache_manager.get_cached_data()
+
+                if (
+                    current_mtimes == cached_mtimes
+                    and cached_data is not None
+                    and not cached_data.get('is_stale', True)
+                ):
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"PERFORMANCE: Incremental refresh — no session dirs changed, "
+                        f"using cached data ({elapsed:.3f}s)"
+                    )
+                    self.refresh_complete.emit(
+                        cached_data.get('active', []),
+                        cached_data.get('completed', []),
+                        cached_data.get('available', []),
+                    )
+                    return
+            except Exception as e:
+                logger.debug(f"Fast-path check failed, falling back to full scan: {e}")
 
             # Scan Active Sessions (Tab 1/3)
             if self._abort:
@@ -128,6 +185,13 @@ class RefreshWorker(QThread):
                     completed_data,
                     available_data
                 )
+                # Persist the mtime snapshot so the next refresh can use the fast-path
+                try:
+                    sessions_root = self.active_tab.profile_manager.get_sessions_root()
+                    final_mtimes = self._collect_session_dir_mtimes(sessions_root)
+                    self.cache_manager.save_session_dir_mtimes(final_mtimes)
+                except Exception as e:
+                    logger.debug(f"Could not save session_dir_mtimes: {e}")
                 cache_time = time.time() - cache_start
                 logger.info(f"Cache saved in {cache_time:.2f}s")
 
