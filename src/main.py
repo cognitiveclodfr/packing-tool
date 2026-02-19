@@ -1,7 +1,30 @@
 import sys
 import os
 import json
+import queue as _queue
+import threading
 from pathlib import Path
+
+try:
+    import winsound as _winsound
+    _beep_queue: _queue.Queue = _queue.Queue()
+
+    def _beep_worker() -> None:
+        """Single daemon thread that serializes all beep requests."""
+        while True:
+            freq, dur = _beep_queue.get()
+            _winsound.Beep(freq, dur)
+            _beep_queue.task_done()
+
+    threading.Thread(target=_beep_worker, daemon=True, name="beep-worker").start()
+
+    def _beep(frequency: int, duration_ms: int) -> None:
+        """Queue a beep on the shared audio worker thread (non-blocking)."""
+        _beep_queue.put((frequency, duration_ms))
+
+except ImportError:
+    def _beep(frequency: int, duration_ms: int) -> None:  # type: ignore[misc]
+        pass
 
 # Add project root to Python path to find 'shared' module
 # This allows imports like 'from shared.stats_manager import StatsManager' to work
@@ -1896,14 +1919,18 @@ class MainWindow(QMainWindow):
                 completed = len(self.logic.session_packing_state.get('completed_orders', []))
                 self.packer_mode_widget.update_session_progress(completed, len(self.logic.orders_data))
                 self.update_order_status(order_number_from_scan, "In Progress")
+                _beep(1000, 120)
             else:
                 self.packer_mode_widget.show_notification("ORDER NOT FOUND", "#c0392b")
                 self.flash_border("red")
+                _beep(400, 350)
         else:
             result, status = self.logic.process_sku_scan(text)
             if status == "SKU_OK":
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
+                self.packer_mode_widget.show_notification("ITEM OK", "#43a047")
                 self.flash_border("green")
+                _beep(1200, 80)
             elif status == "SKU_NOT_FOUND":
                 unknown_list = self.logic.unknown_scans
                 if len(unknown_list) > 1:
@@ -1914,9 +1941,11 @@ class MainWindow(QMainWindow):
                     f"INCORRECT ITEM!\n{detail}", "#c0392b"
                 )
                 self.flash_border("red")
+                _beep(400, 350)
             elif status == "SKU_EXTRA":
                 self.packer_mode_widget.show_notification("EXTRA ITEM!", "#b06020")
                 self.flash_border("orange")
+                _beep(700, 200)
                 self.packer_mode_widget.show_extras_panel(self.logic.current_extra_items)
             elif status == "ORDER_COMPLETE_WITH_EXTRAS":
                 self.packer_mode_widget.update_item_row(result["row"], result["packed"], result["is_complete"])
@@ -1969,6 +1998,8 @@ class MainWindow(QMainWindow):
         """Shared teardown for every order-complete path (scan, force confirm, extra resolve)."""
         self.packer_mode_widget.show_notification(f"ORDER {order_number} COMPLETE!", "#43a047")
         self.flash_border("green")
+        _beep(1200, 80)
+        QTimer.singleShot(180, lambda: _beep(1200, 80))
         self.update_order_status(order_number, "Completed")
         if self.logic:
             completed = len(self.logic.session_packing_state.get('completed_orders', []))

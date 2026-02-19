@@ -49,6 +49,9 @@ class PackerModeWidget(QWidget):
     extra_removed          = Signal(str)   # normalized_sku
 
     FRAME_DEFAULT_STYLE = "QFrame#TableFrame { border: 1px solid palette(mid); border-radius: 3px; }"
+    # Shared max-height for the bottom info row (history/extras) and the matching
+    # right-panel bottom section — keeps both panels' bottoms visually aligned.
+    _BOTTOM_ROW_HEIGHT = 160
 
     def __init__(self, parent: QWidget = None, sim_mode: bool = False):
         """
@@ -140,7 +143,7 @@ class PackerModeWidget(QWidget):
 
         # Bottom row: history table (left half) + extras panel (right half, hidden until needed)
         _bottom_row = QWidget()
-        _bottom_row.setMaximumHeight(160)
+        _bottom_row.setMaximumHeight(self._BOTTOM_ROW_HEIGHT)
         _brl = QHBoxLayout(_bottom_row)
         _brl.setContentsMargins(0, 0, 0, 0)
         _brl.setSpacing(4)
@@ -164,16 +167,18 @@ class PackerModeWidget(QWidget):
         _brl.addWidget(_hist_container, stretch=1)
 
         # [J] Extra items panel — right half of the bottom row (hidden by default)
-        # Wrapped in a container with a same-height spacer as the history title so
-        # that the top edges of the history table and extras panel are aligned.
+        # Title label is always present (same 9pt height as history title) so that
+        # extras_table top edge aligns with history_table top edge.
         _extras_container = QWidget()
         _ecvl = QVBoxLayout(_extras_container)
         _ecvl.setContentsMargins(0, 0, 0, 0)
         _ecvl.setSpacing(2)
-        _extras_title_spacer = QLabel()  # invisible, matches history title height
-        _etsf = _extras_title_spacer.font(); _etsf.setPointSize(9)
-        _extras_title_spacer.setFont(_etsf)
-        _ecvl.addWidget(_extras_title_spacer)
+        self._extras_section_title = QLabel("")  # shown as "EXTRA ITEMS DETECTED" when panel is active
+        _etsf = self._extras_section_title.font()
+        _etsf.setPointSize(9); _etsf.setBold(True)
+        self._extras_section_title.setFont(_etsf)
+        self._extras_section_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        _ecvl.addWidget(self._extras_section_title)
 
         self.extras_panel = QFrame()
         self.extras_panel.setObjectName("ExtrasPanel")
@@ -184,10 +189,6 @@ class PackerModeWidget(QWidget):
         _epl = QVBoxLayout(self.extras_panel)
         _epl.setContentsMargins(4, 4, 4, 4)
         _epl.setSpacing(3)
-        _et = QLabel("EXTRA ITEMS DETECTED")
-        _et.setAlignment(Qt.AlignCenter)
-        _et.setStyleSheet("color: #e67e22; font-weight: bold;")
-        _epl.addWidget(_et)
         self.extras_table = QTableWidget()
         self.extras_table.setColumnCount(3)
         self.extras_table.setHorizontalHeaderLabels(["SKU", "×", "Action"])
@@ -252,25 +253,20 @@ class PackerModeWidget(QWidget):
             sim_layout.addWidget(sim_btn)
             right_layout.addWidget(sim_group)
 
-        # Consolidated scan-info card: two bordered sections, no background fill
+        # Consolidated scan-info card: single rounded card with a divider between sections
         self.scan_info_frame = QFrame()
         self.scan_info_frame.setObjectName("ScanInfoFrame")
         self.scan_info_frame.setStyleSheet(
-            "QFrame#ScanInfoFrame { border: none; }"
+            "QFrame#ScanInfoFrame { border: 1px solid #555555; border-radius: 8px; }"
         )
         _sif = QVBoxLayout(self.scan_info_frame)
-        _sif.setContentsMargins(0, 0, 0, 0)
+        _sif.setContentsMargins(0, 4, 0, 4)
         _sif.setSpacing(4)
 
-        # ── Order status section — own border, transparent bg ─────────────────
+        # ── Order status section — no individual border (card provides it) ────
         _order_section = QFrame()
         _order_section.setObjectName("OrderStatusSection")
-        _order_section.setStyleSheet(
-            "QFrame#OrderStatusSection { "
-            "border: 1px solid #666666; "
-            "border-radius: 4px; "
-            "}"
-        )
+        _order_section.setStyleSheet("QFrame#OrderStatusSection { border: none; }")
         _osl = QVBoxLayout(_order_section)
         _osl.setContentsMargins(10, 8, 10, 8)
         self.status_label = QLabel("Scan an order barcode")
@@ -281,15 +277,17 @@ class PackerModeWidget(QWidget):
         _osl.addWidget(self.status_label)
         _sif.addWidget(_order_section)
 
-        # ── Scan feedback section — own border, transparent bg ────────────────
+        # ── Soft horizontal divider between the two sections ──────────────────
+        _divider = QFrame()
+        _divider.setFrameShape(QFrame.Shape.HLine)
+        _divider.setFrameShadow(QFrame.Shadow.Sunken)
+        _divider.setStyleSheet("color: #444444;")
+        _sif.addWidget(_divider)
+
+        # ── Scan feedback section — no individual border ───────────────────────
         _feed_section = QFrame()
         _feed_section.setObjectName("ScanFeedbackSection")
-        _feed_section.setStyleSheet(
-            "QFrame#ScanFeedbackSection { "
-            "border: 1px solid #666666; "
-            "border-radius: 4px; "
-            "}"
-        )
+        _feed_section.setStyleSheet("QFrame#ScanFeedbackSection { border: none; }")
         _fsl = QVBoxLayout(_feed_section)
         _fsl.setContentsMargins(10, 6, 10, 8)
         _fsl.setSpacing(3)
@@ -321,21 +319,31 @@ class PackerModeWidget(QWidget):
 
         right_layout.addStretch()
 
-        # [D] Summary panel
+        # [D] Summary panel — bottom edge aligns with the main scan table's bottom edge.
+        # A fixed-height bottom section (matching _bottom_row.maximumHeight() = 160px)
+        # ensures the exit button occupies the same vertical space as the history/extras
+        # row on the left, so summary_frame's bottom = main table's bottom.
         right_layout.addWidget(self.summary_frame)
 
-        right_layout.addStretch()
+        _right_bottom = QWidget()
+        _right_bottom.setMaximumHeight(self._BOTTOM_ROW_HEIGHT)
+        _rbottom_layout = QVBoxLayout(_right_bottom)
+        _rbottom_layout.setContentsMargins(0, 0, 0, 0)
+        _rbottom_layout.setSpacing(0)
+        _rbottom_layout.addStretch()
 
         self.scanner_input = QLineEdit()
         self.scanner_input.setFixedSize(1, 1)
         self.scanner_input.returnPressed.connect(self._on_scan)
-        right_layout.addWidget(self.scanner_input)
+        _rbottom_layout.addWidget(self.scanner_input)
 
         self.exit_button = QPushButton("<< Back to Menu")
         font = self.exit_button.font(); font.setPointSize(14)
         self.exit_button.setFont(font)
         self.exit_button.clicked.connect(self.exit_packing_mode.emit)
-        right_layout.addWidget(self.exit_button)
+        _rbottom_layout.addWidget(self.exit_button)
+
+        right_layout.addWidget(_right_bottom)
 
         main_layout.addWidget(left_widget, stretch=3)
         main_layout.addWidget(right_widget, stretch=1)
@@ -564,9 +572,11 @@ class PackerModeWidget(QWidget):
         self.summary_table.setRowCount(0)
         # [E] Disable skip button
         self.skip_order_button.setEnabled(False)
-        # [J] Hide extras panel
+        # [J] Hide extras panel and reset title
         self.extras_panel.setVisible(False)
         self.extras_table.setRowCount(0)
+        self._extras_section_title.setText("")
+        self._extras_section_title.setStyleSheet("")
         self.set_focus_to_scanner()
 
     def set_focus_to_scanner(self):
@@ -647,7 +657,14 @@ class PackerModeWidget(QWidget):
             btn_layout.addWidget(remove_btn)
             self.extras_table.setCellWidget(i, 2, btn_widget)
 
-        self.extras_panel.setVisible(len(extras) > 0)
+        is_visible = len(extras) > 0
+        self.extras_panel.setVisible(is_visible)
+        if is_visible:
+            self._extras_section_title.setText("EXTRA ITEMS DETECTED")
+            self._extras_section_title.setStyleSheet("color: #e67e22;")
+        else:
+            self._extras_section_title.setText("")
+            self._extras_section_title.setStyleSheet("")
 
     # ─── Private helpers ──────────────────────────────────────────────────────
 
