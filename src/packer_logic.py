@@ -75,6 +75,7 @@ class PackerLogic(QObject):
         sku_map (Dict[str, str]): Normalized barcode-to-SKU mapping
     """
     item_packed = Signal(str, int, int)  # order_number, packed_count, required_count
+    all_orders_complete = Signal()  # Emitted when every order in the session is packed
 
     def __init__(self, client_id: str, profile_manager, work_dir: str):
         """
@@ -126,6 +127,12 @@ class PackerLogic(QObject):
 
         # Load session state if exists
         self._load_session_state()
+
+        # Extra items tracking: normalized_sku → extra count (scanned beyond required)
+        self.current_extra_items: Dict[str, int] = {}
+
+        # Unknown/incorrect scan tracking: raw barcodes that didn't match any SKU
+        self.unknown_scans: List[str] = []
 
         # Phase 2b: Order-level timing tracking
         self.current_order_start_time = None  # ISO timestamp when order scanning started
@@ -406,6 +413,9 @@ class PackerLogic(QObject):
                 self.current_order_start_time = None
                 self.current_order_items_scanned = []
 
+            # Restore extra items if present (crash recovery)
+            self.current_extra_items = state_data.get('_current_extras', {})
+
             in_progress_count = len(self.session_packing_state['in_progress'])
             completed_count = len(self.session_packing_state['completed_orders'])
 
@@ -517,6 +527,8 @@ class PackerLogic(QObject):
                     }
                 } if self.current_order_number and self.current_order_start_time else {})
             },
+            # Persist any extra items scanned beyond required quantities
+            "_current_extras": self.current_extra_items if self.current_extra_items else {},
             # Phase 2b: Use completed_orders_metadata if available
             "completed": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata else self._build_completed_list()
         }
@@ -946,6 +958,15 @@ class PackerLogic(QObject):
             all_items_complete = all(s['packed'] == s['required'] for s in self.current_order_state)
 
             if all_items_complete:
+                if self.current_extra_items:
+                    # Extra items detected — wait for worker to resolve them before completing
+                    status = "ORDER_COMPLETE_WITH_EXTRAS"
+                    self._save_session_state()
+                    return {
+                        "row": found_item['row'],
+                        "packed": found_item['packed'],
+                        "is_complete": is_complete,
+                    }, status
                 # Order is complete!
                 status = "ORDER_COMPLETE"
 
@@ -959,6 +980,9 @@ class PackerLogic(QObject):
                 # This check prevents duplicates in case of rare edge cases
                 if self.current_order_number not in self.session_packing_state['completed_orders']:
                     self.session_packing_state['completed_orders'].append(self.current_order_number)
+
+                # Emit session-complete signal if all orders done
+                self._check_all_complete()
             else:
                 # Order still in progress
                 status = "SKU_OK"
@@ -989,18 +1013,136 @@ class PackerLogic(QObject):
         is_sku_in_order = any(s['normalized_sku'] == normalized_final_sku for s in self.current_order_state)
 
         if is_sku_in_order:
-            # SKU is in order, but all required quantity already packed
-            # Example: Order needs 2x "SKU-CREAM-01", but user scanned it 3 times
-            return None, "SKU_EXTRA"  # All items with this SKU are already packed
+            # SKU is in order, but all required quantity already packed — track as extra
+            self.current_extra_items[normalized_final_sku] = (
+                self.current_extra_items.get(normalized_final_sku, 0) + 1
+            )
+            self._save_session_state()
+            return None, "SKU_EXTRA"
         else:
             # SKU is not in this order at all
             # Example: User scanned wrong product, or product from different order
+            self.unknown_scans.append(sku)
             return None, "SKU_NOT_FOUND"
 
     def clear_current_order(self):
         """Clears the currently active order from memory."""
         self.current_order_number = None
         self.current_order_state = {}
+        self.current_extra_items = {}
+        self.unknown_scans = []
+
+    def cancel_item_scan(self, row: int) -> Tuple[Dict, str]:
+        """
+        Decrements the packed count for the item at the given row by 1.
+
+        Args:
+            row: Row index in current_order_state.
+
+        Returns:
+            Tuple of (result_dict, status_string).
+            status_string values: "ITEM_DECREMENTED", "ITEM_ALREADY_ZERO", "NO_ACTIVE_ORDER"
+        """
+        if not self.current_order_number:
+            return {}, "NO_ACTIVE_ORDER"
+        item = next((s for s in self.current_order_state if s.get('row') == row), None)
+        if item is None:
+            return {}, "NO_ACTIVE_ORDER"
+        if item['packed'] <= 0:
+            return {"row": row, "packed": 0}, "ITEM_ALREADY_ZERO"
+        item['packed'] -= 1
+        self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
+        self._save_session_state()
+        return {"row": row, "packed": item['packed']}, "ITEM_DECREMENTED"
+
+    def force_confirm_item(self, row: int) -> Tuple[Dict, str]:
+        """
+        Forces an item row to fully packed (packed = required).
+
+        Args:
+            row: Row index in current_order_state.
+
+        Returns:
+            Tuple of (result_dict, status_string).
+            result_dict keys: "row", "packed", "is_complete", "order_complete"
+            status_string values: "FORCE_CONFIRMED", "NO_ACTIVE_ORDER"
+        """
+        if not self.current_order_number:
+            return {}, "NO_ACTIVE_ORDER"
+        item = next((s for s in self.current_order_state if s.get('row') == row), None)
+        if item is None:
+            return {}, "NO_ACTIVE_ORDER"
+        item['packed'] = item['required']
+        self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
+        all_done = all(s['packed'] >= s['required'] for s in self.current_order_state)
+        if all_done and not self.current_extra_items:
+            self._complete_current_order()
+            del self.session_packing_state['in_progress'][self.current_order_number]
+            if self.current_order_number not in self.session_packing_state['completed_orders']:
+                self.session_packing_state['completed_orders'].append(self.current_order_number)
+            self._check_all_complete()
+        self._save_session_state()
+        return {
+            "row": row,
+            "packed": item['required'],
+            "is_complete": True,
+            "order_complete": all_done and not self.current_extra_items,
+        }, "FORCE_CONFIRMED"
+
+    def _check_all_complete(self):
+        """Emit all_orders_complete if every order in the session is packed."""
+        total = len(self.orders_data)
+        done = len(self.session_packing_state.get('completed_orders', []))
+        if total > 0 and done >= total:
+            self.all_orders_complete.emit()
+
+    def confirm_keep_extra(self, normalized_sku: str) -> Tuple[Dict, str]:
+        """
+        Acknowledges an extra item as intentionally included.
+        Removes it from current_extra_items and checks if order can complete.
+
+        Returns: ({}, "ORDER_NOW_COMPLETE") or ({}, "EXTRA_PENDING")
+        """
+        self.current_extra_items.pop(normalized_sku, None)
+        return self._maybe_complete_after_extra_resolution()
+
+    def remove_extra_item(self, normalized_sku: str) -> Tuple[Dict, str]:
+        """
+        Marks one extra item of a SKU as removed (acknowledged as a mistake).
+        Decrements extra count; removes the key when count reaches 0.
+
+        Returns: ({}, "ORDER_NOW_COMPLETE") or ({}, "EXTRA_PENDING")
+        """
+        count = self.current_extra_items.get(normalized_sku, 0)
+        if count > 1:
+            self.current_extra_items[normalized_sku] = count - 1
+        else:
+            self.current_extra_items.pop(normalized_sku, None)
+        return self._maybe_complete_after_extra_resolution()
+
+    def _maybe_complete_after_extra_resolution(self) -> Tuple[Dict, str]:
+        """
+        After an extra item is kept/removed, check if all extras are resolved
+        and complete the order if so.
+        """
+        if self.current_extra_items:
+            self._save_session_state()
+            return {}, "EXTRA_PENDING"
+        # Extras cleared — verify all required items are actually packed
+        all_items_done = all(
+            s['packed'] >= s['required'] for s in self.current_order_state
+        )
+        if not all_items_done:
+            self._save_session_state()
+            return {}, "EXTRA_CLEARED"
+        # All items packed AND all extras resolved — finalize the order
+        self._complete_current_order()
+        del self.session_packing_state['in_progress'][self.current_order_number]
+        if self.current_order_number not in self.session_packing_state['completed_orders']:
+            self.session_packing_state['completed_orders'].append(self.current_order_number)
+        self._check_all_complete()
+        self._save_session_state()
+        return {}, "ORDER_NOW_COMPLETE"
 
     def load_packing_list_json(self, packing_list_path: Path) -> Tuple[int, str]:
         """
@@ -1072,6 +1214,9 @@ class PackerLogic(QObject):
             logger.warning(f"No orders found in packing list: {list_name}")
             return 0, packing_data.get('list_name', list_name)
 
+        # Build raw order lookup for metadata preservation
+        order_raw_data = {order.get('order_number', ''): order for order in orders_list}
+
         # Convert to DataFrame (packing list format)
         # Each order may have multiple items, need to flatten
         rows = []
@@ -1140,8 +1285,20 @@ class PackerLogic(QObject):
         self.orders_data = {}
         for order_number in df['Order_Number'].unique():
             order_df = df[df['Order_Number'] == order_number]
+            raw = order_raw_data.get(order_number, {})
             self.orders_data[order_number] = {
-                'items': order_df.to_dict('records')
+                'items': order_df.to_dict('records'),
+                'metadata': {
+                    'order_type':               raw.get('order_type') or '',
+                    'shipping_provider':        raw.get('shipping_provider') or raw.get('courier') or '',
+                    'destination_country':      raw.get('destination_country') or raw.get('shipping_country') or '',
+                    'tags':                     list(raw.get('tags') or []),
+                    'notes':                    raw.get('notes') or '',
+                    'system_note':              raw.get('system_note') or '',
+                    'internal_tags':            list(raw.get('internal_tags') or []),
+                    'order_min_box':            raw.get('order_min_box') or '',
+                    'order_fulfillment_status': raw.get('order_fulfillment_status') or '',
+                },
             }
 
         # Initialize session metadata
@@ -1248,6 +1405,9 @@ class PackerLogic(QObject):
             logger.warning("No orders found in analysis_data.json")
             return 0, analysis_data.get('analyzed_at', 'Unknown')
 
+        # Build raw order lookup for metadata preservation
+        order_raw_data_analysis = {order.get('order_number', ''): order for order in orders_list}
+
         # Convert to DataFrame (packing list format)
         # Each order may have multiple items, need to flatten
         rows = []
@@ -1312,8 +1472,20 @@ class PackerLogic(QObject):
         self.orders_data = {}
         for order_number in df['Order_Number'].unique():
             order_df = df[df['Order_Number'] == order_number]
+            raw = order_raw_data_analysis.get(order_number, {})
             self.orders_data[order_number] = {
-                'items': order_df.to_dict('records')
+                'items': order_df.to_dict('records'),
+                'metadata': {
+                    'order_type':               raw.get('order_type') or '',
+                    'shipping_provider':        raw.get('shipping_provider') or raw.get('courier') or '',
+                    'destination_country':      raw.get('destination_country') or raw.get('shipping_country') or '',
+                    'tags':                     list(raw.get('tags') or []),
+                    'notes':                    raw.get('notes') or '',
+                    'system_note':              raw.get('system_note') or '',
+                    'internal_tags':            list(raw.get('internal_tags') or []),
+                    'order_min_box':            raw.get('order_min_box') or '',
+                    'order_fulfillment_status': raw.get('order_fulfillment_status') or '',
+                },
             }
 
         # Initialize session metadata

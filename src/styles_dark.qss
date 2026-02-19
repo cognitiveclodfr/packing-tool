@@ -298,6 +298,12 @@ QHeaderView::section:disabled {
     color: #444444;
 }
 
+/* Table corner button (top-left cell at row-header / column-header intersection) */
+QTableView QTableCornerButton::section {
+    background-color: #0a0a0a;
+    border: 1px solid #444444;
+}
+
 /* ----------------------------------------------------------------
    Table / Tree Views
    ---------------------------------------------------------------- */
