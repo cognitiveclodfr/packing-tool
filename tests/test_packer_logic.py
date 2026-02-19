@@ -235,20 +235,17 @@ def test_load_packing_list_json_missing_file(packer_logic, test_dir):
 
 
 def test_load_packing_list_json_missing_required_fields(packer_logic, test_dir):
-    """Test loading JSON with missing required fields."""
+    """Missing order_number is the only hard-required field; raises ValueError."""
     import json
     from pathlib import Path
 
-    # Create JSON with missing courier field
     packing_list_data = {
         "list_name": "Invalid_List",
         "orders": [
             {
-                "order_number": "ORDER-001",
-                # Missing courier field
-                "items": [
-                    {"sku": "SKU-123", "quantity": 1, "product_name": "Product A"}
-                ]
+                # Missing order_number — only field that causes a hard error
+                "courier": "DHL",
+                "items": [{"sku": "SKU-123", "quantity": 1, "product_name": "Product A"}]
             }
         ]
     }
@@ -257,9 +254,33 @@ def test_load_packing_list_json_missing_required_fields(packer_logic, test_dir):
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(packing_list_data, f)
 
-    # Should raise ValueError for missing required fields
-    with pytest.raises(ValueError, match="Missing required fields in order data"):
+    with pytest.raises(ValueError, match="Missing required field 'order_number'"):
         packer_logic.load_packing_list_json(json_path)
+
+
+def test_load_packing_list_json_missing_courier_defaults(packer_logic, test_dir):
+    """Missing courier field should be tolerated and default to 'N/A'."""
+    import json
+    from pathlib import Path
+
+    packing_list_data = {
+        "list_name": "NoCourier_List",
+        "orders": [
+            {
+                "order_number": "ORDER-NC1",
+                "items": [{"sku": "SKU-X", "quantity": 1, "product_name": "Product X"}]
+            }
+        ]
+    }
+
+    json_path = Path(test_dir) / "no_courier.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+
+    count, _ = packer_logic.load_packing_list_json(json_path)
+    assert count == 1
+    meta = packer_logic.get_order_metadata("ORDER-NC1")
+    assert meta['courier'] == 'N/A'
 
 
 def test_load_packing_list_json_empty_orders(packer_logic, test_dir):
@@ -374,3 +395,319 @@ def test_packing_workflow_with_json_list(packer_logic, test_dir):
 
     # Verify order completed
     assert 'ORD-100' in packer_logic.session_packing_state['completed_orders']
+
+
+# ============================================================================
+# skip_order Tests
+# ============================================================================
+
+def _make_loaded_logic(packer_logic, test_dir):
+    """Helper: load a packing list and start packing ORD-SKIP."""
+    import json
+    from pathlib import Path
+    packing_list_data = {
+        "list_name": "Skip_Test",
+        "total_orders": 2,
+        "orders": [
+            {
+                "order_number": "ORD-SKIP",
+                "courier": "DHL",
+                "items": [
+                    {"sku": "SKU-1", "quantity": 2, "product_name": "Widget 1"}
+                ]
+            },
+            {
+                "order_number": "ORD-OTHER",
+                "courier": "DHL",
+                "items": [
+                    {"sku": "SKU-2", "quantity": 1, "product_name": "Widget 2"}
+                ]
+            }
+        ]
+    }
+    json_path = Path(test_dir) / "skip_test.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+    packer_logic.load_packing_list_json(json_path)
+    items, status = packer_logic.start_order_packing('ORD-SKIP')
+    assert status == "ORDER_LOADED"
+    return items
+
+
+def test_skip_order_clears_current_order(packer_logic, test_dir):
+    """skip_order() should clear the active order."""
+    _make_loaded_logic(packer_logic, test_dir)
+    assert packer_logic.current_order_number == "ORD-SKIP"
+    packer_logic.skip_order()
+    assert packer_logic.current_order_number is None
+
+
+def test_skip_order_returns_true(packer_logic, test_dir):
+    """skip_order() should return True when an order is active."""
+    _make_loaded_logic(packer_logic, test_dir)
+    result = packer_logic.skip_order()
+    assert result is True
+
+
+def test_skip_order_returns_false_when_no_order(packer_logic):
+    """skip_order() returns False when no order is active."""
+    result = packer_logic.skip_order()
+    assert result is False
+
+
+def test_skip_order_adds_to_skipped_orders(packer_logic, test_dir):
+    """skip_order() adds the order to skipped_orders list."""
+    _make_loaded_logic(packer_logic, test_dir)
+    packer_logic.skip_order()
+    assert "ORD-SKIP" in packer_logic.session_packing_state.get('skipped_orders', [])
+
+
+def test_skip_order_preserves_in_progress_state(packer_logic, test_dir):
+    """skip_order() must NOT remove the order from in_progress (resume support)."""
+    _make_loaded_logic(packer_logic, test_dir)
+    # Pack 1 unit before skipping
+    packer_logic.process_sku_scan('SKU-1')
+    packer_logic.skip_order()
+    # in_progress state should still contain ORD-SKIP
+    assert "ORD-SKIP" in packer_logic.session_packing_state.get('in_progress', {})
+
+
+def test_skip_order_does_not_mark_as_completed(packer_logic, test_dir):
+    """A skipped order should not appear in completed_orders."""
+    _make_loaded_logic(packer_logic, test_dir)
+    packer_logic.skip_order()
+    assert "ORD-SKIP" not in packer_logic.session_packing_state.get('completed_orders', [])
+
+
+def test_skipped_order_can_be_resumed(packer_logic, test_dir):
+    """After skipping, scanning the order barcode again should resume it."""
+    _make_loaded_logic(packer_logic, test_dir)
+    packer_logic.skip_order()
+    assert packer_logic.current_order_number is None
+
+    # Re-scan to resume
+    items, status = packer_logic.start_order_packing('ORD-SKIP')
+    assert status == "ORDER_LOADED"
+    assert packer_logic.current_order_number == "ORD-SKIP"
+    # Order should no longer be in skipped_orders
+    assert "ORD-SKIP" not in packer_logic.session_packing_state.get('skipped_orders', [])
+
+
+# ============================================================================
+# get_order_metadata Tests
+# ============================================================================
+
+def _load_json_with_metadata(packer_logic, test_dir):
+    """Helper: load a packing list JSON that includes Shopify metadata fields."""
+    import json
+    from pathlib import Path
+    packing_list_data = {
+        "list_name": "Meta_Test",
+        "total_orders": 1,
+        "orders": [
+            {
+                "order_number": "ORD-META",
+                "courier": "Speedy",
+                "status": "Fulfillable",
+                "system_note": "Fragile items inside",
+                "status_note": "VIP — expedite",
+                "internal_tags": ["priority", "vip"],
+                "tags": ["summer-2026"],
+                "created_at": "2026-01-10T09:00:00",
+                "recommended_box": "Box_Small",
+                "shopify_status": "unfulfilled",
+                "destination": "BG",
+                "items": [
+                    {"sku": "SKU-M", "quantity": 1, "product_name": "Meta Widget"}
+                ]
+            }
+        ]
+    }
+    json_path = Path(test_dir) / "meta_test.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(packing_list_data, f)
+    packer_logic.load_packing_list_json(json_path)
+
+
+def test_get_order_metadata_returns_dict(packer_logic, test_dir):
+    """get_order_metadata() returns a dict for a loaded order."""
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert isinstance(metadata, dict)
+
+
+def test_get_order_metadata_status_field(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['status'] == 'Fulfillable'
+
+
+def test_get_order_metadata_system_note(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['system_note'] == 'Fragile items inside'
+
+
+def test_get_order_metadata_status_note(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['status_note'] == 'VIP — expedite'
+
+
+def test_get_order_metadata_internal_tags(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert 'priority' in metadata['internal_tags']
+    assert 'vip' in metadata['internal_tags']
+
+
+def test_get_order_metadata_tags(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert 'summer-2026' in metadata['tags']
+
+
+def test_get_order_metadata_recommended_box(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['recommended_box'] == 'Box_Small'
+
+
+def test_get_order_metadata_destination(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['destination'] == 'BG'
+
+
+def test_get_order_metadata_shopify_status(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['shopify_status'] == 'unfulfilled'
+
+
+def test_get_order_metadata_created_at(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert '2026-01-10' in metadata['created_at']
+
+
+def test_get_order_metadata_courier(packer_logic, test_dir):
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("ORD-META")
+    assert metadata['courier'] == 'Speedy'
+
+
+def test_get_order_metadata_unknown_order_returns_empty(packer_logic, test_dir):
+    """get_order_metadata() returns {} for an order that doesn't exist."""
+    _load_json_with_metadata(packer_logic, test_dir)
+    metadata = packer_logic.get_order_metadata("NONEXISTENT")
+    assert metadata == {}
+
+
+def test_get_order_metadata_missing_optional_fields_default_empty(packer_logic, test_dir):
+    """Orders without optional metadata fields return empty strings/lists."""
+    import json
+    from pathlib import Path
+    minimal_data = {
+        "list_name": "Minimal",
+        "total_orders": 1,
+        "orders": [
+            {
+                "order_number": "ORD-MIN",
+                "courier": "DHL",
+                "items": [{"sku": "SKU-Z", "quantity": 1, "product_name": "Z Widget"}]
+            }
+        ]
+    }
+    json_path = Path(test_dir) / "minimal.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(minimal_data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-MIN")
+    assert metadata['system_note'] == ''
+    assert metadata['internal_tags'] == []
+    assert metadata['tags'] == []
+    assert metadata['status'] == ''
+    assert metadata['shopify_status'] == ''
+    assert metadata['recommended_box'] == ''
+    assert metadata['destination'] == ''
+
+
+def test_get_order_metadata_nan_tags_filtered(packer_logic, test_dir):
+    """Tags with 'nan' string values should be filtered out."""
+    import json
+    from pathlib import Path
+    data = {
+        "list_name": "NanTags",
+        "total_orders": 1,
+        "orders": [{
+            "order_number": "ORD-NAN",
+            "courier": "DHL",
+            "tags": ["nan", "valid-tag", "NaN", "None"],
+            "items": [{"sku": "SKU-N", "quantity": 1, "product_name": "N Widget"}]
+        }]
+    }
+    json_path = Path(test_dir) / "nan_tags.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-NAN")
+    assert metadata['tags'] == ['valid-tag']
+
+
+def test_get_order_metadata_min_box_fallback(packer_logic, test_dir):
+    """min_box field should map to recommended_box when recommended_box is absent."""
+    import json
+    from pathlib import Path
+    data = {
+        "list_name": "MinBox",
+        "total_orders": 1,
+        "orders": [{
+            "order_number": "ORD-MB",
+            "courier": "DHL",
+            "min_box": "TEST_S",
+            "items": [{"sku": "SKU-MB", "quantity": 1, "product_name": "MB Widget"}]
+        }]
+    }
+    json_path = Path(test_dir) / "min_box.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-MB")
+    assert metadata['recommended_box'] == 'TEST_S'
+
+
+def test_get_order_metadata_fulfillment_status_fallback(packer_logic, test_dir):
+    """fulfillment_status field should map to status when status is absent."""
+    import json
+    from pathlib import Path
+    data = {
+        "list_name": "FStatus",
+        "total_orders": 1,
+        "orders": [{
+            "order_number": "ORD-FS",
+            "courier": "DHL",
+            "fulfillment_status": "Fulfillable",
+            "items": [{"sku": "SKU-FS", "quantity": 1, "product_name": "FS Widget"}]
+        }]
+    }
+    json_path = Path(test_dir) / "fstatus.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    packer_logic.load_packing_list_json(json_path)
+    metadata = packer_logic.get_order_metadata("ORD-FS")
+    assert metadata['status'] == 'Fulfillable'
+
+
+# ============================================================================
+# skipped_orders persistence
+# ============================================================================
+
+def test_skipped_orders_initialized_in_session_state(packer_logic):
+    """session_packing_state should always have 'skipped_orders' key."""
+    assert 'skipped_orders' in packer_logic.session_packing_state
+
+
+def test_skipped_orders_not_in_skipped_initially(packer_logic):
+    """Initially skipped_orders should be empty."""
+    assert packer_logic.session_packing_state['skipped_orders'] == []

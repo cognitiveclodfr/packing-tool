@@ -105,6 +105,7 @@ Environment = test
             # (We'll mock the logic to avoid file operations)
             window.logic = Mock()
             window.logic.orders_data = {'ORDER1': {}}
+            window.logic.session_packing_state = {'completed_orders': [], 'skipped_orders': []}
             window.logic.clear_current_order = Mock()
 
             # Switch to Packer Mode
