@@ -278,6 +278,50 @@ class SessionCacheManager:
         except Exception as e:
             logger.error(f"Failed to save cache: {e}", exc_info=True)
 
+    def get_session_dir_mtimes(self) -> Dict[str, float]:
+        """
+        Return the session-directory mtime snapshot saved during the last full scan.
+
+        Keys are relative paths ("CLIENT_M/2025-11-10_1"), values are float timestamps.
+        Returns an empty dict if no snapshot has been saved yet.
+        """
+        try:
+            if not self.cache_file.exists():
+                return {}
+            with open(self.cache_file, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+            return cache.get('session_dir_mtimes', {})
+        except Exception as e:
+            logger.warning(f"Could not read session_dir_mtimes from cache: {e}")
+            return {}
+
+    def save_session_dir_mtimes(self, mtimes: Dict[str, float]) -> None:
+        """
+        Persist a session-directory mtime snapshot alongside the existing cache data.
+
+        This is called after every full scan so subsequent calls can detect
+        whether any session directories have changed.
+        """
+        try:
+            if not self.cache_file.exists():
+                return
+            with open(self.cache_file, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+            cache['session_dir_mtimes'] = mtimes
+
+            import tempfile
+            import shutil
+            with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8', suffix='.json',
+                dir=self.sessions_root, delete=False
+            ) as tmp:
+                json.dump(cache, tmp, indent=2, ensure_ascii=False)
+                tmp_path = tmp.name
+            shutil.move(tmp_path, self.cache_file)
+            logger.debug(f"Saved session_dir_mtimes ({len(mtimes)} dirs)")
+        except Exception as e:
+            logger.warning(f"Could not save session_dir_mtimes: {e}")
+
     def clear_cache(self):
         """Clear cache file."""
         try:

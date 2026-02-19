@@ -35,11 +35,15 @@ def test_dir():
 @pytest.fixture
 def packer_logic(mock_profile_manager, test_dir):
     """Create a PackerLogic instance with mocked ProfileManager."""
-    return PackerLogic(
+    logic = PackerLogic(
         client_id="TEST",
         profile_manager=mock_profile_manager,
         work_dir=test_dir
     )
+    yield logic
+    # Flush and shut down the async state writer so no background thread
+    # is still accessing test_dir when the temp dir is removed in teardown.
+    logic.close()
 
 
 @pytest.fixture
