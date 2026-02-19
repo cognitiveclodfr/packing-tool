@@ -1,14 +1,27 @@
 import sys
 import os
 import json
+import queue as _queue
 import threading
 from pathlib import Path
 
 try:
     import winsound as _winsound
+    _beep_queue: _queue.Queue = _queue.Queue()
+
+    def _beep_worker() -> None:
+        """Single daemon thread that serializes all beep requests."""
+        while True:
+            freq, dur = _beep_queue.get()
+            _winsound.Beep(freq, dur)
+            _beep_queue.task_done()
+
+    threading.Thread(target=_beep_worker, daemon=True, name="beep-worker").start()
+
     def _beep(frequency: int, duration_ms: int) -> None:
-        """Non-blocking Windows beep fired in a daemon thread."""
-        threading.Thread(target=_winsound.Beep, args=(frequency, duration_ms), daemon=True).start()
+        """Queue a beep on the shared audio worker thread (non-blocking)."""
+        _beep_queue.put((frequency, duration_ms))
+
 except ImportError:
     def _beep(frequency: int, duration_ms: int) -> None:  # type: ignore[misc]
         pass

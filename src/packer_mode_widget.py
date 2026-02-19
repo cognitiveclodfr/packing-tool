@@ -49,6 +49,9 @@ class PackerModeWidget(QWidget):
     extra_removed          = Signal(str)   # normalized_sku
 
     FRAME_DEFAULT_STYLE = "QFrame#TableFrame { border: 1px solid palette(mid); border-radius: 3px; }"
+    # Shared max-height for the bottom info row (history/extras) and the matching
+    # right-panel bottom section — keeps both panels' bottoms visually aligned.
+    _BOTTOM_ROW_HEIGHT = 160
 
     def __init__(self, parent: QWidget = None, sim_mode: bool = False):
         """
@@ -140,7 +143,7 @@ class PackerModeWidget(QWidget):
 
         # Bottom row: history table (left half) + extras panel (right half, hidden until needed)
         _bottom_row = QWidget()
-        _bottom_row.setMaximumHeight(160)
+        _bottom_row.setMaximumHeight(self._BOTTOM_ROW_HEIGHT)
         _brl = QHBoxLayout(_bottom_row)
         _brl.setContentsMargins(0, 0, 0, 0)
         _brl.setSpacing(4)
@@ -323,7 +326,7 @@ class PackerModeWidget(QWidget):
         right_layout.addWidget(self.summary_frame)
 
         _right_bottom = QWidget()
-        _right_bottom.setMaximumHeight(160)
+        _right_bottom.setMaximumHeight(self._BOTTOM_ROW_HEIGHT)
         _rbottom_layout = QVBoxLayout(_right_bottom)
         _rbottom_layout.setContentsMargins(0, 0, 0, 0)
         _rbottom_layout.setSpacing(0)
