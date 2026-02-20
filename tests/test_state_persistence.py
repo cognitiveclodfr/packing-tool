@@ -581,7 +581,7 @@ class TestCrashRecovery(unittest.TestCase):
         packer = PackerLogic("TEST", self.mock_profile_manager, str(self.work_dir))
 
         # Verify it starts with fresh state
-        self.assertEqual(packer.session_packing_state, {'in_progress': {}, 'completed_orders': []})
+        self.assertEqual(packer.session_packing_state, {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []})
         self.assertIsNone(packer.session_id)
 
     def test_state_metadata_complete(self):
