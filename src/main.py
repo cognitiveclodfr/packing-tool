@@ -1894,6 +1894,10 @@ class MainWindow(QMainWindow):
             self.order_tree.clear()
         self.status_label.setText("Session ended. Start a new session to begin.")
 
+        # Return user to session view (avoids leaving a blank packer mode screen)
+        if hasattr(self, 'stacked_widget') and hasattr(self, 'session_widget'):
+            self.stacked_widget.setCurrentWidget(self.session_widget)
+
         logger.info("Session ended and all variables cleared")
 
     def view_session_history(self):
@@ -2109,7 +2113,7 @@ class MainWindow(QMainWindow):
         if not self.logic or not self.logic.current_order_number:
             return
         skipped = self.logic.current_order_number
-        self.logic.clear_current_order()
+        self.logic.skip_order()
         self.packer_mode_widget.add_order_to_history(skipped, "[SKIPPED]")
         self.packer_mode_widget.clear_screen()
         logger.info(f"Order {skipped} skipped")
@@ -2235,11 +2239,22 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._show_all_complete_dialog)
 
     def _show_all_complete_dialog(self):
-        """Show the 'all orders packed' prompt after the current event loop cycle."""
+        """Show the 'all orders packed/processed' prompt after the current event loop cycle."""
+        if not self.logic:
+            return
+        skipped_count = len(self.logic.session_packing_state.get('skipped_orders', []))
+        if skipped_count:
+            msg = (
+                f"All processable orders have been packed!\n"
+                f"{skipped_count} order(s) were skipped.\n\n"
+                f"End session now?"
+            )
+        else:
+            msg = "All orders have been packed!\nEnd session now?"
         reply = QMessageBox.question(
             self,
-            "All Orders Packed",
-            "All orders have been packed!\nEnd session now?",
+            "Session Complete",
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
