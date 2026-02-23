@@ -120,7 +120,8 @@ class PackerLogic(QObject):
         # This will be populated when loading an existing state or starting new
         self.session_packing_state = {
             'in_progress': {},
-            'completed_orders': []
+            'completed_orders': [],
+            'skipped_orders': [],
         }
 
         # Load SKU mapping from ProfileManager
@@ -261,7 +262,7 @@ class PackerLogic(QObject):
 
         if not os.path.exists(state_file):
             logger.debug("No existing session state found, starting fresh")
-            self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+            self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []}
             return
 
         try:
@@ -273,7 +274,7 @@ class PackerLogic(QObject):
             if data is None:
                 # File exists but couldn't be read (invalid JSON, etc.)
                 logger.error("Could not load session state, starting fresh")
-                self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+                self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []}
                 return
 
             # Handle both old and new format (with version)
@@ -400,6 +401,9 @@ class PackerLogic(QObject):
                 self.completed_orders_metadata = []
                 logger.debug("Old format: no timing metadata available")
 
+            # Load skipped orders list (added in later versions; default to empty list)
+            self.session_packing_state['skipped_orders'] = state_data.get('skipped_orders', [])
+
             # Load metadata if present (new format)
             if 'session_id' in state_data:
                 self.session_id = state_data.get('session_id')
@@ -428,7 +432,7 @@ class PackerLogic(QObject):
 
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error loading session state: {e}, starting fresh")
-            self.session_packing_state = {'in_progress': {}, 'completed_orders': []}
+            self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []}
 
     def _build_state_dict(self) -> Dict[str, Any]:
         """
@@ -501,6 +505,7 @@ class PackerLogic(QObject):
                 if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata
                 else self._build_completed_list()
             ),
+            "skipped_orders": list(self.session_packing_state.get('skipped_orders', [])),
         }
 
     def _do_atomic_write(self, state_data: Dict[str, Any]) -> None:
@@ -570,6 +575,10 @@ class PackerLogic(QObject):
         self._state_writer.flush()
         self._state_writer.schedule(self._build_state_dict())
         self._state_writer.flush()  # Wait for the just-scheduled write to complete
+
+    def save_state(self) -> None:
+        """Public API: flush any pending async write and save current state synchronously."""
+        self._save_session_state_sync()
 
     def close(self) -> None:
         """
@@ -999,6 +1008,9 @@ class PackerLogic(QObject):
                 if self.current_order_number not in self.session_packing_state['completed_orders']:
                     self.session_packing_state['completed_orders'].append(self.current_order_number)
 
+                # Remove from skipped list if this order was previously skipped
+                self._unskip_current_order_if_needed()
+
                 # Emit session-complete signal if all orders done
                 self._check_all_complete()
             else:
@@ -1052,6 +1064,24 @@ class PackerLogic(QObject):
         self.current_extra_items = {}
         self.unknown_scans = []
 
+    def skip_order(self) -> None:
+        """Mark the current order as skipped, then check for overall session completion."""
+        if not self.current_order_number:
+            return
+        order_num = self.current_order_number
+        skipped = self.session_packing_state['skipped_orders']
+        if order_num not in skipped:
+            skipped.append(order_num)
+        self.clear_current_order()
+        self._check_all_complete()
+        self._save_session_state_async()
+
+    def _unskip_current_order_if_needed(self) -> None:
+        """Remove current_order_number from skipped_orders if it was previously skipped."""
+        skipped = self.session_packing_state['skipped_orders']
+        if self.current_order_number in skipped:
+            skipped.remove(self.current_order_number)
+
     def cancel_item_scan(self, row: int) -> Tuple[Dict, str]:
         """
         Decrements the packed count for the item at the given row by 1.
@@ -1100,6 +1130,7 @@ class PackerLogic(QObject):
             del self.session_packing_state['in_progress'][self.current_order_number]
             if self.current_order_number not in self.session_packing_state['completed_orders']:
                 self.session_packing_state['completed_orders'].append(self.current_order_number)
+            self._unskip_current_order_if_needed()
             self._check_all_complete()
             self._save_session_state_sync()  # Checkpoint: order now complete
         else:
@@ -1112,10 +1143,11 @@ class PackerLogic(QObject):
         }, "FORCE_CONFIRMED"
 
     def _check_all_complete(self):
-        """Emit all_orders_complete if every order in the session is packed."""
+        """Emit all_orders_complete if every order in the session is packed or skipped."""
         total = len(self.orders_data)
-        done = len(self.session_packing_state.get('completed_orders', []))
-        if total > 0 and done >= total:
+        done = len(self.session_packing_state['completed_orders'])
+        skipped = len(self.session_packing_state['skipped_orders'])
+        if total > 0 and (done + skipped) >= total:
             self.all_orders_complete.emit()
 
     def confirm_keep_extra(self, normalized_sku: str) -> Tuple[Dict, str]:
@@ -1162,6 +1194,7 @@ class PackerLogic(QObject):
         del self.session_packing_state['in_progress'][self.current_order_number]
         if self.current_order_number not in self.session_packing_state['completed_orders']:
             self.session_packing_state['completed_orders'].append(self.current_order_number)
+        self._unskip_current_order_if_needed()
         self._check_all_complete()
         self._save_session_state_sync()  # Checkpoint: order now complete
         return {}, "ORDER_NOW_COMPLETE"
