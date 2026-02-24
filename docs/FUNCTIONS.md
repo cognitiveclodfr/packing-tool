@@ -1,7 +1,7 @@
 # Packer's Assistant - Functions Catalog
 
-**Version:** 1.3.0.0
-**Last Updated:** 2026-01-22
+**Version:** 1.3.2.0 (Pre-release)
+**Last Updated:** 2026-02-24
 
 Complete catalog of all classes, methods, and functions in the Packer's Assistant application.
 
@@ -15,15 +15,14 @@ Complete catalog of all classes, methods, and functions in the Packer's Assistan
 - [Data Management](#data-management)
   - [session_lock_manager.py](#session_lock_managerpy)
   - [session_history_manager.py](#session_history_managerpy)
-  - [sku_mapping_manager.py](#sku_mapping_managerpy)
+- [Async / Background](#async--background)
+  - [async_state_writer.py](#async_state_writerpy)
+  - [session_browser/session_cache_manager.py](#session_browsersession_cache_managerpy)
 - [UI Components](#ui-components)
   - [main.py](#mainpy)
   - [packer_mode_widget.py](#packer_mode_widgetpy)
-  - [dashboard_widget.py](#dashboard_widgetpy)
-  - [session_history_widget.py](#session_history_widgetpy)
-  - [session_monitor_widget.py](#session_monitor_widgetpy)
+  - [session_browser/](#session_browser)
 - [UI Dialogs](#ui-dialogs)
-  - [mapping_dialog.py](#mapping_dialogpy)
   - [restore_session_dialog.py](#restore_session_dialogpy)
   - [sku_mapping_dialog.py](#sku_mapping_dialogpy)
   - [print_dialog.py](#print_dialogpy)
@@ -40,7 +39,7 @@ Complete catalog of all classes, methods, and functions in the Packer's Assistan
 
 ### packer_logic.py
 
-**Description**: Core order processing and barcode generation logic.
+**Description**: Core order loading, barcode scan processing, and packing state machine.
 
 #### Class: `PackerLogic(QObject)`
 
@@ -53,57 +52,29 @@ Order processing and packing state management.
 - `session_data_loaded()` - Emitted when session data loaded
 
 **Constructor:**
-- `__init__(session_dir, profile_manager, sku_mapping_manager, parent=None)` - Initialize PackerLogic
+- `__init__(session_dir, profile_manager, parent=None)` - Initialize PackerLogic
 
 **Public Methods:**
-- `load_packing_list_from_file(file_path, restore_dir=None) -> bool` - **[DEPRECATED v1.3.0.0]** Load packing list from Excel (use Shopify Tool instead)
 - `load_packing_list_json(packing_list_path) -> Tuple[int, str]` - Load packing list from Shopify JSON
-- `load_from_shopify_analysis(analysis_path) -> Tuple[int, str]` - **[PRIMARY v1.3.0.0]** Load session from Shopify Tool
-- `start_order_packing(barcode_data) -> tuple[bool, str, list]` - Start packing an order
+- `load_from_shopify_analysis(analysis_path) -> Tuple[int, str]` - Load session from Shopify Tool analysis
+- `start_order_packing(order_number) -> tuple[bool, str, list]` - Start packing an order
 - `process_sku_scan(barcode_data) -> tuple[bool, str, int, int, bool]` - Process SKU scan
 - `get_order_details(order_number) -> list[dict]` - Get order items
 - `get_order_state(order_number) -> list[dict]` - Get packing state
 - `is_order_complete(order_number) -> bool` - Check if order complete
 - `get_summary_data() -> pd.DataFrame` - Get order summary
-- `save_state()` - Save packing state to file
-- `load_state()` - Load packing state from file
+- `get_order_metadata(order_number) -> dict` - Get per-order metadata (courier, tags, etc.)
+- `skip_order(order_number)` - Skip current order; preserves in_progress state
+- `save_state()` - Synchronous state save (flush + write)
 - `end_session_cleanup()` - Clean up session files
-
-**Removed Methods (v1.3.0.0):**
-- ❌ `process_data_and_generate_barcodes()` - Barcode generation moved to Shopify Tool
-- ❌ `_generate_code128_barcode()` - Barcode generation moved to Shopify Tool
+- `close()` - Flush AsyncStateWriter; must be called on teardown
 
 **Private Methods:**
-- `_validate_and_map_columns(file_path, required_columns) -> tuple[bool, dict]` - Validate columns
-- `_normalize_order_number(order_number) -> str` - **[NEW v1.3.0.0]** Normalize order numbers for barcode matching
+- `_normalize_order_number(order_number) -> str` - Normalize order numbers for barcode matching
 - `_normalize_sku(sku) -> str` - Normalize SKU for comparison
 - `_apply_sku_mapping(scanned_barcode) -> str` - Apply SKU mapping
-
-**New Components (Phase 3.1):**
-
-### SessionCacheManager
-
-**Location:** `src/session_browser/session_cache_manager.py`
-
-**Methods:**
-- `get_cached_data(client_id=None) -> Optional[Dict]` - Retrieve cached session data for a client
-- `save_to_cache(client_id, data) -> None` - Save session scan results to persistent cache
-- `clear_cache() -> None` - Clear all cached data
-
-**Description:** Manages disk-based persistent cache for Session Browser. Provides 5-minute TTL caching with per-client data storage.
-
-### RefreshWorker (QThread)
-
-**Location:** `src/session_browser/session_browser_widget.py`
-
-**Methods:**
-- `run() -> None` - Background worker method for session scanning
-
-**Signals:**
-- `refresh_progress(str)` - Progress update signal
-- `refresh_complete(dict)` - Completion signal with scanned data
-
-**Description:** Background thread worker for scanning session directories without blocking UI.
+- `_save_session_state()` - Synchronous save (used for checkpoints and session end)
+- `_save_session_state_async()` - Non-blocking save via AsyncStateWriter (used on every scan)
 
 ---
 
@@ -296,21 +267,51 @@ Manages historical session data and analytics.
 
 ---
 
-### sku_mapping_manager.py
+## Async / Background
 
-**Description**: Barcode-to-SKU mapping persistence (legacy, local storage).
+### async_state_writer.py
 
-#### Class: `SKUMappingManager`
+**Description**: Write-behind queue for non-blocking `packing_state.json` persistence.
 
-Manages local SKU mapping storage.
+#### Class: `AsyncStateWriter`
+
+Batches state write requests and executes them on a background thread.
 
 **Constructor:**
-- `__init__()` - Initialize manager
+- `__init__()` - Initialize writer; starts background thread
 
 **Public Methods:**
-- `load_map() -> dict[str, str]` - Load SKU map from file
-- `save_map(sku_map)` - Save SKU map to file
-- `get_map() -> dict[str, str]` - Get current SKU map
+- `schedule(path, data)` - Queue a write; previous pending write for same path is dropped
+- `flush()` - Block until all queued writes have completed
+- `close()` - Flush and shut down background thread; must be called on teardown
+
+**Usage pattern:**
+```python
+# Hot path (every scan) — non-blocking:
+logic._save_session_state_async()
+
+# Checkpoint / session end — blocking:
+logic._save_session_state_sync()
+```
+
+---
+
+### session_browser/session_cache_manager.py
+
+**Description**: Disk-based persistent cache for Session Browser scan results.
+
+#### Class: `SessionCacheManager`
+
+**Constructor:**
+- `__init__(cache_path)` - Initialize with path to cache JSON file
+
+**Public Methods:**
+- `get_cached_data(client_id=None) -> Optional[dict]` - Retrieve cached data (None if stale or missing)
+- `save_to_cache(client_id, data)` - Save scan results; updates timestamp
+- `save_session_dir_mtimes(mtimes)` - Store directory mtime snapshot for incremental refresh
+- `clear_cache()` - Delete all cached data
+
+**Cache TTL:** 300 seconds (5 minutes)
 
 ---
 
@@ -375,18 +376,24 @@ Interactive packer mode UI.
 **Signals:**
 - `barcode_scanned(str)` - Emitted when barcode scanned
 - `exit_packing_mode()` - Emitted when exit button clicked
+- `skip_order_requested()` - Emitted when Skip Order button clicked
+- `force_complete_sku(str)` - Emitted when Force button clicked for a row
 
 **Constructor:**
 - `__init__(parent=None)` - Initialize widget
 
 **Public Methods:**
-- `display_order(items, order_state)` - Display order items
-- `update_item_row(row, packed_count, is_complete)` - Update item row
-- `show_notification(text, color_name)` - Show notification
-- `clear_screen()` - Clear screen
+- `display_order(items, order_state)` - Display order items in center table
+- `display_order_metadata(metadata, courier)` - Populate left panel metadata frame
+- `clear_order_info()` - Hide the metadata frame
+- `update_item_row(row, packed_count, is_complete)` - Update item row status
+- `update_session_progress(completed, total)` - Update session-wide progress bar
+- `show_notification(text, color_name)` - Show notification banner
+- `show_previous_order_items(items)` - Show dimmed previous-order items
+- `clear_screen()` - Clear current order display
 - `set_focus_to_scanner()` - Focus scanner input
-- `update_raw_scan_display(text)` - Update scan display
-- `add_order_to_history(order_number)` - Add to history
+- `update_raw_scan_display(text)` - Update raw scan text
+- `add_order_to_history(order_number, item_count=0)` - Add order to history table
 
 **Private Methods:**
 - `_on_scan()` - Handle scan event
@@ -394,112 +401,24 @@ Interactive packer mode UI.
 
 ---
 
-### dashboard_widget.py
+### session_browser/
 
-**Description**: Performance metrics dashboard.
+**Description**: Session Browser package — three-tab session management UI.
 
-#### Class: `MetricCard(QGroupBox)`
+**Location:** `src/session_browser/`
 
-Single metric display card.
+**Key classes:**
 
-**Constructor:**
-- `__init__(title, value="0", subtitle="", parent=None)` - Initialize card
-
-**Public Methods:**
-- `set_value(value)` - Update displayed value
-- `set_subtitle(subtitle)` - Update subtitle
-
-#### Class: `DashboardWidget(QWidget)`
-
-Performance dashboard with analytics.
-
-**Constructor:**
-- `__init__(profile_manager, stats_manager, parent=None)` - Initialize dashboard
-
-**Public Methods:**
-- `load_clients(client_ids)` - Load client list
-- `refresh()` - Refresh metrics
-
-**Private Methods:**
-- `_init_ui()` - Initialize UI
-- `_refresh_metrics()` - Refresh all metrics
-
----
-
-### session_history_widget.py
-
-**Description**: Historical session browser and search.
-
-#### Class: `SessionHistoryWidget(QWidget)`
-
-Session history viewer with filtering.
-
-**Signals:**
-- `session_selected(str, str)` - Emitted when session selected
-
-**Constructor:**
-- `__init__(profile_manager, parent=None)` - Initialize widget
-
-**Public Methods:**
-- `load_clients(client_ids)` - Load client list
-- `refresh()` - Refresh session list
-
-**Private Methods:**
-- `_init_ui()` - Initialize UI
-- `_load_sessions()` - Load sessions with filters
-- `_display_sessions(sessions)` - Display in table
-- `_on_filter_changed()` - Handle filter change
-- `_on_search_changed(text)` - Handle search
-- `_on_row_double_clicked(item)` - Handle double-click
-- `_show_session_details(session)` - Show details dialog
-- `_export_to_excel()` - Export to Excel
-- `_export_to_csv()` - Export to CSV
-
----
-
-### session_monitor_widget.py
-
-**Description**: Active sessions monitoring widget.
-
-#### Class: `SessionMonitorWidget(QWidget)`
-
-Monitors active sessions across clients.
-
-**Constructor:**
-- `__init__(lock_manager, parent=None)` - Initialize widget
-
-**Public Methods:**
-- `set_auto_refresh(enabled)` - Enable/disable auto-refresh
-
-**Private Methods:**
-- `_init_ui()` - Initialize UI
-- `_refresh()` - Refresh session list
-
-**Special Methods:**
-- `closeEvent(event)` - Stop timer on close
+- `SessionBrowserWidget(QWidget)` — main container with `QTabWidget`; hosts the three tabs and the `RefreshWorker`
+- `ActiveSessionsTab(QWidget)` — shows locked/in-progress sessions; resume and force-unlock actions
+- `CompletedSessionsTab(QWidget)` — shows completed sessions via `SessionHistoryManager`; date/client filters, Excel export
+- `AvailableSessionsTab(QWidget)` — scans for Shopify sessions with unstarted packing lists; Start Packing action
+- `SessionDetailsDialog(QDialog)` — three-tab detail view (Overview, Orders tree, Metrics) for any session
+- `RefreshWorker(QThread)` — background directory scanner; emits `refresh_progress(str)` and `refresh_complete(dict)`
 
 ---
 
 ## UI Dialogs
-
-### mapping_dialog.py
-
-**Status:** ❌ REMOVED in v1.3.0.0
-
-**Reason:** Excel input workflow removed. All sessions now created through Shopify Tool.
-
-**Previous Functionality (v1.2.0 and earlier):**
-
-#### Class: `ColumnMappingDialog(QDialog)`
-
-Mapped required columns to file columns for Excel imports.
-
-**Removed Methods:**
-- `__init__(required_columns, file_columns, parent=None)` - Initialize dialog
-- `get_mapping() -> dict[str, str]` - Get column mapping
-- `validate_and_accept()` - Validate before accepting
-
----
 
 ### restore_session_dialog.py
 
@@ -667,24 +586,21 @@ Input validation errors.
 ## Summary Statistics
 
 ### Module Count
-- **Total Modules**: 19
-- **Core Logic**: 4
-- **Data Management**: 3
-- **UI Components**: 5
-- **UI Dialogs**: 4
-- **Data Models**: 2
-- **Utilities**: 2
+- **Total Modules**: ~20 (including session_browser/ sub-package)
+- **Core Logic**: 4 (packer_logic, session_manager, profile_manager, statistics_manager)
+- **Data Management**: 2 (session_lock_manager, session_history_manager)
+- **Async / Background**: 2 (async_state_writer, session_cache_manager)
+- **UI Components**: 3 (main, packer_mode_widget, session_browser/)
+- **UI Dialogs**: 3 (restore_session_dialog, sku_mapping_dialog, print_dialog)
+- **Data Models**: 2 (order_table_model, custom_filter_proxy_model)
+- **Utilities**: 2 (logger, exceptions)
 
-### Class Count
-- **Total Classes**: 27
-- **QObject Subclasses**: 4 (with signals/slots)
-- **QWidget Subclasses**: 9
-- **QDialog Subclasses**: 4
-- **QAbstractTableModel**: 1
-- **QSortFilterProxyModel**: 1
-- **Dataclasses**: 2
-- **Regular Classes**: 5
-- **Exception Classes**: 6
+### Class Count (approximate)
+- **Core logic**: ~6
+- **Session browser**: ~6 (SessionBrowserWidget + 4 tabs + SessionDetailsDialog)
+- **Data models**: 2
+- **Exception classes**: 6
+- **Worker threads**: ~4 (SessionStartWorker, SessionEndWorker, RefreshWorker, SessionScanWorker)
 
 ### Method Count by Type
 
@@ -730,22 +646,15 @@ Input validation errors.
 ## Function Reference by Category
 
 ### File Operations
-- `ProfileManager.load_sku_mapping()` - Load JSON with locking
-- `ProfileManager.save_sku_mapping()` - Save JSON with locking
+- `ProfileManager.load_sku_mapping()` - Load SKU mapping with locking
+- `ProfileManager.save_sku_mapping()` - Save SKU mapping with locking
 - `ProfileManager._load_json_with_lock()` - Thread-safe JSON read
 - `ProfileManager._save_json_with_lock()` - Thread-safe JSON write
-- `PackerLogic.save_state()` - Save packing state
-- `PackerLogic.load_state()` - Load packing state
-
-### Excel Operations
-- `PackerLogic.load_packing_list_from_file()` - Read Excel file
-- `PackerLogic._validate_and_map_columns()` - Validate columns
-- `MainWindow._generate_completion_report()` - Write Excel report
-- `SessionHistoryWidget._export_to_excel()` - Export to Excel
-
-### Barcode Generation
-- `PackerLogic.process_data_and_generate_barcodes()` - Generate all barcodes
-- `PackerLogic._generate_code128_barcode()` - Generate single barcode
+- `PackerLogic._save_session_state()` - Synchronous state save
+- `PackerLogic._save_session_state_async()` - Async state save
+- `AsyncStateWriter.schedule()` - Queue a write
+- `AsyncStateWriter.flush()` - Flush pending writes
+- `SessionCacheManager.save_to_cache()` - Persist session cache
 
 ### Session Management
 - `SessionManager.start_session()` - Create new session
@@ -794,7 +703,7 @@ Input validation errors.
 
 ### C
 - `clear_screen()` - PackerModeWidget
-- `closeEvent()` - SessionMonitorWidget
+- `close()` - AsyncStateWriter, PackerLogic
 - `columnCount()` - OrderTableModel
 - `create_client_profile()` - ProfileManager
 
@@ -814,6 +723,7 @@ Input validation errors.
 
 ### G
 - `get_all_active_sessions()` - SessionLockManager
+- `get_cached_data()` - SessionCacheManager
 - `get_client_analytics()` - SessionHistoryManager
 - `get_client_config()` - ProfileManager
 - `get_client_sessions()` - SessionHistoryManager
@@ -824,10 +734,9 @@ Input validation errors.
 - `get_incomplete_sessions()` - ProfileManager
 - `get_lock_display_info()` - SessionLockManager
 - `get_logger()` - AppLogger, logger module
-- `get_map()` - SKUMappingManager
-- `get_mapping()` - ColumnMappingDialog
 - `get_mappings()` - SKUMappingDialog
 - `get_order_details()` - PackerLogic
+- `get_order_metadata()` - PackerLogic
 - `get_order_state()` - PackerLogic
 - `get_performance_metrics()` - StatisticsManager
 - `get_selected_session()` - RestoreSessionDialog
@@ -850,33 +759,28 @@ Input validation errors.
 
 ### L
 - `list_clients()` - ProfileManager
-- `load_clients()` - DashboardWidget, SessionHistoryWidget
-- `load_map()` - SKUMappingManager
-- `load_packing_list_from_file()` - PackerLogic
+- `load_from_shopify_analysis()` - PackerLogic
+- `load_packing_list_json()` - PackerLogic
 - `load_sku_mapping()` - ProfileManager
-- `load_state()` - PackerLogic
 
 ### M
 - `main()` - main module
 
 ### O
-- `open_session_monitor()` - MainWindow
 - `open_sku_mapping_dialog()` - MainWindow
 
 ### P
 - `print_widget()` - PrintDialog
-- `process_data_and_generate_barcodes()` - PackerLogic
 - `process_sku_scan()` - PackerLogic
 
 ### R
 - `record_session_completion()` - StatisticsManager
-- `refresh()` - DashboardWidget, SessionHistoryWidget
 - `release_lock()` - SessionLockManager
-- `restore_session()` - MainWindow
 - `rowCount()` - OrderTableModel
 
 ### S
-- `save_map()` - SKUMappingManager
+- `save_session_dir_mtimes()` - SessionCacheManager
+- `save_to_cache()` - SessionCacheManager
 - `save_sku_mapping()` - ProfileManager
 - `save_state()` - PackerLogic
 - `search_sessions()` - SessionHistoryManager
@@ -890,9 +794,7 @@ Input validation errors.
 - `setup_order_table()` - MainWindow
 - `show_notification()` - PackerModeWidget
 - `start_order_packing()` - PackerLogic
-- `start_session()` - SessionManager, MainWindow
-- `switch_to_dashboard()` - MainWindow
-- `switch_to_history()` - MainWindow
+- `start_session()` - SessionManager
 
 ### T
 - `test_connectivity()` - ProfileManager
@@ -905,13 +807,7 @@ Input validation errors.
 - `update_item_row()` - PackerModeWidget
 - `update_raw_scan_display()` - PackerModeWidget
 
-### V
-- `validate_and_accept()` - ColumnMappingDialog
-
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-11-04
-**Total Functions Documented**: 160+
-**Total Classes Documented**: 27
-**Total Modules Documented**: 19
+**Document Version**: 1.3.2.0 (Pre-release)
+**Last Updated**: 2026-02-24

@@ -1,308 +1,157 @@
-# Documentation Reference Index - v1.3.0.0
+# Documentation Reference Index
 
-**Last Updated:** 2026-01-22
-**Version:** 1.3.0.0
-**Phase:** Phase 3.1 Complete - Session Browser & Performance Optimizations
+**Version:** 1.3.2.0 (Pre-release)
+**Last Updated:** 2026-02-24
 
-Quick navigation and reference guide for all Packer's Assistant documentation.
+Quick navigation guide for all Packer's Assistant documentation.
 
 ---
 
 ## Quick Start
 
 **New to Packer's Assistant?**
-1. Start with [README.md](../README.md) for installation and basic usage
-2. Review [CHANGELOG.md](../CHANGELOG.md) for v1.3.0.0 features and version history
-3. Check migration guide if upgrading from v1.2.0
+
+1. Read [README.md](../README.md) for an overview, workflow, and setup instructions.
+2. Review [CHANGELOG.md](../CHANGELOG.md) for version history and recent changes.
 
 **Developers:**
-1. [ARCHITECTURE.md](ARCHITECTURE.md) - Understand the system design
-2. [API.md](API.md) - Browse the complete API reference
-3. [FUNCTIONS.md](FUNCTIONS.md) - Quick lookup for specific functions
+
+1. [ARCHITECTURE.md](ARCHITECTURE.md) — System design, layers, and component interactions
+2. [API.md](API.md) — Complete API reference with signatures and examples
+3. [FUNCTIONS.md](FUNCTIONS.md) — Quick lookup by module or function name
 
 ---
 
-## Core Documentation
+## Documentation Files
 
-### Technical Documentation
+### [README.md](../README.md)
 
-#### [API.md](API.md) - API Reference
-**Purpose:** Complete API reference for all classes, methods, and data structures
-
-**Contents:**
-- Core Business Logic (PackerLogic, SessionManager, ProfileManager, StatisticsManager)
-- Data Management (SessionLockManager, SessionHistoryManager, SKUMappingManager)
-- UI Components (MainWindow, PackerModeWidget, DashboardWidget, etc.)
-- UI Dialogs (ColumnMappingDialog, RestoreSessionDialog, etc.)
-- Data Models and Utilities
-
-**Key Sections:**
-- `PackerLogic` - Order processing (barcode generation removed in v1.3.0.0)
-- `SessionManager` - Session lifecycle management
-  - `get_packing_work_dir()` - Phase 1 work directory creation
-- `PackerLogic` Methods:
-  - `load_from_shopify_analysis()` - Primary loading method (v1.3.0.0)
-  - `_normalize_order_number()` - **NEW v1.3.0.0** Order normalization
-- `SessionCacheManager` - **NEW v1.3.0.0** Session Browser caching
-- `RefreshWorker` - **NEW v1.3.0.0** Background session scanning
-
-**When to use:** When you need detailed API signatures, parameters, return types, and examples
+User-facing overview: what the application does, features, system requirements,
+Shopify Tool integration, workflow, and development setup.
 
 ---
 
-#### [ARCHITECTURE.md](ARCHITECTURE.md) - System Architecture
-**Purpose:** System design, architecture patterns, and component interactions
+### [CHANGELOG.md](../CHANGELOG.md)
 
-**Contents:**
-- High-level architecture overview
-- Core components and responsibilities
-- Data flow diagrams
-- Storage architecture with **Phase 1 directory structure**
-- Multi-PC coordination
-- Session lifecycle
+Version history with tagged releases. Versions covered:
+
+- `1.3.2.0` — Async state writer, background session I/O
+- `1.3.1.3` — Packer Mode overhaul (metadata, extras, 3-column layout)
+- `1.3.1.2` — Scanner focus fix
+- `1.3.1.1` — QSS theme bundling in PyInstaller exe
+- `1.3.1.0` — 8 UI fixes (dark theme, hover, crashes)
+- `1.3.0.0` — Major cleanup: Excel removed, Session Browser added
+- `1.2.0` — Multiple packing lists per session, session history
+
+---
+
+### [ARCHITECTURE.md](ARCHITECTURE.md)
+
+System design documentation covering:
+
+- Four-layer architecture (Presentation, Business Logic, Data Access, Storage)
+- Core component responsibilities and interactions
+- Data flow diagrams (session start, barcode scan, session end)
+- Storage structure on the file server
+- Multi-PC coordination via file-based locking
+- Session lifecycle state transitions
+- Session Browser architecture (SessionCacheManager, RefreshWorker)
 - Technology stack
 
-**Key Sections:**
-- Phase 3.1 Session Browser Architecture
-- Phase 1 Shopify session structure (`packing/` directory)
-- Performance optimizations (caching, background threading)
-- Removed: Excel workflow and barcode generation (moved to Shopify Tool)
-- Unified statistics system
+---
 
-**When to use:** When you need to understand how components interact or system design decisions
+### [API.md](API.md)
+
+Complete API reference for all classes and methods, including:
+
+- `PackerLogic` — order loading, scan processing, state management
+- `SessionManager` — session lifecycle
+- `ProfileManager` — client profiles and SKU mappings
+- `SessionLockManager` — file-based locking with heartbeat
+- `SessionHistoryManager` — historical session queries
+- `AsyncStateWriter` — write-behind queue for state persistence
+- `SessionCacheManager` / `RefreshWorker` — Session Browser caching and background scanning
+- UI components and dialogs
 
 ---
 
-#### [FUNCTIONS.md](FUNCTIONS.md) - Functions Catalog
-**Purpose:** Complete catalog of all functions and methods across the codebase
+### [FUNCTIONS.md](FUNCTIONS.md)
 
-**Contents:**
-- Organized by module and class
-- Quick reference with signatures
-- Concise descriptions
-- Public and private method listings
+Function catalog organized by module. Use for quick lookup of:
 
-**Key Updates v1.3.0.0:**
-- `_normalize_order_number()` - PackerLogic (new)
-- `SessionCacheManager` - Session Browser caching (new)
-- `RefreshWorker` - Background scanning (new)
-- Removed: `process_data_and_generate_barcodes()`, `generate_barcode()`
-
-**When to use:** When you need to quickly find a specific function or method
+- Method signatures and descriptions
+- Public vs private method distinction
+- New methods added in recent versions
+- Alphabetical index across all modules
 
 ---
 
-### User Documentation
+## Code Organization
 
-#### [README.md](../README.md) - Main Documentation
-**Purpose:** Installation, configuration, and user guide
-
-**Contents:**
-- Features overview
-- System requirements
-- Installation instructions
-- Configuration guide
-- Basic usage workflows
-- Troubleshooting
-
-**When to use:** For installation, setup, and basic usage questions
-
----
-
-#### [CHANGELOG.md](../CHANGELOG.md) - Version History
-**Purpose:** Chronological list of all changes across versions
-
-**Contents:**
-- Release dates
-- Added features
-- Fixed bugs
-- Changed behavior
-- Deprecated features
-
-**When to use:** To see what changed between versions or track feature additions
-
----
-
-#### [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) - Latest Release
-**Purpose:** Comprehensive release notes for version 1.2.0
-
-**Contents:**
-- Major features (Phase 1 Shopify integration)
-- Breaking changes (none in v1.2.0)
-- Bug fixes
-- Performance improvements
-- Migration guide
-- Known issues
-
-**When to use:** To understand what's new in v1.2.0 and how to upgrade
-
----
-
-## Migration & Integration Guides
-
-#### [INTEGRATION.md](INTEGRATION.md)
-**Purpose:** Integration with Shopify Tool and other systems
-
-**Contents:**
-- Shopify Tool integration architecture
-- Session data format specifications
-- Packing list JSON format
-- Shared directory structure
-
----
-
-#### [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
-**Purpose:** Migration guide from pre-Phase 1 versions
-
----
-
-#### [SHOPIFY_INTEGRATION_MIGRATION.md](SHOPIFY_INTEGRATION_MIGRATION.md)
-**Purpose:** Detailed Shopify integration migration steps
-
----
-
-## Development Documentation
-
-### Code Organization
-
-```
+```text
 packing-tool/
-├── src/                          # Source code
-│   ├── packer_logic.py          # Core business logic
-│   ├── session_manager.py       # Session lifecycle
-│   ├── main.py                  # Main UI window
+├── src/                              # Source code
+│   ├── main.py                       # Main window and orchestration
+│   ├── packer_logic.py               # Core business logic
+│   ├── packer_mode_widget.py         # Scanning UI
+│   ├── session_manager.py            # Session lifecycle
+│   ├── session_lock_manager.py       # File-based locking
+│   ├── session_history_manager.py    # Historical queries
+│   ├── async_state_writer.py         # Write-behind state saves
+│   ├── profile_manager.py            # Client profiles
+│   ├── json_cache.py                 # JSON file caching
+│   ├── session_browser/              # Session Browser sub-package
+│   │   ├── session_browser_widget.py
+│   │   ├── active_sessions_tab.py
+│   │   ├── completed_sessions_tab.py
+│   │   ├── available_sessions_tab.py
+│   │   ├── session_cache_manager.py
+│   │   └── session_details_dialog.py
 │   └── ...
-├── shared/                       # Shared modules (with Shopify Tool)
-│   ├── stats_manager.py         # Unified statistics
-│   └── __init__.py              # Version: 1.2.0
-├── docs/                         # Documentation
-│   ├── API.md                   # API reference
-│   ├── ARCHITECTURE.md          # System design
-│   ├── FUNCTIONS.md             # Function catalog
-│   └── REFERENCE_INDEX.md       # This file
-├── tests/                        # Test suite
-└── README.md                     # Main docs
-
+├── shared/                           # Shared with Shopify Tool
+│   ├── stats_manager.py              # Unified statistics
+│   └── worker_manager.py             # Worker profiles
+├── tests/                            # pytest suite
+├── docs/                             # This documentation
+└── README.md
 ```
-
----
-
-## Phase 3.1 Features (v1.3.0.0)
-
-### Key Changes
-
-1. **Session Browser Complete**
-   - Three tabs: Active, Completed, Available
-   - See: [ARCHITECTURE.md - Session Browser Architecture](ARCHITECTURE.md#session-browser-architecture-phase-31)
-
-2. **Performance Optimizations**
-   - Persistent cache with 5-minute TTL
-   - Background scanning with QThread
-   - See: [ARCHITECTURE.md - Performance](ARCHITECTURE.md#performance-improvements)
-
-3. **Code Cleanup**
-   - Barcode generation removed (moved to Shopify Tool)
-   - Excel workflow removed
-   - 1,073 lines of code removed
-
-4. **Breaking Changes**
-   - Excel input no longer supported
-   - All sessions created through Shopify Tool
-   - See: [CHANGELOG.md - Breaking Changes](../CHANGELOG.md#breaking-changes)
-
-5. **Order Normalization**
-   - Method: `PackerLogic._normalize_order_number()`
-   - Automatic barcode matching without manual mapping
-   - See: [API.md - _normalize_order_number](API.md#_normalize_order_number)
-
----
-
-## Phase 1 Features (v1.2.0)
-
-### Key Architectural Changes
-
-1. **Multiple Packing Lists Support**
-   - Location: `{session}/packing/{list_name}/`
-   - See: [ARCHITECTURE.md - Storage Architecture](ARCHITECTURE.md#storage-architecture)
-
-2. **Shopify JSON Loading**
-   - Method: `PackerLogic.load_packing_list_json()`
-   - See: [API.md - PackerLogic](API.md#load_packing_list_json)
-
-3. **Work Directory Creation**
-   - Method: `SessionManager.get_packing_work_dir()`
-   - See: [API.md - SessionManager](API.md#get_packing_work_dir)
-
-4. **Unified Statistics**
-   - Module: `shared/stats_manager.py`
-   - See: [API.md - StatisticsManager](API.md#statisticsmanager)
 
 ---
 
 ## Common Tasks
 
-### How do I...?
+**Understand the overall system:**
+→ [ARCHITECTURE.md](ARCHITECTURE.md)
 
-**...understand the overall system?**
-→ Start with [ARCHITECTURE.md](ARCHITECTURE.md)
+**Find a specific method:**
+→ [FUNCTIONS.md](FUNCTIONS.md) for quick lookup, [API.md](API.md) for full signatures
 
-**...find a specific API method?**
-→ Use [FUNCTIONS.md](FUNCTIONS.md) for quick lookup, [API.md](API.md) for details
+**See what changed in a release:**
+→ [CHANGELOG.md](../CHANGELOG.md)
 
-**...implement a new feature?**
-→ Review [ARCHITECTURE.md](ARCHITECTURE.md) for design patterns, [API.md](API.md) for existing APIs
+**Understand packing state persistence:**
+→ [ARCHITECTURE.md — State Persistence](ARCHITECTURE.md#state-management)
+→ [README.md — State Persistence](../README.md#state-persistence)
 
-**...understand v1.3.0.0 changes?**
-→ See [CHANGELOG.md](../CHANGELOG.md) and [ARCHITECTURE.md - Session Browser](ARCHITECTURE.md#session-browser-architecture-phase-31)
-
-**...migrate from v1.2.0?**
-→ See [README.md - Migration](../README.md#migration-from-v120) and [CHANGELOG.md - Migration Guide](../CHANGELOG.md#migration-guide)
-
-**...integrate with Shopify Tool?**
-→ See [INTEGRATION.md](INTEGRATION.md)
-
-**...troubleshoot an issue?**
-→ Check [README.md - Troubleshooting](../README.md) first, then relevant API docs
+**Understand session locking:**
+→ [ARCHITECTURE.md — Multi-PC Coordination](ARCHITECTURE.md#multi-pc-coordination)
 
 ---
 
 ## Version Information
 
 | Document | Version | Last Updated |
-|----------|---------|--------------|
-| API.md | 1.3.0.0 | 2026-01-22 |
-| ARCHITECTURE.md | 1.3.0.0 | 2026-01-22 |
-| FUNCTIONS.md | 1.3.0.0 | 2026-01-22 |
-| REFERENCE_INDEX.md | 1.3.0.0 | 2026-01-22 |
-| README.md | 1.3.0.0 | 2026-01-22 |
-| CHANGELOG.md | 1.3.0.0 | 2026-01-22 |
-
----
-
-## Document Status
-
-### Up-to-Date (v1.3.0.0)
-- ✅ API.md
-- ✅ ARCHITECTURE.md
-- ✅ FUNCTIONS.md
-- ✅ REFERENCE_INDEX.md
-- ✅ README.md
-- ✅ CHANGELOG.md
-- ✅ Version in `shared/__init__.py`
-
-### Previous Versions
-- 📁 RELEASE_NOTES_v1.2.0.md (archived)
+| -------- | ------- | ------------ |
+| README.md | 1.3.2.0 (Pre-release) | 2026-02-24 |
+| CHANGELOG.md | 1.3.2.0 (Pre-release) | 2026-02-24 |
+| ARCHITECTURE.md | 1.3.2.0 (Pre-release) | 2026-02-24 |
+| FUNCTIONS.md | 1.3.2.0 (Pre-release) | 2026-02-24 |
+| API.md | 1.3.2.0 (Pre-release) | 2026-02-24 |
+| REFERENCE_INDEX.md | 1.3.2.0 (Pre-release) | 2026-02-24 |
 
 ---
 
 ## Feedback
 
 Found an issue with the documentation?
-- Report at: [GitHub Issues](https://github.com/cognitiveclodfr/packing-tool/issues)
-- Or contact the development team
-
----
-
-**Maintained by:** Development Team
-**Document Owner:** Technical Documentation
-**Review Schedule:** After each major release
+Report at [GitHub Issues](https://github.com/cognitiveclodfr/packing-tool/issues).
