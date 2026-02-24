@@ -1,8 +1,8 @@
 # Packer's Assistant - System Architecture
 
-**Version:** 1.3.0.0
-**Last Updated:** 2026-01-22
-**Architecture Phase:** Phase 3.1 Complete - Session Browser & Performance Optimizations
+**Version:** 1.3.2.0 (Pre-release)
+**Last Updated:** 2026-02-24
+**Architecture Phase:** Phase 3.2 — Session Browser, Packer Mode, Async State Writer
 
 ---
 
@@ -18,20 +18,17 @@
 
 ## Overview
 
-Packer's Assistant is a desktop application designed for small to medium-sized warehouse operations. It streamlines the order fulfillment process by:
-- **Processing packing lists** from multiple sources:
-  - Shopify sessions with JSON packing lists (Phase 1 - v1.2.0)
-  - Excel files (Legacy workflow - fully supported)
-- **Generating scannable barcode labels** optimized for thermal printers
-- **Tracking packing progress** in real-time with auto-save
-- **Supporting crash recovery** with session persistence
-- **Enabling multi-PC collaboration** via centralized file server storage
-- **Managing multiple packing lists** per Shopify session (Phase 1)
+Packer's Assistant is a desktop application designed for small to medium-sized warehouse
+operations. It is the execution stage of a two-tool workflow: Shopify Tool creates sessions and
+packing lists from Shopify orders, and Packer's Assistant executes the physical packing by:
 
-**Phase 1 (v1.2.0) - Shopify Integration:**
-The application now integrates seamlessly with Shopify Tool, supporting unified session structures and multiple packing lists per session. This enables efficient handling of orders organized by courier, delivery method, or custom criteria.
+- Loading packing lists from Shopify Tool sessions (JSON format)
+- Tracking packing progress in real-time with per-scan persistence
+- Supporting crash recovery via session state files
+- Enabling multi-PC collaboration via centralized file server storage
+- Managing multiple packing lists per session (one per courier or filter)
 
-The application is built with Python 3.8+ and PySide6 (Qt6) for cross-platform desktop GUI support.
+The application is built with Python 3.9+ and PySide6 (Qt6).
 
 ## System Architecture
 
@@ -41,7 +38,7 @@ The application is built with Python 3.8+ and PySide6 (Qt6) for cross-platform d
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Presentation Layer                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐   │
-│  │   Main UI    │  │ Packer Mode  │  │  Dashboard/History │   │
+│  │   Main UI    │  │ Packer Mode  │  │  Session Browser   │   │
 │  │   (QWidget)  │  │   (QWidget)  │  │     (QWidget)      │   │
 │  └──────────────┘  └──────────────┘  └────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
@@ -81,17 +78,17 @@ The application is built with Python 3.8+ and PySide6 (Qt6) for cross-platform d
 - **Purpose**: User interface and interaction
 - **Components**:
   - `MainWindow`: Central orchestrator with tabbed interface
-  - `PackerModeWidget`: Barcode scanning interface
-  - `DashboardWidget`: Performance metrics display
-  - `SessionHistoryWidget`: Historical session browser
-- **Technology**: PySide6 (Qt6) with custom QSS styling
+  - `PackerModeWidget`: Barcode scanning interface (3-column layout)
+  - `SessionBrowserWidget`: Three-tab session management (Active/Completed/Available)
+- **Technology**: PySide6 (Qt6) with QSS dark/light themes
 
 #### 2. Business Logic Layer
 - **Purpose**: Core application logic, independent of UI
 - **Components**:
-  - `PackerLogic`: Order processing and barcode generation
+  - `PackerLogic`: Order loading, scan processing, packing state machine
   - `SessionManager`: Session lifecycle management
-  - `StatisticsManager`: Metrics tracking and aggregation
+  - `AsyncStateWriter`: Write-behind queue for non-blocking state saves
+  - `StatisticsManager`: Metrics tracking and aggregation (shared)
 - **Communication**: Qt Signals/Slots pattern for UI updates
 
 #### 3. Data Access Layer
@@ -130,32 +127,25 @@ The application entry point and main window orchestrator.
 Core business logic for order processing and packing.
 
 **Key Responsibilities:**
-- Load and validate Excel packing lists
-- Generate Code-128 barcodes for orders
+- Load packing lists from Shopify Tool sessions (JSON format)
 - Track packing state (New → In Progress → Completed)
-- Handle SKU mapping (barcode translations)
-- Persist packing state for crash recovery
+- Handle SKU mapping and barcode normalization
+- Persist packing state for crash recovery via `AsyncStateWriter`
+- Provide order metadata to the UI
 
 **State Management:**
 ```python
 {
     "in_progress": {
-        "ORDER-123": {
-            "SKU-001": {"required": 5, "packed": 3},
-            "SKU-002": {"required": 2, "packed": 0}
-        }
+        "ORDER-123": [
+            {"original_sku": "SKU-001", "required": 5, "packed": 3},
+            {"original_sku": "SKU-002", "required": 2, "packed": 0}
+        ]
     },
-    "completed_orders": ["ORDER-456", "ORDER-789"]
+    "completed_orders": ["ORDER-456"],
+    "skipped_orders": ["ORDER-789"]
 }
 ```
-
-**Barcode Generation Process:**
-1. Read Excel file with pandas
-2. Validate required columns (Order_Number, SKU, Product_Name, Quantity, Courier)
-3. Group items by order
-4. Generate Code-128 barcode images (203 DPI, 65x35mm labels)
-5. Add order number and courier text to labels
-6. Save as PNG files in session directory
 
 ### SessionManager (`session_manager.py`)
 
@@ -255,27 +245,18 @@ Centralized statistics tracking and analytics.
 ### 1. Session Start Flow
 
 ```
-User selects Excel file
+User selects session in Session Browser (Available Sessions tab)
     ↓
-MainWindow.start_session()
+MainWindow._handle_start_packing_from_browser()
     ↓
-SessionManager.start_session()
-    ├─→ Create session directory
-    ├─→ Acquire session lock
-    └─→ Start heartbeat timer
+SessionStartWorker (QThread)
+    ├─→ SessionManager.get_packing_work_dir() — create work directory
+    ├─→ SessionLockManager.acquire_lock()
+    ├─→ PackerLogic.load_from_shopify_analysis() or load_packing_list_json()
+    └─→ Start heartbeat timer (60s interval)
     ↓
-PackerLogic.load_packing_list_from_file()
-    ↓
-[Column Mapping Dialog if needed]
-    ↓
-PackerLogic.process_data_and_generate_barcodes()
-    ├─→ Validate columns
-    ├─→ Group by Order_Number
-    ├─→ Generate barcode images
-    └─→ Save to session directory
-    ↓
-MainWindow.setup_order_table()
-    └─→ Display orders in UI
+MainWindow._on_session_started()
+    └─→ Display orders in UI tree
 ```
 
 ### 2. Barcode Scanning Flow
@@ -313,26 +294,16 @@ User clicks "End Session"
     ↓
 MainWindow.end_session()
     ↓
-Generate completion report Excel
-    ├─→ Mark completed rows as green
-    ├─→ Add Status and Completed At columns
-    └─→ Save to session/output/ directory
-    ↓
-StatisticsManager.record_session_completion()
-    ├─→ Calculate duration
-    ├─→ Count orders and items
-    └─→ Update global stats
-    ↓
-Save session_summary.json
-    └─→ Store metrics for history
-    ↓
-PackerLogic.end_session_cleanup()
-    └─→ Remove packing_state.json
-    ↓
-SessionManager.end_session()
-    ├─→ Stop heartbeat timer
-    ├─→ Release session lock
-    └─→ Remove session_info.json
+SessionEndWorker (QThread)
+    ├─→ AsyncStateWriter.flush() — write any pending state
+    ├─→ StatisticsManager.record_session_completion()
+    │   ├─→ Calculate duration
+    │   ├─→ Count orders and items
+    │   └─→ Update global stats
+    ├─→ Save session_summary.json
+    ├─→ PackerLogic.end_session_cleanup()
+    └─→ SessionLockManager.release_lock()
+        └─→ Stop heartbeat timer
 ```
 
 ## Storage Architecture
@@ -401,12 +372,10 @@ SessionManager.end_session()
     └── global_stats.json            # Centralized metrics (unified)
 ```
 
-**Key Architectural Changes (v1.2.0):**
-- ✅ **Multiple packing lists** per Shopify session supported
-- ✅ **Isolated work directories** (`packing/{list_name}/`) for each list
-- ✅ **Backward compatible** with Excel workflow (`barcodes/`)
-- ✅ **Unified statistics** via `shared/stats_manager.py`
-- ✅ **Session detection** automatically identifies workflow type
+**Key design points:**
+- Multiple packing lists per Shopify session, one work directory each (`packing/{list_name}/`)
+- Unified statistics via `shared/stats_manager.py`
+- Session detection reads `packing_lists/` and `packing/` directory structure
 
 ### File Formats
 
@@ -552,9 +521,9 @@ Restore UI state
     │
     ├─→ Start New Session
     │   └─→ [Initializing]
-    │       ├─→ Create directory
+    │       ├─→ Create work directory
     │       ├─→ Acquire lock
-    │       ├─→ Generate barcodes
+    │       ├─→ Load packing list
     │       └─→ [Active]
     │
     └─→ Restore Session
@@ -594,9 +563,8 @@ Session Start:
 └─ Start heartbeat timer
 
 During Session:
-├─ Generate barcodes/*.png files
 ├─ Create packing_state.json
-├─ Update packing_state.json after each scan
+├─ Update packing_state.json after each scan (via AsyncStateWriter)
 └─ Update .session.lock heartbeat every 60s
 
 Session End:
@@ -892,9 +860,7 @@ Background session scanning worker.
 | **Build Tool** | PyInstaller | Standalone .exe compilation |
 | **Testing** | pytest, pytest-qt | Unit and integration tests |
 
-**Removed in v1.3.0.0:**
-- ❌ `python-barcode` - Barcode generation moved to Shopify Tool
-- ❌ `reportlab/pypdf` - PDF generation moved to Shopify Tool
+**Removed in v1.3.0.0:** `python-barcode`, `reportlab`/`pypdf` — moved to Shopify Tool.
 
 ### Key Libraries
 
@@ -917,12 +883,8 @@ Background session scanning worker.
   - Aggregations for summary table
 
 #### python-barcode
-- **Status**: ❌ REMOVED in v1.3.0.0
-- **Migration**: Barcode generation now handled by Shopify Tool (Feature #5)
-- **Previous Usage** (v1.2.0 and earlier):
-  - Code-128 barcode generation
-  - ImageWriter for PNG output
-  - Custom DPI and dimensions (203 DPI, 65x35mm labels)
+
+Removed in v1.3.0.0. Barcode generation is now handled by Shopify Tool.
 
 ### Windows-Specific Features
 
@@ -1004,7 +966,6 @@ PackingToolError (base)
 - Prevents corruption from partial writes
 
 ### Lazy Loading
-- Barcode images generated only when session starts
 - Statistics loaded on-demand
 
 ### File Locking Optimization
@@ -1043,7 +1004,5 @@ PackingToolError (base)
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-11-04
-**Authors**: Development Team
-**Status**: Production
+**Document Version**: 1.3.2.0 (Pre-release)
+**Last Updated**: 2026-02-24

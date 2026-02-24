@@ -1,8 +1,7 @@
 # Packer's Assistant - API Reference
 
-**Version:** 1.3.0.0
-**Last Updated:** 2026-01-22
-**Phase:** Phase 3.1 Complete - Session Browser & Performance Optimizations
+**Version:** 1.3.2.0 (Pre-release)
+**Last Updated:** 2026-02-24
 
 ---
 
