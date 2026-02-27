@@ -106,8 +106,9 @@ class OverviewTab(QWidget):
                 QLabel(str(total_items))
             )
 
-            # Status
-            if completed_orders == total_orders:
+            # Status — count skipped orders toward completion
+            skipped_orders_count = record.get('skipped_orders_count', 0)
+            if total_orders > 0 and (completed_orders + skipped_orders_count) >= total_orders:
                 status = "✅ Complete"
             else:
                 status = f"⚠️ Incomplete ({in_progress_orders} in progress)"
