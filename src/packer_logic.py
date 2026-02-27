@@ -122,12 +122,23 @@ class PackerLogic(QObject):
             'in_progress': {},
             'completed_orders': [],
             'skipped_orders': [],
+            'skipped_orders_timing': {},  # order_num -> ISO timestamp of skip
         }
+
+        # Phase 2b: Order-level timing tracking — initialized BEFORE _load_session_state()
+        # so that _load_session_state() can populate them from disk without being overwritten.
+        self.current_order_start_time = None  # ISO timestamp when order scanning started
+        self.current_order_items_scanned = []  # List of items with scan timestamps
+        self.completed_orders_metadata = []  # List of completed orders with timing data
+
+        # Per-order counters for 1.7 metrics — reset by start_order_packing()
+        self.current_order_corrections: int = 0       # cancel_item_scan() events
+        self.current_order_extra_scan_count: int = 0  # SKU_EXTRA events
 
         # Load SKU mapping from ProfileManager
         self.sku_map = self._load_sku_mapping()
 
-        # Load session state if exists
+        # Load session state if exists (must come AFTER Phase 2b vars are declared)
         self._load_session_state()
 
         # Extra items tracking: normalized_sku → extra count (scanned beyond required)
@@ -135,11 +146,6 @@ class PackerLogic(QObject):
 
         # Unknown/incorrect scan tracking: raw barcodes that didn't match any SKU
         self.unknown_scans: List[str] = []
-
-        # Phase 2b: Order-level timing tracking
-        self.current_order_start_time = None  # ISO timestamp when order scanning started
-        self.current_order_items_scanned = []  # List of items with scan timestamps
-        self.completed_orders_metadata = []  # List of completed orders with timing data
 
         # Write-behind queue: state writes happen in background to avoid UI freezes.
         # sync_mode=True is used in tests to keep writes synchronous.
@@ -150,7 +156,7 @@ class PackerLogic(QObject):
         logger.debug(f"Barcode directory: {self.barcode_dir}")
         logger.debug(f"Reports directory: {self.reports_dir}")
         logger.debug(f"Loaded {len(self.sku_map)} SKU mappings")
-        logger.debug("Phase 2b timing variables initialized")
+        logger.debug("Phase 2b timing variables initialized (loaded from state if available)")
 
     def _load_sku_mapping(self) -> Dict[str, str]:
         """
@@ -262,7 +268,7 @@ class PackerLogic(QObject):
 
         if not os.path.exists(state_file):
             logger.debug("No existing session state found, starting fresh")
-            self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []}
+            self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': [], 'skipped_orders_timing': {}}
             return
 
         try:
@@ -274,7 +280,7 @@ class PackerLogic(QObject):
             if data is None:
                 # File exists but couldn't be read (invalid JSON, etc.)
                 logger.error("Could not load session state, starting fresh")
-                self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []}
+                self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': [], 'skipped_orders_timing': {}}
                 return
 
             # Handle both old and new format (with version)
@@ -403,6 +409,8 @@ class PackerLogic(QObject):
 
             # Load skipped orders list (added in later versions; default to empty list)
             self.session_packing_state['skipped_orders'] = state_data.get('skipped_orders', [])
+            # Load skipped orders timing (maps order_num -> ISO skip timestamp)
+            self.session_packing_state['skipped_orders_timing'] = state_data.get('skipped_orders_timing', {})
 
             # Load metadata if present (new format)
             if 'session_id' in state_data:
@@ -432,7 +440,7 @@ class PackerLogic(QObject):
 
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error loading session state: {e}, starting fresh")
-            self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': []}
+            self.session_packing_state = {'in_progress': {}, 'completed_orders': [], 'skipped_orders': [], 'skipped_orders_timing': {}}
 
     def _build_state_dict(self) -> Dict[str, Any]:
         """
@@ -506,6 +514,7 @@ class PackerLogic(QObject):
                 else self._build_completed_list()
             ),
             "skipped_orders": list(self.session_packing_state.get('skipped_orders', [])),
+            "skipped_orders_timing": dict(self.session_packing_state.get('skipped_orders_timing', {})),
         }
 
     def _do_atomic_write(self, state_data: Dict[str, Any]) -> None:
@@ -606,21 +615,21 @@ class PackerLogic(QObject):
         Note: This is a basic implementation. Full timestamps tracking requires
         storing start time for each order (future enhancement).
         """
+        from shared.metadata_utils import get_current_timestamp
+        # Single approximate timestamp for the whole fallback list (not per-order)
+        fallback_ts = get_current_timestamp()
         completed_list = []
 
         for order_number in self.session_packing_state.get('completed_orders', []):
-            # Get items count for this order
             items_count = 0
             if order_number in self.orders_data:
                 items_count = len(self.orders_data[order_number].get('items', []))
 
-            from shared.metadata_utils import get_current_timestamp
-
             completed_list.append({
                 "order_number": order_number,
-                "completed_at": get_current_timestamp(),  # Approximation
-                "items_count": items_count
-                # duration_seconds: Cannot calculate without start time (future enhancement)
+                "completed_at": fallback_ts,  # Approximation — no per-order timestamps available
+                "items_count": items_count,
+                # duration_seconds omitted: no start time available in fallback path
             })
 
         return completed_list
@@ -652,22 +661,38 @@ class PackerLogic(QObject):
             duration_seconds = 0
             logger.warning(f"Order {self.current_order_number} has no start time")
 
-        # Build order metadata record
+        # Extract first-scan latency from scan records (if any)
+        time_to_first_scan = None
+        for record in self.current_order_items_scanned:
+            if "time_to_first_scan_seconds" in record:
+                time_to_first_scan = record["time_to_first_scan_seconds"]
+                break
+
+        # Build order metadata record with full 1.7 metrics
         order_metadata = {
             "order_number": self.current_order_number,
             "started_at": self.current_order_start_time,
             "completed_at": completed_at,
             "duration_seconds": duration_seconds,
             "items_count": len(self.current_order_items_scanned),
-            "items": self.current_order_items_scanned.copy()  # Full items with timestamps
+            "items": self.current_order_items_scanned.copy(),
+            # 1.7 per-order counters
+            "corrections": self.current_order_corrections,
+            "extra_scans_count": self.current_order_extra_scan_count,
+            "unknown_scans_count": len(self.unknown_scans),
         }
+        if time_to_first_scan is not None:
+            order_metadata["time_to_first_scan_seconds"] = time_to_first_scan
 
         # Add to completed orders metadata
         self.completed_orders_metadata.append(order_metadata)
 
         logger.info(
             f"Order {self.current_order_number} completed: "
-            f"duration={duration_seconds}s, items={len(self.current_order_items_scanned)}"
+            f"duration={duration_seconds}s, items={len(self.current_order_items_scanned)}, "
+            f"corrections={self.current_order_corrections}, "
+            f"extras={self.current_order_extra_scan_count}, "
+            f"unknown={len(self.unknown_scans)}"
         )
 
         # Note: We don't reset current_order_number here because it's still needed
@@ -816,7 +841,10 @@ class PackerLogic(QObject):
         self.current_order_number = original_order_number
         items = self.orders_data[original_order_number]['items']
 
-        if original_order_number in self.session_packing_state['in_progress']:
+        # Capture "is this a brand-new order?" BEFORE potentially adding it to in_progress.
+        is_new_order = original_order_number not in self.session_packing_state['in_progress']
+
+        if not is_new_order:
             self.current_order_state = self.session_packing_state['in_progress'][original_order_number]
         else:
             self.current_order_state = []
@@ -839,12 +867,31 @@ class PackerLogic(QObject):
             self.session_packing_state['in_progress'][original_order_number] = self.current_order_state
             self._save_session_state_async()
 
-        # Phase 2b: Record order start time
+        # Phase 2b: Record order start time.
+        # Only reset timing for brand-new orders. For orders already in in_progress (resumed
+        # from a previous session), preserve the start time and scanned items list that were
+        # restored by _load_session_state() so timing continuity is maintained.
         from shared.metadata_utils import get_current_timestamp
-        self.current_order_start_time = get_current_timestamp()
-        self.current_order_items_scanned = []
-
-        logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
+        if is_new_order:
+            self.current_order_start_time = get_current_timestamp()
+            self.current_order_items_scanned = []
+            self.current_order_corrections = 0
+            self.current_order_extra_scan_count = 0
+            logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
+        else:
+            # Resumed order — keep existing timing from loaded state.
+            # If start time is missing despite being in in_progress, fall back gracefully.
+            if not self.current_order_start_time:
+                self.current_order_start_time = get_current_timestamp()
+                logger.warning(
+                    f"Order {original_order_number} resumed but had no start time; "
+                    "resetting to now"
+                )
+            logger.info(
+                f"Order {original_order_number} resumed; "
+                f"preserving start_time={self.current_order_start_time}, "
+                f"{len(self.current_order_items_scanned)} items already scanned"
+            )
 
         return items, "ORDER_LOADED"
 
@@ -962,14 +1009,22 @@ class PackerLogic(QObject):
             items_list = self.orders_data[self.current_order_number]['items']
             item_idx = found_item['row']
 
+            # Record first-scan latency (time between order start and very first item scan)
+            time_to_first_scan = (
+                time_from_order_start if len(self.current_order_items_scanned) == 0 else None
+            )
+
             # Build item scan record
             item_scan_record = {
                 "sku": normalized_final_sku,
                 "title": items_list[item_idx].get('Product_Name', normalized_final_sku),
                 "quantity": found_item['required'],
                 "scanned_at": scan_timestamp,
-                "time_from_order_start_seconds": time_from_order_start
+                "time_from_order_start_seconds": time_from_order_start,
+                "confirmation_method": "scanned",
             }
+            if time_to_first_scan is not None:
+                item_scan_record["time_to_first_scan_seconds"] = time_to_first_scan
 
             # Add to scanned items list
             self.current_order_items_scanned.append(item_scan_record)
@@ -1049,6 +1104,7 @@ class PackerLogic(QObject):
             self.current_extra_items[normalized_final_sku] = (
                 self.current_extra_items.get(normalized_final_sku, 0) + 1
             )
+            self.current_order_extra_scan_count += 1
             self._save_session_state_async()
             return None, "SKU_EXTRA"
         else:
@@ -1068,10 +1124,13 @@ class PackerLogic(QObject):
         """Mark the current order as skipped, then check for overall session completion."""
         if not self.current_order_number:
             return
+        from shared.metadata_utils import get_current_timestamp
         order_num = self.current_order_number
         skipped = self.session_packing_state['skipped_orders']
         if order_num not in skipped:
             skipped.append(order_num)
+        # Record the skip timestamp for metrics
+        self.session_packing_state['skipped_orders_timing'][order_num] = get_current_timestamp()
         self.clear_current_order()
         self._check_all_complete()
         self._save_session_state_async()
@@ -1101,6 +1160,17 @@ class PackerLogic(QObject):
         if item['packed'] <= 0:
             return {"row": row, "packed": 0}, "ITEM_ALREADY_ZERO"
         item['packed'] -= 1
+        self.current_order_corrections += 1
+
+        # Remove the most recent scan record for this item from the scan history so
+        # that items_count in the completed-order metadata reflects only final packed
+        # quantities (not cancelled intermediate scans).
+        normalized_sku = item.get('normalized_sku', '')
+        for i in range(len(self.current_order_items_scanned) - 1, -1, -1):
+            if self.current_order_items_scanned[i].get('sku') == normalized_sku:
+                self.current_order_items_scanned.pop(i)
+                break
+
         self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
         self._save_session_state_async()
         return {"row": row, "packed": item['packed']}, "ITEM_DECREMENTED"
@@ -1122,6 +1192,29 @@ class PackerLogic(QObject):
         item = next((s for s in self.current_order_state if s.get('row') == row), None)
         if item is None:
             return {}, "NO_ACTIVE_ORDER"
+
+        # Add a scan record for the force-confirmed quantity (remaining unpacked qty).
+        # This ensures _complete_current_order() sees a full items list with timestamps.
+        from shared.metadata_utils import get_current_timestamp, calculate_duration
+        force_timestamp = get_current_timestamp()
+        time_from_start = (
+            calculate_duration(self.current_order_start_time, force_timestamp)
+            if self.current_order_start_time else 0
+        )
+        items_list = self.orders_data[self.current_order_number]['items']
+        item_idx = item.get('row', 0)
+        force_record = {
+            "sku": item['normalized_sku'],
+            "title": items_list[item_idx].get('Product_Name', item['normalized_sku']) if item_idx < len(items_list) else item['normalized_sku'],
+            "quantity": item['required'],
+            "scanned_at": force_timestamp,
+            "time_from_order_start_seconds": time_from_start,
+            "confirmation_method": "force_confirmed",
+        }
+        # Only add record if the item wasn't already fully scanned (avoids duplicates)
+        if item['packed'] < item['required']:
+            self.current_order_items_scanned.append(force_record)
+
         item['packed'] = item['required']
         self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
         all_done = all(s['packed'] >= s['required'] for s in self.current_order_state)
@@ -1650,70 +1743,75 @@ class PackerLogic(QObject):
         # Count unique SKUs
         unique_skus = self._count_unique_skus()
 
-        # Phase 2b: Calculate metrics from completed_orders_metadata
-        if hasattr(self, 'completed_orders_metadata') and self.completed_orders_metadata:
-            orders_with_timing = self.completed_orders_metadata
+        # Calculate metrics from completed_orders_metadata
+        orders_with_timing = self.completed_orders_metadata if self.completed_orders_metadata else []
 
-            # Extract durations
-            durations = [
-                order['duration_seconds']
-                for order in orders_with_timing
-                if order.get('duration_seconds')
-            ]
-
-            # Calculate order-level metrics
-            if durations:
-                avg_time_per_order = round(sum(durations) / len(durations), 1)
-                fastest_order_seconds = min(durations)
-                slowest_order_seconds = max(durations)
-            else:
-                avg_time_per_order = 0
-                fastest_order_seconds = 0
-                slowest_order_seconds = 0
-
-            # Calculate item-level metrics
-            all_items = []
-            for order in orders_with_timing:
-                all_items.extend(order.get('items', []))
-
-            if all_items:
-                item_times = [
-                    item['time_from_order_start_seconds']
-                    for item in all_items
-                    if 'time_from_order_start_seconds' in item
-                ]
-                avg_time_per_item = round(sum(item_times) / len(item_times), 1) if item_times else 0
-            else:
-                avg_time_per_item = 0
-
-            # Total items from metadata
-            total_items_from_metadata = sum(order.get('items_count', 0) for order in orders_with_timing)
-
+        # --- Order-level timing ---
+        durations = [o['duration_seconds'] for o in orders_with_timing if o.get('duration_seconds')]
+        if durations:
+            avg_time_per_order = round(sum(durations) / len(durations), 1)
+            fastest_order_seconds = min(durations)
+            slowest_order_seconds = max(durations)
         else:
-            # Fallback for old sessions without timing
-            logger.warning("No timing metadata available, using fallback calculations")
             avg_time_per_order = 0
-            avg_time_per_item = 0
             fastest_order_seconds = 0
             slowest_order_seconds = 0
-            total_items_from_metadata = 0
 
-        # Session-level performance (orders_per_hour, items_per_hour)
+        # --- Item-level timing ---
+        all_items = []
+        for order in orders_with_timing:
+            all_items.extend(order.get('items', []))
+
+        item_times = [
+            item['time_from_order_start_seconds']
+            for item in all_items
+            if 'time_from_order_start_seconds' in item
+        ]
+        avg_time_per_item = round(sum(item_times) / len(item_times), 1) if item_times else 0
+
+        total_items_from_metadata = sum(o.get('items_count', 0) for o in orders_with_timing)
+
+        # --- 1.7 metrics: first-scan latency ---
+        first_scan_latencies = [
+            o['time_to_first_scan_seconds']
+            for o in orders_with_timing
+            if o.get('time_to_first_scan_seconds') is not None
+        ]
+        avg_time_to_first_scan = (
+            round(sum(first_scan_latencies) / len(first_scan_latencies), 1)
+            if first_scan_latencies else 0
+        )
+
+        # --- 1.7 metrics: corrections, extras, unknown scans ---
+        total_corrections = sum(o.get('corrections', 0) for o in orders_with_timing)
+        total_extra_scans = sum(o.get('extra_scans_count', 0) for o in orders_with_timing)
+        total_unknown_scans = sum(o.get('unknown_scans_count', 0) for o in orders_with_timing)
+        avg_corrections_per_order = (
+            round(total_corrections / len(orders_with_timing), 2) if orders_with_timing else 0
+        )
+
+        if not orders_with_timing:
+            logger.warning("No timing metadata available, metrics will be zero")
+
+        # --- Session-level throughput ---
         orders_per_hour = 0
         items_per_hour = 0
-
         if duration_seconds and duration_seconds > 0:
             hours = duration_seconds / 3600.0
-
             if completed_orders > 0:
                 orders_per_hour = round(completed_orders / hours, 1)
-
-            # Use metadata total_items if available, otherwise fallback to processed_df total
             items_for_rate = total_items_from_metadata if total_items_from_metadata > 0 else total_items
             if items_for_rate > 0:
                 items_per_hour = round(items_for_rate / hours, 1)
 
-        # Build unified v1.3.0 session summary
+        # --- Skipped orders list for the summary ---
+        skipped_timing = self.session_packing_state.get('skipped_orders_timing', {})
+        skipped_orders_list = [
+            {"order_number": num, "skipped_at": skipped_timing.get(num), "status": "skipped"}
+            for num in self.session_packing_state.get('skipped_orders', [])
+        ]
+
+        # Build unified session summary
         summary = {
             # Metadata
             "version": "1.3.0",
@@ -1735,6 +1833,8 @@ class PackerLogic(QObject):
             # Counts
             "total_orders": total_orders,
             "completed_orders": completed_orders,
+            "in_progress_orders": len(self.session_packing_state.get('in_progress', {})),
+            "skipped_orders_count": len(skipped_orders_list),
             "total_items": total_items,
             "unique_skus": unique_skus,
 
@@ -1742,19 +1842,28 @@ class PackerLogic(QObject):
             "metrics": {
                 "avg_time_per_order": avg_time_per_order,
                 "avg_time_per_item": avg_time_per_item,
-                "fastest_order_seconds": fastest_order_seconds,  # Phase 2b: Real data from timing
-                "slowest_order_seconds": slowest_order_seconds,   # Phase 2b: Real data from timing
+                "fastest_order_seconds": fastest_order_seconds,
+                "slowest_order_seconds": slowest_order_seconds,
                 "orders_per_hour": orders_per_hour,
-                "items_per_hour": items_per_hour
+                "items_per_hour": items_per_hour,
+                # 1.7 metrics
+                "avg_time_to_first_scan": avg_time_to_first_scan,
+                "total_corrections": total_corrections,
+                "avg_corrections_per_order": avg_corrections_per_order,
+                "total_extra_scans": total_extra_scans,
+                "total_unknown_scans": total_unknown_scans,
             },
 
-            # Phase 2b: Populate orders array with timing data
-            "orders": self.completed_orders_metadata if hasattr(self, 'completed_orders_metadata') else []
+            # Completed orders with full timing data
+            "orders": orders_with_timing,
+
+            # Skipped orders list
+            "skipped_orders": skipped_orders_list,
         }
 
         logger.info(
-            f"Session summary generated (v1.3.0): {completed_orders}/{total_orders} orders, "
-            f"{total_items} items, {unique_skus} unique SKUs, "
+            f"Session summary generated: {completed_orders}/{total_orders} orders, "
+            f"{len(skipped_orders_list)} skipped, {total_items} items, "
             f"{duration_seconds}s duration, {orders_per_hour} orders/hour"
         )
 

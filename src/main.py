@@ -2137,11 +2137,18 @@ class MainWindow(QMainWindow):
         result, status = self.logic.force_confirm_item(row)
         if status == "FORCE_CONFIRMED":
             self.packer_mode_widget.update_item_row(row, result["packed"], True)
-            self.flash_border("green")
             if result.get("order_complete"):
+                self.flash_border("green")
                 order_num = self.logic.current_order_number
                 self._handle_order_completion(order_num)
                 self.logic.clear_current_order()
+            elif self.logic.current_extra_items:
+                # All items packed but extra items need resolution before completing
+                self.flash_border("orange")
+                self.packer_mode_widget.show_notification("REVIEW EXTRA ITEMS!", "#e67e22")
+                self.packer_mode_widget.show_extras_panel(self.logic.current_extra_items)
+            else:
+                self.flash_border("green")
         self.packer_mode_widget.set_focus_to_scanner()
 
     def _on_map_sku_from_packer(self, sku: str):
