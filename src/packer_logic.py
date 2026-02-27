@@ -132,8 +132,9 @@ class PackerLogic(QObject):
         self.completed_orders_metadata = []  # List of completed orders with timing data
 
         # Per-order counters for 1.7 metrics — reset by start_order_packing()
-        self.current_order_corrections: int = 0       # cancel_item_scan() events
-        self.current_order_extra_scan_count: int = 0  # SKU_EXTRA events
+        self.current_order_corrections: int = 0           # cancel_item_scan() events
+        self.current_order_extra_scan_count: int = 0      # SKU_EXTRA events
+        self.current_order_unknown_scan_count: int = 0    # SKU_NOT_FOUND events
 
         # Load SKU mapping from ProfileManager
         self.sku_map = self._load_sku_mapping()
@@ -668,18 +669,23 @@ class PackerLogic(QObject):
                 time_to_first_scan = record["time_to_first_scan_seconds"]
                 break
 
+        # items_count = total units packed (sum of quantities across all scan records).
+        # Using sum() rather than len() correctly accounts for force-confirm records
+        # that represent multiple units in a single record entry.
+        items_count = sum(r.get('quantity', 1) for r in self.current_order_items_scanned)
+
         # Build order metadata record with full 1.7 metrics
         order_metadata = {
             "order_number": self.current_order_number,
             "started_at": self.current_order_start_time,
             "completed_at": completed_at,
             "duration_seconds": duration_seconds,
-            "items_count": len(self.current_order_items_scanned),
+            "items_count": items_count,
             "items": self.current_order_items_scanned.copy(),
             # 1.7 per-order counters
             "corrections": self.current_order_corrections,
             "extra_scans_count": self.current_order_extra_scan_count,
-            "unknown_scans_count": len(self.unknown_scans),
+            "unknown_scans_count": self.current_order_unknown_scan_count,
         }
         if time_to_first_scan is not None:
             order_metadata["time_to_first_scan_seconds"] = time_to_first_scan
@@ -689,10 +695,10 @@ class PackerLogic(QObject):
 
         logger.info(
             f"Order {self.current_order_number} completed: "
-            f"duration={duration_seconds}s, items={len(self.current_order_items_scanned)}, "
+            f"duration={duration_seconds}s, items={items_count}, "
             f"corrections={self.current_order_corrections}, "
             f"extras={self.current_order_extra_scan_count}, "
-            f"unknown={len(self.unknown_scans)}"
+            f"unknown={self.current_order_unknown_scan_count}"
         )
 
         # Note: We don't reset current_order_number here because it's still needed
@@ -877,9 +883,14 @@ class PackerLogic(QObject):
             self.current_order_items_scanned = []
             self.current_order_corrections = 0
             self.current_order_extra_scan_count = 0
+            self.current_order_unknown_scan_count = 0
             logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
         else:
-            # Resumed order — keep existing timing from loaded state.
+            # Resumed order — keep existing timing from loaded state, but reset per-order
+            # quality counters since they cannot be restored from packing_state.json.
+            self.current_order_corrections = 0
+            self.current_order_extra_scan_count = 0
+            self.current_order_unknown_scan_count = 0
             # If start time is missing despite being in in_progress, fall back gracefully.
             if not self.current_order_start_time:
                 self.current_order_start_time = get_current_timestamp()
@@ -1014,11 +1025,16 @@ class PackerLogic(QObject):
                 time_from_order_start if len(self.current_order_items_scanned) == 0 else None
             )
 
-            # Build item scan record
+            # Build item scan record — quantity=1: each scan packs exactly one unit
+            item_title = (
+                items_list[item_idx].get('Product_Name', normalized_final_sku)
+                if item_idx < len(items_list)
+                else normalized_final_sku
+            )
             item_scan_record = {
                 "sku": normalized_final_sku,
-                "title": items_list[item_idx].get('Product_Name', normalized_final_sku),
-                "quantity": found_item['required'],
+                "title": item_title,
+                "quantity": 1,
                 "scanned_at": scan_timestamp,
                 "time_from_order_start_seconds": time_from_order_start,
                 "confirmation_method": "scanned",
@@ -1111,6 +1127,7 @@ class PackerLogic(QObject):
             # SKU is not in this order at all
             # Example: User scanned wrong product, or product from different order
             self.unknown_scans.append(sku)
+            self.current_order_unknown_scan_count += 1
             return None, "SKU_NOT_FOUND"
 
     def clear_current_order(self):
@@ -1130,7 +1147,7 @@ class PackerLogic(QObject):
         if order_num not in skipped:
             skipped.append(order_num)
         # Record the skip timestamp for metrics
-        self.session_packing_state['skipped_orders_timing'][order_num] = get_current_timestamp()
+        self.session_packing_state.setdefault('skipped_orders_timing', {})[order_num] = get_current_timestamp()
         self.clear_current_order()
         self._check_all_complete()
         self._save_session_state_async()
@@ -1162,13 +1179,17 @@ class PackerLogic(QObject):
         item['packed'] -= 1
         self.current_order_corrections += 1
 
-        # Remove the most recent scan record for this item from the scan history so
-        # that items_count in the completed-order metadata reflects only final packed
-        # quantities (not cancelled intermediate scans).
+        # Adjust the most recent scan record for this item so that items_count in the
+        # completed-order metadata reflects only the final packed quantity.
+        # Records with quantity > 1 (e.g. a force-confirm record) are decremented rather
+        # than deleted, since only one unit is being cancelled.
         normalized_sku = item.get('normalized_sku', '')
         for i in range(len(self.current_order_items_scanned) - 1, -1, -1):
             if self.current_order_items_scanned[i].get('sku') == normalized_sku:
-                self.current_order_items_scanned.pop(i)
+                if self.current_order_items_scanned[i].get('quantity', 1) > 1:
+                    self.current_order_items_scanned[i]['quantity'] -= 1
+                else:
+                    self.current_order_items_scanned.pop(i)
                 break
 
         self.session_packing_state['in_progress'][self.current_order_number] = self.current_order_state
@@ -1203,16 +1224,23 @@ class PackerLogic(QObject):
         )
         items_list = self.orders_data[self.current_order_number]['items']
         item_idx = item.get('row', 0)
+        item_title = (
+            items_list[item_idx].get('Product_Name', item['normalized_sku'])
+            if 0 <= item_idx < len(items_list)
+            else item['normalized_sku']
+        )
+        # quantity = remaining units being force-confirmed (packed will jump from current to required)
+        remaining_qty = item['required'] - item['packed']
         force_record = {
             "sku": item['normalized_sku'],
-            "title": items_list[item_idx].get('Product_Name', item['normalized_sku']) if item_idx < len(items_list) else item['normalized_sku'],
-            "quantity": item['required'],
+            "title": item_title,
+            "quantity": remaining_qty,
             "scanned_at": force_timestamp,
             "time_from_order_start_seconds": time_from_start,
             "confirmation_method": "force_confirmed",
         }
-        # Only add record if the item wasn't already fully scanned (avoids duplicates)
-        if item['packed'] < item['required']:
+        # Only add record if there are remaining units to force-confirm
+        if remaining_qty > 0:
             self.current_order_items_scanned.append(force_record)
 
         item['packed'] = item['required']
