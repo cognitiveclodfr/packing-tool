@@ -27,6 +27,7 @@ Design notes:
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -58,7 +59,7 @@ class SessionRegistryManager:
     def __init__(self, profile_manager):
         """
         Args:
-            profile_manager: ProfileManager instance with sessions_dir attribute.
+            profile_manager: ProfileManager instance (uses get_sessions_root()).
         """
         self.profile_manager = profile_manager
 
@@ -69,7 +70,7 @@ class SessionRegistryManager:
     def _get_registry_path(self, client_id: str) -> Path:
         """Return path to registry_index.json for the given client."""
         return (
-            self.profile_manager.sessions_dir
+            self.profile_manager.get_sessions_root()
             / f"CLIENT_{client_id}"
             / self.REGISTRY_FILENAME
         )
@@ -118,35 +119,44 @@ class SessionRegistryManager:
         Atomically write registry to disk (temp file + rename).
 
         Updates registry['last_updated'] before writing.
+        Retries up to 3 times with 150 ms backoff to tolerate transient SMB errors.
         Returns True on success, False on failure.
         """
         path = self._get_registry_path(client_id)
         registry["last_updated"] = get_current_timestamp()
 
-        tmp_path = None
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # Write to temp file in same directory so rename is atomic on SMB
-            fd, tmp_str = tempfile.mkstemp(
-                dir=path.parent, prefix=".registry_tmp_", suffix=".json"
-            )
-            tmp_path = Path(tmp_str)
+        last_exc = None
+        for attempt in range(3):
+            tmp_path = None
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(registry, f, indent=2, ensure_ascii=False)
-            except Exception:
-                os.close(fd)
-                raise
-            tmp_path.replace(path)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write registry for client {client_id}: {e}")
-            if tmp_path and tmp_path.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                # Write to temp file in same directory so rename is atomic on SMB
+                fd, tmp_str = tempfile.mkstemp(
+                    dir=path.parent, prefix=".registry_tmp_", suffix=".json"
+                )
+                tmp_path = Path(tmp_str)
                 try:
-                    tmp_path.unlink()
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(registry, f, indent=2, ensure_ascii=False)
                 except Exception:
-                    pass
-            return False
+                    os.close(fd)
+                    raise
+                tmp_path.replace(path)
+                return True
+            except Exception as e:
+                last_exc = e
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                if attempt < 2:
+                    time.sleep(0.15)
+
+        logger.error(
+            f"Failed to write registry for client {client_id} after 3 attempts: {last_exc}"
+        )
+        return False
 
     def registry_exists(self, client_id: str) -> bool:
         """Return True if registry_index.json already exists for this client."""
@@ -189,7 +199,7 @@ class SessionRegistryManager:
         all updates go through the targeted mutation methods.
         """
         registry = self._empty_registry(client_id)
-        client_dir = self.profile_manager.sessions_dir / f"CLIENT_{client_id}"
+        client_dir = self.profile_manager.get_sessions_root() / f"CLIENT_{client_id}"
 
         if not client_dir.exists():
             logger.warning(f"Client directory not found: {client_dir}")
@@ -669,7 +679,7 @@ class SessionRegistryManager:
         Returns the number of newly registered lists.
         """
         registry = self.read_registry(client_id)
-        client_dir = self.profile_manager.sessions_dir / f"CLIENT_{client_id}"
+        client_dir = self.profile_manager.get_sessions_root() / f"CLIENT_{client_id}"
         if not client_dir.exists():
             return 0
 

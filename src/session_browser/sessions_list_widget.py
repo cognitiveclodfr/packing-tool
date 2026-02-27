@@ -307,6 +307,11 @@ class SessionsListWidget(QWidget):
         self._main_frame.setVisible(True)
         self._header_label.setText(f"Client:  {client_id}")
         self._clear_table()
+
+        if self._registry is None:
+            self._status_bar.setText("Session registry not available — cannot load sessions.")
+            return
+
         self._status_bar.setText("Loading…")
         self.refresh()
 
@@ -351,21 +356,17 @@ class SessionsListWidget(QWidget):
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
 
-        # Sort: active first, then by started_at descending
-        def sort_key(e):
-            priority = {"in_progress": 0, "stale": 1, "paused": 2,
-                        "not_started": 3, "incomplete": 4, "abandoned": 5, "completed": 6}
-            return (priority.get(e.get("status", ""), 9),
-                    e.get("started_at") or e.get("created_at") or "")
-
-        sorted_entries = sorted(entries, key=sort_key, reverse=False)
-        # Reverse started_at within each priority group handled by secondary key
-        sorted_entries.sort(
+        # Sort: active first, then by started_at descending within each group
+        _STATUS_PRIORITY = {
+            "in_progress": 0, "stale": 1, "paused": 2, "not_started": 3,
+            "incomplete": 4, "abandoned": 5, "completed": 6,
+        }
+        sorted_entries = sorted(
+            entries,
             key=lambda e: (
-                {"in_progress": 0, "stale": 1, "paused": 2, "not_started": 3,
-                 "incomplete": 4, "abandoned": 5, "completed": 6}.get(e.get("status", ""), 9),
+                _STATUS_PRIORITY.get(e.get("status", ""), 9),
                 -(self._ts_to_epoch(e.get("started_at") or e.get("created_at", "")))
-            )
+            ),
         )
 
         for entry in sorted_entries:
