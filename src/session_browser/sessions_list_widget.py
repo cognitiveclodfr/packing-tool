@@ -279,6 +279,10 @@ class SessionsListWidget(QWidget):
         self._preview_action_btn.setVisible(False)
         self._preview_action_btn.clicked.connect(self._on_preview_action)
         preview_layout.addWidget(self._preview_action_btn)
+        self._preview_details_btn = QPushButton("📋  View Details")
+        self._preview_details_btn.setVisible(False)
+        self._preview_details_btn.clicked.connect(self._on_preview_details)
+        preview_layout.addWidget(self._preview_details_btn)
         self._preview_box.setMaximumHeight(120)
         main_layout.addWidget(self._preview_box)
 
@@ -539,18 +543,26 @@ class SessionsListWidget(QWidget):
             text += f"  ·  Corrections: {corrections}  ·  Unknown scans: {unknowns}"
         self._preview_label.setText(text)
 
-        # Configure action button
+        # Configure action buttons
         if status == "not_started":
             self._preview_action_btn.setText("▶  Start Packing")
             self._preview_action_btn.setVisible(True)
-        elif status in ("in_progress", "stale", "paused", "incomplete"):
+            self._preview_details_btn.setVisible(False)
+        elif status == "incomplete":
             self._preview_action_btn.setText("↩  Resume Session")
             self._preview_action_btn.setVisible(True)
+            self._preview_details_btn.setVisible(True)
+        elif status in ("in_progress", "stale", "paused"):
+            self._preview_action_btn.setText("↩  Resume Session")
+            self._preview_action_btn.setVisible(True)
+            self._preview_details_btn.setVisible(False)
         elif status in ("completed", "abandoned"):
             self._preview_action_btn.setText("📋  View Details")
             self._preview_action_btn.setVisible(True)
+            self._preview_details_btn.setVisible(False)
         else:
             self._preview_action_btn.setVisible(False)
+            self._preview_details_btn.setVisible(False)
 
     def _on_row_double_clicked(self, index):
         entry = self._get_row_entry(index.row())
@@ -568,6 +580,12 @@ class SessionsListWidget(QWidget):
         elif status in ("in_progress", "stale", "paused", "incomplete"):
             self._emit_resume_session(entry)
         else:
+            self._open_details_for_entry(entry)
+
+    def _on_preview_details(self):
+        row = self._table.currentRow()
+        entry = self._get_row_entry(row)
+        if entry:
             self._open_details_for_entry(entry)
 
     def _open_details_for_entry(self, entry: dict):
