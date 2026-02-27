@@ -125,9 +125,12 @@ class SessionDetailsDialog(QDialog):
                     'start_time': session_info.get('started_at', ''),
                     'end_time': None,
                     'duration_seconds': 0,
-                    'total_orders': packing_state.get('total_orders', 0),
+                    'total_orders': packing_state.get('progress', {}).get('total_orders', 0),
                     'completed_orders': len(packing_state.get('completed', [])),
-                    'in_progress_orders': len(packing_state.get('in_progress', [])),
+                    'in_progress_orders': sum(
+                        1 for k in packing_state.get('in_progress', {})
+                        if not k.startswith('_')
+                    ),
                     'skipped_orders_count': len(packing_state.get('skipped_orders', [])),
                     'total_items_packed': sum(o.get('items_count', 0) for o in packing_state.get('completed', []))
                 }

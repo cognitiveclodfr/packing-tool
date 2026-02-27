@@ -392,7 +392,13 @@ class PackerLogic(QObject):
                             'completed_at': item.get('completed_at'),
                             'duration_seconds': item.get('duration_seconds', 0),
                             'items_count': item.get('items_count', 0),
-                            'items': item.get('items', [])
+                            'items': item.get('items', []),
+                            # Restore 1.7 quality counters so generate_session_summary()
+                            # aggregates correctly across resumed sessions.
+                            'corrections': item.get('corrections', 0),
+                            'extra_scans_count': item.get('extra_scans_count', 0),
+                            'unknown_scans_count': item.get('unknown_scans_count', 0),
+                            'time_to_first_scan_seconds': item.get('time_to_first_scan_seconds'),
                         }
                         self.completed_orders_metadata.append(metadata)
 
@@ -426,10 +432,16 @@ class PackerLogic(QObject):
                 timing_data = state_data['in_progress']['_timing']
                 self.current_order_start_time = timing_data.get('current_order_start_time')
                 self.current_order_items_scanned = timing_data.get('items_scanned', [])
+                self.current_order_corrections = timing_data.get('corrections', 0)
+                self.current_order_extra_scan_count = timing_data.get('extra_scan_count', 0)
+                self.current_order_unknown_scan_count = timing_data.get('unknown_scan_count', 0)
                 logger.debug(f"Restored in-progress timing: started_at={self.current_order_start_time}")
             else:
                 self.current_order_start_time = None
                 self.current_order_items_scanned = []
+                self.current_order_corrections = 0
+                self.current_order_extra_scan_count = 0
+                self.current_order_unknown_scan_count = 0
 
             # Restore extra items if present (crash recovery)
             self.current_extra_items = state_data.get('_current_extras', {})
@@ -504,7 +516,10 @@ class PackerLogic(QObject):
                 **({
                     "_timing": {
                         "current_order_start_time": self.current_order_start_time,
-                        "items_scanned": self.current_order_items_scanned
+                        "items_scanned": self.current_order_items_scanned,
+                        "corrections": self.current_order_corrections,
+                        "extra_scan_count": self.current_order_extra_scan_count,
+                        "unknown_scan_count": self.current_order_unknown_scan_count,
                     }
                 } if self.current_order_number and self.current_order_start_time else {})
             },
@@ -886,11 +901,8 @@ class PackerLogic(QObject):
             self.current_order_unknown_scan_count = 0
             logger.info(f"Order {original_order_number} started at {self.current_order_start_time}")
         else:
-            # Resumed order — keep existing timing from loaded state, but reset per-order
-            # quality counters since they cannot be restored from packing_state.json.
-            self.current_order_corrections = 0
-            self.current_order_extra_scan_count = 0
-            self.current_order_unknown_scan_count = 0
+            # Resumed order — all timing and per-order quality counters were restored from
+            # _timing in _load_session_state(); nothing to reset here.
             # If start time is missing despite being in in_progress, fall back gracefully.
             if not self.current_order_start_time:
                 self.current_order_start_time = get_current_timestamp()
@@ -1025,7 +1037,10 @@ class PackerLogic(QObject):
                 time_from_order_start if len(self.current_order_items_scanned) == 0 else None
             )
 
-            # Build item scan record — quantity=1: each scan packs exactly one unit
+            # Build item scan record — quantity=1: each scan packs exactly one unit.
+            # "row" is stored so cancel_item_scan() can target the correct record
+            # by row index rather than by SKU (which is ambiguous when multiple
+            # rows share the same SKU, e.g. split-line orders).
             item_title = (
                 items_list[item_idx].get('Product_Name', normalized_final_sku)
                 if item_idx < len(items_list)
@@ -1035,6 +1050,7 @@ class PackerLogic(QObject):
                 "sku": normalized_final_sku,
                 "title": item_title,
                 "quantity": 1,
+                "row": item_idx,
                 "scanned_at": scan_timestamp,
                 "time_from_order_start_seconds": time_from_order_start,
                 "confirmation_method": "scanned",
@@ -1181,13 +1197,15 @@ class PackerLogic(QObject):
 
         # Adjust the most recent scan record for this item so that items_count in the
         # completed-order metadata reflects only the final packed quantity.
+        # Match by row (precise) so that cancelling row N never accidentally modifies a
+        # record belonging to a different row that happens to share the same SKU.
         # Records with quantity > 1 (e.g. a force-confirm record) are decremented rather
-        # than deleted, since only one unit is being cancelled.
-        normalized_sku = item.get('normalized_sku', '')
+        # than deleted, since only one unit is being cancelled at a time.
         for i in range(len(self.current_order_items_scanned) - 1, -1, -1):
-            if self.current_order_items_scanned[i].get('sku') == normalized_sku:
-                if self.current_order_items_scanned[i].get('quantity', 1) > 1:
-                    self.current_order_items_scanned[i]['quantity'] -= 1
+            rec = self.current_order_items_scanned[i]
+            if rec.get('row') == row:
+                if rec.get('quantity', 1) > 1:
+                    rec['quantity'] -= 1
                 else:
                     self.current_order_items_scanned.pop(i)
                 break
@@ -1235,6 +1253,7 @@ class PackerLogic(QObject):
             "sku": item['normalized_sku'],
             "title": item_title,
             "quantity": remaining_qty,
+            "row": item_idx,
             "scanned_at": force_timestamp,
             "time_from_order_start_seconds": time_from_start,
             "confirmation_method": "force_confirmed",
