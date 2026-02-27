@@ -78,8 +78,9 @@ class RegistryRefreshWorker(QThread):
     refresh_failed with an error string on failure.
     """
 
-    refresh_complete = Signal(list)   # list[dict]
-    refresh_failed   = Signal(str)    # error message
+    # Carries client_id so stale responses from a previous client can be discarded
+    refresh_complete = Signal(str, list)  # (client_id, entries)
+    refresh_failed   = Signal(str, str)   # (client_id, error_message)
 
     def __init__(self, registry_manager, client_id: str, parent=None):
         super().__init__(parent)
@@ -94,10 +95,10 @@ class RegistryRefreshWorker(QThread):
             self._registry.refresh_available_lists(self._client_id)
             # Resolve statuses (reads lock files for in_progress entries)
             entries = self._registry.get_all_entries(self._client_id)
-            self.refresh_complete.emit(entries)
+            self.refresh_complete.emit(self._client_id, entries)
         except Exception as exc:
             logger.error(f"RegistryRefreshWorker failed: {exc}", exc_info=True)
-            self.refresh_failed.emit(str(exc))
+            self.refresh_failed.emit(self._client_id, str(exc))
 
 
 # ------------------------------------------------------------------ #
@@ -323,8 +324,16 @@ class SessionsListWidget(QWidget):
         """Trigger a background registry read for the current client."""
         if not self._client_id or self._registry is None:
             return
+
+        # If a previous worker is still running (e.g. user switched clients
+        # quickly), disconnect its signals so its stale result never reaches
+        # the UI.  Let it finish naturally — no need to kill the thread.
         if self._refresh_worker and self._refresh_worker.isRunning():
-            return
+            try:
+                self._refresh_worker.refresh_complete.disconnect()
+                self._refresh_worker.refresh_failed.disconnect()
+            except RuntimeError:
+                pass  # Already disconnected
 
         self._refresh_btn.setEnabled(False)
         self._status_bar.setText("Refreshing…")
@@ -343,7 +352,10 @@ class SessionsListWidget(QWidget):
     #  Table population                                                    #
     # ------------------------------------------------------------------ #
 
-    def _on_refresh_complete(self, entries: list):
+    def _on_refresh_complete(self, client_id: str, entries: list):
+        # Discard stale responses that arrived after the user switched clients
+        if client_id != self._client_id:
+            return
         self._all_entries = entries
         self._populate_table(entries)
         self._update_header_stats(entries)
@@ -352,7 +364,9 @@ class SessionsListWidget(QWidget):
             f"({len(entries)} entries)"
         )
 
-    def _on_refresh_failed(self, error: str):
+    def _on_refresh_failed(self, client_id: str, error: str):
+        if client_id != self._client_id:
+            return
         self._status_bar.setText(f"Refresh failed: {error}")
         logger.error(f"SessionsListWidget refresh failed: {error}")
 
