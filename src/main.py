@@ -57,6 +57,7 @@ from shared.worker_manager import WorkerManager
 from sku_mapping_dialog import SKUMappingDialog
 from session_history_manager import SessionHistoryManager
 from session_browser.session_browser_widget import SessionBrowserWidget
+from session_registry_manager import SessionRegistryManager
 from worker_selection_dialog import WorkerSelectionDialog
 from theme import load_saved_theme, toggle_theme
 
@@ -246,6 +247,10 @@ class MainWindow(QMainWindow):
         # Initialize SessionHistoryManager
         self.session_history_manager = SessionHistoryManager(self.profile_manager)
         logger.info("SessionHistoryManager initialized successfully")
+
+        # Initialize SessionRegistryManager (per-client index for fast browser loading)
+        self.registry_manager = SessionRegistryManager(self.profile_manager)
+        logger.info("SessionRegistryManager initialized successfully")
 
         # Read scan simulator mode from config (enabled in development / no physical scanner)
         self._sim_mode = self.profile_manager.config.getboolean(
@@ -1529,6 +1534,30 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.warning(f"Could not update session metadata: {e}")
 
+            # 9b. Register session start in registry (enables fast browser loading)
+            try:
+                _reg_total_items = 0
+                if self.logic and self.logic.processed_df is not None:
+                    _reg_total_items = int(
+                        pd.to_numeric(
+                            self.logic.processed_df['Quantity'], errors='coerce'
+                        ).fillna(0).sum()
+                    )
+                self.registry_manager.register_session_start(
+                    client_id=client_id,
+                    session_id=session_path.name,
+                    packing_list_name=packing_list_name,
+                    worker_id=self.current_worker_id,
+                    worker_name=self.current_worker_name,
+                    pc_name=os.environ.get('COMPUTERNAME', 'Unknown'),
+                    total_orders=order_count,
+                    total_items=_reg_total_items,
+                    work_dir=str(work_dir),
+                    session_path=str(session_path),
+                )
+            except Exception as _e:
+                logger.warning(f"Registry update (session start) failed: {_e}")
+
             # 10. Setup order table
             self.setup_order_table()
 
@@ -1742,6 +1771,7 @@ class MainWindow(QMainWindow):
                 _sess_mgr = self.session_manager
                 _cur_sess_path = getattr(self, 'current_session_path', None)
                 _cur_pack_list = getattr(self, 'current_packing_list', None)
+                _registry_mgr = getattr(self, 'registry_manager', None)
 
                 # Flush any pending state write on the main thread *before*
                 # handing off to the background worker.  AsyncStateWriter's
@@ -1827,6 +1857,23 @@ class MainWindow(QMainWindow):
                             logger.info("Updated session metadata to 'completed'")
                     except Exception as exc:
                         logger.warning(f"update_session_metadata failed: {exc}")
+
+                    # 5. Update session registry with completed status + metrics
+                    try:
+                        if _registry_mgr and _client_id and _cur_sess_path and _cur_pack_list:
+                            import json as _json_reg
+                            with open(_summary_path, 'r', encoding='utf-8') as _f_reg:
+                                _reg_summary = _json_reg.load(_f_reg)
+                            _session_id_reg = Path(_cur_sess_path).name
+                            _registry_mgr.register_session_complete(
+                                _client_id,
+                                _session_id_reg,
+                                _cur_pack_list,
+                                _reg_summary,
+                            )
+                            logger.info("Registry updated with session completion")
+                    except Exception as exc:
+                        logger.warning(f"Registry update (session complete) failed: {exc}")
 
                 # Show progress dialog while writes happen in background
                 _end_progress = QProgressDialog("Saving session…", None, 0, 0, self)
@@ -2578,6 +2625,7 @@ class MainWindow(QMainWindow):
             session_lock_manager=self.lock_manager,
             session_history_manager=self.session_history_manager,
             worker_manager=self.worker_manager,
+            registry_manager=self.registry_manager,
             parent=browser_dialog
         )
 

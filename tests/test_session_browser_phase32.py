@@ -2,11 +2,12 @@
 Unit tests for Session Browser Phase 3.2 components.
 
 Tests for:
-- Available Sessions Tab
 - Session Details Dialog
 - Overview Tab
 - Orders Tab
 - Metrics Tab
+
+Note: AvailableSessionsTab was removed in v2.0 (replaced by unified SessionsListWidget).
 """
 import unittest
 from unittest.mock import Mock
@@ -23,145 +24,10 @@ sys.path.insert(0, str(tests_dir.parent / 'src'))
 from PySide6.QtWidgets import QApplication
 
 # Import components to test
-from session_browser.available_sessions_tab import AvailableSessionsTab
 from session_browser.session_details_dialog import SessionDetailsDialog
 from session_browser.overview_tab import OverviewTab
 from session_browser.orders_tab import OrdersTab
 from session_browser.metrics_tab import MetricsTab
-
-
-class TestAvailableSessionsTab(unittest.TestCase):
-    """Test cases for Available Sessions Tab."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Create QApplication for tests."""
-        cls.app = QApplication.instance()
-        if cls.app is None:
-            cls.app = QApplication([])
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.sessions_base = self.temp_dir / "Sessions"
-        self.sessions_base.mkdir(parents=True)
-
-        # Mock managers
-        self.mock_profile_manager = Mock()
-        self.mock_profile_manager.get_sessions_root.return_value = self.sessions_base
-        self.mock_profile_manager.list_clients.return_value = ['M', 'K']
-
-        self.mock_session_manager = Mock()
-
-    def tearDown(self):
-        """Clean up test fixtures."""
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def _create_test_packing_list(self, client_id, session_id, list_name, total_orders=10, total_items=35):
-        """Helper to create a test packing list."""
-        # sessions_base already points to Sessions/ directory
-        session_dir = self.sessions_base / f"CLIENT_{client_id}" / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-
-        lists_dir = session_dir / "packing_lists"
-        lists_dir.mkdir(parents=True, exist_ok=True)
-
-        list_file = lists_dir / f"{list_name}.json"
-        list_data = {
-            "list_name": list_name,
-            "courier": "DHL",
-            "total_orders": total_orders,
-            "total_items": total_items,
-            "created_at": "2025-11-20T10:00:00",
-            "orders": []
-        }
-
-        with open(list_file, 'w') as f:
-            json.dump(list_data, f)
-
-        return session_dir, list_file
-
-    def test_init(self):
-        """Test tab initialization."""
-        tab = AvailableSessionsTab(
-            profile_manager=self.mock_profile_manager,
-            session_manager=self.mock_session_manager
-        )
-
-        self.assertIsNotNone(tab.table)
-        self.assertIsNotNone(tab.client_combo)
-        self.assertEqual(tab.client_combo.count(), 3)  # "All Clients" + 2 clients
-
-    def test_scan_available_sessions(self):
-        """Test scanning for available sessions."""
-        # Create test packing list
-        self._create_test_packing_list('M', '2025-11-20_1', 'DHL_Orders')
-
-        tab = AvailableSessionsTab(
-            profile_manager=self.mock_profile_manager,
-            session_manager=self.mock_session_manager
-        )
-
-        available = tab._scan_sessions()
-
-        self.assertEqual(len(available), 1)
-        self.assertEqual(available[0]['list_name'], 'DHL_Orders')
-        self.assertEqual(available[0]['total_orders'], 10)
-        self.assertEqual(available[0]['client_id'], 'M')
-
-    def test_scan_skips_started_lists(self):
-        """Test that started lists (with work directories) are not shown."""
-        # Create test packing list
-        session_dir, _ = self._create_test_packing_list('M', '2025-11-20_1', 'DHL_Orders')
-
-        # Create work directory (marks as started)
-        work_dir = session_dir / "packing" / "DHL_Orders"
-        work_dir.mkdir(parents=True)
-
-        tab = AvailableSessionsTab(
-            profile_manager=self.mock_profile_manager,
-            session_manager=self.mock_session_manager
-        )
-
-        available = tab._scan_sessions()
-
-        self.assertEqual(len(available), 0)  # Should be hidden
-
-    def test_scan_multiple_clients(self):
-        """Test scanning with multiple clients."""
-        # Create packing lists for different clients
-        self._create_test_packing_list('M', '2025-11-20_1', 'DHL_Orders')
-        self._create_test_packing_list('K', '2025-11-20_1', 'PostOne_Orders')
-
-        tab = AvailableSessionsTab(
-            profile_manager=self.mock_profile_manager,
-            session_manager=self.mock_session_manager
-        )
-
-        available = tab._scan_sessions()
-
-        self.assertEqual(len(available), 2)
-        client_ids = {item['client_id'] for item in available}
-        self.assertEqual(client_ids, {'M', 'K'})
-
-    def test_populate_table(self):
-        """Test populating table with available lists."""
-        # Create test packing list
-        self._create_test_packing_list('M', '2025-11-20_1', 'DHL_Orders', 15, 50)
-
-        tab = AvailableSessionsTab(
-            profile_manager=self.mock_profile_manager,
-            session_manager=self.mock_session_manager
-        )
-
-        tab.refresh()
-
-        self.assertEqual(tab.table.rowCount(), 1)
-        # Check order count
-        self.assertEqual(tab.table.item(0, 5).text(), '15')
-        # Check item count
-        self.assertEqual(tab.table.item(0, 6).text(), '50')
 
 
 class TestSessionDetailsDialog(unittest.TestCase):
