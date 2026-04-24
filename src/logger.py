@@ -195,7 +195,7 @@ class AppLogger:
         # Store logs on centralized file server for unified logging
         # Get base path from config
         file_server_path = config.get('Network', 'FileServerPath',
-                                      fallback=r'\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\0UFulfilment')
+                                      fallback=r'\\192.168.88.101\_Fulfilment_\0UFulfilment')
 
         # Centralized logs location: \\server\...\0UFulfilment\Logs\packing_tool\
         log_dir = Path(file_server_path) / "Logs" / "packing_tool"
