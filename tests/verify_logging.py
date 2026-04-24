@@ -68,7 +68,7 @@ def main():
         config.read('config.ini')
 
         file_server_path = config.get('Network', 'FileServerPath',
-                                     fallback=r'\\192.168.88.101\Z_GreenDelivery\WAREHOUSE\0UFulfilment')
+                                     fallback=r'\\192.168.88.101\_Fulfilment_\0UFulfilment')
 
         log_dir = Path(file_server_path) / "Logs" / "packing_tool"
         log_file = log_dir / f"{datetime.now():%Y-%m-%d}.log"
